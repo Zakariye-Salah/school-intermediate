@@ -208,21 +208,7 @@
     table.leader th, table.leader td { padding:10px 6px; font-size:0.92rem; }
 
     /* if screen is very narrow, present rows as stacked cards (more readable) */
-    @media (max-width:420px) {
-      table.leader { border:0; }
-      table.leader thead { display:none; }
-      table.leader tbody tr { display:block; margin-bottom:10px; border-radius:10px; background: #fff; box-shadow: var(--shadow); padding:10px; }
-      table.leader tbody td { display:flex; justify-content:space-between; padding:6px 8px; border-bottom:0; }
-      table.leader tbody td:first-child{ font-weight:800; }
-      table.leader tbody td::before{
-        content: attr(data-label);
-        color: var(--muted);
-        font-weight:600;
-        margin-right:8px;
-        display:inline-block;
-        min-width:80px;
-      }
-    }
+  
   }
 
   /* small visual polish */
@@ -372,4 +358,5 @@ table.leader td { vertical-align:middle; }
   <script type="module" src="leaderboard.js"></script>
 </body>
 </html>
+
 
