@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="so">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Leaderboard — AL-FATXI</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    /* page layout (same as you provided) */
+    :root{
+      --card-bg: #fff;
+      --muted: #6b7280;
+      --primary: #2563eb;
+      --surface: #f8fafc;
+      --shadow: 0 6px 22px rgba(14,30,63,0.06);
+    }
+    body{ background:var(--surface); color:#0f172a; font-family:Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; margin:0; padding:18px; }
+    .container { max-width:1100px; margin:18px auto; padding:0 12px; }
+    header { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:16px; }
+    header h1{ margin:0; font-size:20px; }
+    .comp-info { display:flex; flex-direction:column; gap:4px; }
+    .comp-actions { display:flex; gap:8px; align-items:center; }
+    .card { background:var(--card-bg); border-radius:12px; padding:14px; box-shadow:var(--shadow); margin-bottom:12px; }
+    .small-muted { color:var(--muted); font-size:0.92rem; }
+    .btn { padding:8px 12px; border-radius:8px; cursor:pointer; border:0; background:transparent; }
+    .btn-primary { background:var(--primary); color:#fff; border:0; }
+    .btn-ghost { background:transparent; border:1px solid #e6eefc; }
+    table.leader { width:100%; border-collapse:collapse; margin-top:12px; }
+    table.leader th, table.leader td { padding:10px 8px; text-align:left; border-bottom:1px solid #eef2f6; vertical-align:middle; }
+    .rank-badge { font-weight:900; display:inline-block; min-width:48px; text-align:center; padding:6px 8px; border-radius:8px; }
+    .hidden { display:none; }
+    .input-small { padding:8px; border-radius:6px; border:1px solid #e2e8f0; min-width:120px; }
+    /* modal */
+    .modal { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; z-index:1200; background:rgba(2,6,23,0.45); }
+    .modal-card { width:820px; max-width:96%; max-height:86vh; overflow:auto; border-radius:12px; padding:18px; background:linear-gradient(180deg,#fff,#fbfdff); box-shadow:0 18px 48px rgba(2,6,23,0.28); }
+    .modal-head { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px; }
+    .modal-title { font-weight:800; font-size:18px; margin:0; }
+    .modal-sub { color:var(--muted); font-size:0.95rem; }
+    .choices label{ display:block; margin-bottom:8px; padding:10px; border-radius:8px; background:#fbfdff; cursor:pointer; border:1px solid #eef2f6; }
+    .choice-correct{ background:#ecfdf5; border-color:#bbf7d0; color:#064e3b; font-weight:700; }
+    .choice-wrong{ background:#fff1f2; border-color:#fecaca; color:#7f1d1d; font-weight:700; }
+    .choice-selected{ box-shadow:0 6px 20px rgba(37,99,235,0.08); }
+    .choice-meta{ float:right; font-weight:900; }
+    .test-footer { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:12px; }
+    .stats-line { display:flex; gap:12px; align-items:center; color:var(--muted); font-size:0.95rem; }
+    .settings-gear { font-size:16px; padding:6px; }
+    /* responsive */
+    @media (max-width:720px){ .modal-card{ width:94%; padding:12px } .choices label{ padding:8px } }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="comp-info">
+        <div style="display:flex;gap:8px;align-items:center">
+          <h1>Leaderboard</h1>
+          <div id="studentTag" class="small-muted" style="font-weight:700"></div>
+        </div>
+        <div class="small-muted" id="competitionSub">Loading competition…</div>
+      </div>
+
+      <div class="comp-actions">
+        <button id="backBtn" class="btn">Back</button>
+        <button id="verifyBtn" class="btn">Verify</button>
+        <button id="viewAroundBtn" class="btn">View around me</button>
+        <button id="toggleBgBtn" class="btn">BG Sound: OFF</button>
+        <button id="toggleFxBtn" class="btn">FX Sound: ON</button>
+        <button id="testYourselfBtn" class="btn btn-primary">Test Yourself</button>
+        <button id="logoutBtn" class="btn">Logout</button>
+      </div>
+    </header>
+
+    <div id="adminControls" class="card hidden">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+        <div>
+          <label style="font-weight:700">Manage competition</label>
+          <div class="small-muted">
+            Manage competition settings and view all scorers.
+          </div>
+        </div>
+    
+        <div style="display:flex;gap:8px;align-items:center">
+          <!-- ONLY these buttons stay -->
+          <button id="manageCompBtn" class="btn" style="display:none">Manage</button>
+          <button id="viewAllBtn" class="btn" style="display:none">View all scorers</button>
+        </div>
+      </div>
+    </div>
+    
+
+    <div id="leaderContainer" class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <strong id="compTitle">—</strong>
+          <div class="small-muted" id="compRange"></div>
+        </div>
+        <div class="small-muted">Top ranks (ties allowed) — showing rank, student, class, id (last 4 digits), points</div>
+      </div>
+
+      <table class="leader" id="leaderTable">
+        <thead>
+          <tr><th style="width:100px">Rank</th><th>Name</th><th>Class</th><th>ID</th><th style="width:120px">Points</th><th style="width:160px">Action</th></tr>
+        </thead>
+        <tbody id="leaderTbody">
+          <tr><td colspan="6" class="small-muted">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div id="moreArea"></div>
+  </div>
+
+  <!-- modal container -->
+  <div id="modalRoot" class="hidden"></div>
+
+  <!-- scripts -->
+  <script type="module" src="firebase-config.js"></script>
+  <script type="module" src="leaderboard.js"></script>
+</body>
+</html>

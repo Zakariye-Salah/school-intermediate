@@ -1,0 +1,2031 @@
+{
+  "title": "100 Basic Math Questions",
+  "generatedAt": "2026-01-12T20:08:30.884362Z",
+  "sets": [
+    {
+      "title": "Addition (20)",
+      "questions": [
+        {
+          "text": "What is 337 + 67?",
+          "choices": [
+            {
+              "text": "414"
+            },
+            {
+              "text": "409"
+            },
+            {
+              "text": "399"
+            },
+            {
+              "text": "404"
+            }
+          ],
+          "correct": 3,
+          "explanation": "Add the two numbers: 337 + 67 = 404.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 135 + 124?",
+          "choices": [
+            {
+              "text": "269"
+            },
+            {
+              "text": "259"
+            },
+            {
+              "text": "254"
+            },
+            {
+              "text": "264"
+            }
+          ],
+          "correct": 1,
+          "explanation": "Add the two numbers: 135 + 124 = 259.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 356 + 389?",
+          "choices": [
+            {
+              "text": "755"
+            },
+            {
+              "text": "750"
+            },
+            {
+              "text": "740"
+            },
+            {
+              "text": "745"
+            }
+          ],
+          "correct": 3,
+          "explanation": "Add the two numbers: 356 + 389 = 745.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 26 + 25?",
+          "choices": [
+            {
+              "text": "56"
+            },
+            {
+              "text": "46"
+            },
+            {
+              "text": "61"
+            },
+            {
+              "text": "51"
+            }
+          ],
+          "correct": 3,
+          "explanation": "Add the two numbers: 26 + 25 = 51.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 268 + 318?",
+          "choices": [
+            {
+              "text": "591"
+            },
+            {
+              "text": "596"
+            },
+            {
+              "text": "581"
+            },
+            {
+              "text": "586"
+            }
+          ],
+          "correct": 3,
+          "explanation": "Add the two numbers: 268 + 318 = 586.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 376 + 342?",
+          "choices": [
+            {
+              "text": "713"
+            },
+            {
+              "text": "723"
+            },
+            {
+              "text": "718"
+            },
+            {
+              "text": "728"
+            }
+          ],
+          "correct": 2,
+          "explanation": "Add the two numbers: 376 + 342 = 718.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 311 + 152?",
+          "choices": [
+            {
+              "text": "458"
+            },
+            {
+              "text": "468"
+            },
+            {
+              "text": "473"
+            },
+            {
+              "text": "463"
+            }
+          ],
+          "correct": 3,
+          "explanation": "Add the two numbers: 311 + 152 = 463.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 184 + 152?",
+          "choices": [
+            {
+              "text": "331"
+            },
+            {
+              "text": "346"
+            },
+            {
+              "text": "336"
+            },
+            {
+              "text": "341"
+            }
+          ],
+          "correct": 2,
+          "explanation": "Add the two numbers: 184 + 152 = 336.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 62 + 57?",
+          "choices": [
+            {
+              "text": "114"
+            },
+            {
+              "text": "124"
+            },
+            {
+              "text": "119"
+            },
+            {
+              "text": "129"
+            }
+          ],
+          "correct": 2,
+          "explanation": "Add the two numbers: 62 + 57 = 119.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 443 + 186?",
+          "choices": [
+            {
+              "text": "639"
+            },
+            {
+              "text": "634"
+            },
+            {
+              "text": "629"
+            },
+            {
+              "text": "624"
+            }
+          ],
+          "correct": 2,
+          "explanation": "Add the two numbers: 443 + 186 = 629.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 284 + 73?",
+          "choices": [
+            {
+              "text": "352"
+            },
+            {
+              "text": "362"
+            },
+            {
+              "text": "357"
+            },
+            {
+              "text": "367"
+            }
+          ],
+          "correct": 2,
+          "explanation": "Add the two numbers: 284 + 73 = 357.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 434 + 331?",
+          "choices": [
+            {
+              "text": "770"
+            },
+            {
+              "text": "765"
+            },
+            {
+              "text": "775"
+            },
+            {
+              "text": "760"
+            }
+          ],
+          "correct": 1,
+          "explanation": "Add the two numbers: 434 + 331 = 765.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 370 + 45?",
+          "choices": [
+            {
+              "text": "420"
+            },
+            {
+              "text": "425"
+            },
+            {
+              "text": "410"
+            },
+            {
+              "text": "415"
+            }
+          ],
+          "correct": 3,
+          "explanation": "Add the two numbers: 370 + 45 = 415.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 405 + 158?",
+          "choices": [
+            {
+              "text": "568"
+            },
+            {
+              "text": "558"
+            },
+            {
+              "text": "573"
+            },
+            {
+              "text": "563"
+            }
+          ],
+          "correct": 3,
+          "explanation": "Add the two numbers: 405 + 158 = 563.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 204 + 152?",
+          "choices": [
+            {
+              "text": "356"
+            },
+            {
+              "text": "361"
+            },
+            {
+              "text": "351"
+            },
+            {
+              "text": "366"
+            }
+          ],
+          "correct": 0,
+          "explanation": "Add the two numbers: 204 + 152 = 356.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 93 + 199?",
+          "choices": [
+            {
+              "text": "302"
+            },
+            {
+              "text": "297"
+            },
+            {
+              "text": "292"
+            },
+            {
+              "text": "287"
+            }
+          ],
+          "correct": 2,
+          "explanation": "Add the two numbers: 93 + 199 = 292.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 369 + 489?",
+          "choices": [
+            {
+              "text": "863"
+            },
+            {
+              "text": "868"
+            },
+            {
+              "text": "853"
+            },
+            {
+              "text": "858"
+            }
+          ],
+          "correct": 3,
+          "explanation": "Add the two numbers: 369 + 489 = 858.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 283 + 383?",
+          "choices": [
+            {
+              "text": "661"
+            },
+            {
+              "text": "676"
+            },
+            {
+              "text": "666"
+            },
+            {
+              "text": "671"
+            }
+          ],
+          "correct": 2,
+          "explanation": "Add the two numbers: 283 + 383 = 666.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 204 + 148?",
+          "choices": [
+            {
+              "text": "352"
+            },
+            {
+              "text": "362"
+            },
+            {
+              "text": "347"
+            },
+            {
+              "text": "357"
+            }
+          ],
+          "correct": 0,
+          "explanation": "Add the two numbers: 204 + 148 = 352.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 441 + 403?",
+          "choices": [
+            {
+              "text": "849"
+            },
+            {
+              "text": "839"
+            },
+            {
+              "text": "854"
+            },
+            {
+              "text": "844"
+            }
+          ],
+          "correct": 3,
+          "explanation": "Add the two numbers: 441 + 403 = 844.",
+          "timeLimit": 20
+        }
+      ]
+    },
+    {
+      "title": "Subtraction (20)",
+      "questions": [
+        {
+          "text": "What is 874 \u2212 333?",
+          "choices": [
+            {
+              "text": "535"
+            },
+            {
+              "text": "541"
+            },
+            {
+              "text": "545"
+            },
+            {
+              "text": "551"
+            }
+          ],
+          "correct": 1,
+          "explanation": "Subtract: 874 \u2212 333 = 541.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 266 \u2212 171?",
+          "choices": [
+            {
+              "text": "95"
+            },
+            {
+              "text": "105"
+            },
+            {
+              "text": "89"
+            },
+            {
+              "text": "99"
+            }
+          ],
+          "correct": 0,
+          "explanation": "Subtract: 266 \u2212 171 = 95.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 455 \u2212 339?",
+          "choices": [
+            {
+              "text": "110"
+            },
+            {
+              "text": "120"
+            },
+            {
+              "text": "116"
+            },
+            {
+              "text": "126"
+            }
+          ],
+          "correct": 2,
+          "explanation": "Subtract: 455 \u2212 339 = 116.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 192 \u2212 73?",
+          "choices": [
+            {
+              "text": "119"
+            },
+            {
+              "text": "123"
+            },
+            {
+              "text": "129"
+            },
+            {
+              "text": "113"
+            }
+          ],
+          "correct": 0,
+          "explanation": "Subtract: 192 \u2212 73 = 119.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 647 \u2212 418?",
+          "choices": [
+            {
+              "text": "233"
+            },
+            {
+              "text": "239"
+            },
+            {
+              "text": "229"
+            },
+            {
+              "text": "223"
+            }
+          ],
+          "correct": 2,
+          "explanation": "Subtract: 647 \u2212 418 = 229.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 571 \u2212 515?",
+          "choices": [
+            {
+              "text": "60"
+            },
+            {
+              "text": "50"
+            },
+            {
+              "text": "66"
+            },
+            {
+              "text": "56"
+            }
+          ],
+          "correct": 3,
+          "explanation": "Subtract: 571 \u2212 515 = 56.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 206 \u2212 170?",
+          "choices": [
+            {
+              "text": "36"
+            },
+            {
+              "text": "46"
+            },
+            {
+              "text": "30"
+            },
+            {
+              "text": "40"
+            }
+          ],
+          "correct": 0,
+          "explanation": "Subtract: 206 \u2212 170 = 36.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 660 \u2212 75?",
+          "choices": [
+            {
+              "text": "585"
+            },
+            {
+              "text": "579"
+            },
+            {
+              "text": "589"
+            },
+            {
+              "text": "595"
+            }
+          ],
+          "correct": 0,
+          "explanation": "Subtract: 660 \u2212 75 = 585.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 591 \u2212 267?",
+          "choices": [
+            {
+              "text": "328"
+            },
+            {
+              "text": "334"
+            },
+            {
+              "text": "318"
+            },
+            {
+              "text": "324"
+            }
+          ],
+          "correct": 3,
+          "explanation": "Subtract: 591 \u2212 267 = 324.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 748 \u2212 559?",
+          "choices": [
+            {
+              "text": "189"
+            },
+            {
+              "text": "193"
+            },
+            {
+              "text": "199"
+            },
+            {
+              "text": "183"
+            }
+          ],
+          "correct": 0,
+          "explanation": "Subtract: 748 \u2212 559 = 189.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 164 \u2212 85?",
+          "choices": [
+            {
+              "text": "73"
+            },
+            {
+              "text": "83"
+            },
+            {
+              "text": "79"
+            },
+            {
+              "text": "89"
+            }
+          ],
+          "correct": 2,
+          "explanation": "Subtract: 164 \u2212 85 = 79.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 53 \u2212 26?",
+          "choices": [
+            {
+              "text": "37"
+            },
+            {
+              "text": "27"
+            },
+            {
+              "text": "21"
+            },
+            {
+              "text": "31"
+            }
+          ],
+          "correct": 1,
+          "explanation": "Subtract: 53 \u2212 26 = 27.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 690 \u2212 315?",
+          "choices": [
+            {
+              "text": "369"
+            },
+            {
+              "text": "385"
+            },
+            {
+              "text": "375"
+            },
+            {
+              "text": "379"
+            }
+          ],
+          "correct": 2,
+          "explanation": "Subtract: 690 \u2212 315 = 375.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 830 \u2212 175?",
+          "choices": [
+            {
+              "text": "665"
+            },
+            {
+              "text": "659"
+            },
+            {
+              "text": "649"
+            },
+            {
+              "text": "655"
+            }
+          ],
+          "correct": 3,
+          "explanation": "Subtract: 830 \u2212 175 = 655.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 550 \u2212 29?",
+          "choices": [
+            {
+              "text": "531"
+            },
+            {
+              "text": "515"
+            },
+            {
+              "text": "525"
+            },
+            {
+              "text": "521"
+            }
+          ],
+          "correct": 3,
+          "explanation": "Subtract: 550 \u2212 29 = 521.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 295 \u2212 39?",
+          "choices": [
+            {
+              "text": "266"
+            },
+            {
+              "text": "256"
+            },
+            {
+              "text": "250"
+            },
+            {
+              "text": "260"
+            }
+          ],
+          "correct": 1,
+          "explanation": "Subtract: 295 \u2212 39 = 256.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 137 \u2212 134?",
+          "choices": [
+            {
+              "text": "7"
+            },
+            {
+              "text": "13"
+            },
+            {
+              "text": "-3"
+            },
+            {
+              "text": "3"
+            }
+          ],
+          "correct": 3,
+          "explanation": "Subtract: 137 \u2212 134 = 3.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 181 \u2212 178?",
+          "choices": [
+            {
+              "text": "7"
+            },
+            {
+              "text": "3"
+            },
+            {
+              "text": "-3"
+            },
+            {
+              "text": "13"
+            }
+          ],
+          "correct": 1,
+          "explanation": "Subtract: 181 \u2212 178 = 3.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 321 \u2212 280?",
+          "choices": [
+            {
+              "text": "45"
+            },
+            {
+              "text": "35"
+            },
+            {
+              "text": "41"
+            },
+            {
+              "text": "51"
+            }
+          ],
+          "correct": 2,
+          "explanation": "Subtract: 321 \u2212 280 = 41.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 780 \u2212 329?",
+          "choices": [
+            {
+              "text": "451"
+            },
+            {
+              "text": "455"
+            },
+            {
+              "text": "445"
+            },
+            {
+              "text": "461"
+            }
+          ],
+          "correct": 0,
+          "explanation": "Subtract: 780 \u2212 329 = 451.",
+          "timeLimit": 20
+        }
+      ]
+    },
+    {
+      "title": "Multiplication (20)",
+      "questions": [
+        {
+          "text": "What is 16 \u00d7 10?",
+          "choices": [
+            {
+              "text": "320"
+            },
+            {
+              "text": "144"
+            },
+            {
+              "text": "160"
+            },
+            {
+              "text": "170"
+            }
+          ],
+          "correct": 2,
+          "explanation": "Multiply: 16 \u00d7 10 = 160.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 9 \u00d7 3?",
+          "choices": [
+            {
+              "text": "54"
+            },
+            {
+              "text": "30"
+            },
+            {
+              "text": "27"
+            },
+            {
+              "text": "18"
+            }
+          ],
+          "correct": 2,
+          "explanation": "Multiply: 9 \u00d7 3 = 27.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 20 \u00d7 5?",
+          "choices": [
+            {
+              "text": "200"
+            },
+            {
+              "text": "80"
+            },
+            {
+              "text": "105"
+            },
+            {
+              "text": "100"
+            }
+          ],
+          "correct": 3,
+          "explanation": "Multiply: 20 \u00d7 5 = 100.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 9 \u00d7 3?",
+          "choices": [
+            {
+              "text": "18"
+            },
+            {
+              "text": "30"
+            },
+            {
+              "text": "54"
+            },
+            {
+              "text": "27"
+            }
+          ],
+          "correct": 3,
+          "explanation": "Multiply: 9 \u00d7 3 = 27.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 18 \u00d7 5?",
+          "choices": [
+            {
+              "text": "90"
+            },
+            {
+              "text": "180"
+            },
+            {
+              "text": "95"
+            },
+            {
+              "text": "72"
+            }
+          ],
+          "correct": 0,
+          "explanation": "Multiply: 18 \u00d7 5 = 90.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 8 \u00d7 10?",
+          "choices": [
+            {
+              "text": "80"
+            },
+            {
+              "text": "90"
+            },
+            {
+              "text": "72"
+            },
+            {
+              "text": "160"
+            }
+          ],
+          "correct": 0,
+          "explanation": "Multiply: 8 \u00d7 10 = 80.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 9 \u00d7 14?",
+          "choices": [
+            {
+              "text": "117"
+            },
+            {
+              "text": "126"
+            },
+            {
+              "text": "252"
+            },
+            {
+              "text": "140"
+            }
+          ],
+          "correct": 1,
+          "explanation": "Multiply: 9 \u00d7 14 = 126.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 5 \u00d7 3?",
+          "choices": [
+            {
+              "text": "15"
+            },
+            {
+              "text": "10"
+            },
+            {
+              "text": "30"
+            },
+            {
+              "text": "18"
+            }
+          ],
+          "correct": 0,
+          "explanation": "Multiply: 5 \u00d7 3 = 15.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 15 \u00d7 9?",
+          "choices": [
+            {
+              "text": "270"
+            },
+            {
+              "text": "144"
+            },
+            {
+              "text": "120"
+            },
+            {
+              "text": "135"
+            }
+          ],
+          "correct": 3,
+          "explanation": "Multiply: 15 \u00d7 9 = 135.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 3 \u00d7 8?",
+          "choices": [
+            {
+              "text": "48"
+            },
+            {
+              "text": "32"
+            },
+            {
+              "text": "24"
+            },
+            {
+              "text": "21"
+            }
+          ],
+          "correct": 2,
+          "explanation": "Multiply: 3 \u00d7 8 = 24.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 8 \u00d7 5?",
+          "choices": [
+            {
+              "text": "32"
+            },
+            {
+              "text": "80"
+            },
+            {
+              "text": "40"
+            },
+            {
+              "text": "45"
+            }
+          ],
+          "correct": 2,
+          "explanation": "Multiply: 8 \u00d7 5 = 40.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 7 \u00d7 6?",
+          "choices": [
+            {
+              "text": "84"
+            },
+            {
+              "text": "35"
+            },
+            {
+              "text": "42"
+            },
+            {
+              "text": "48"
+            }
+          ],
+          "correct": 2,
+          "explanation": "Multiply: 7 \u00d7 6 = 42.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 16 \u00d7 14?",
+          "choices": [
+            {
+              "text": "448"
+            },
+            {
+              "text": "208"
+            },
+            {
+              "text": "238"
+            },
+            {
+              "text": "224"
+            }
+          ],
+          "correct": 3,
+          "explanation": "Multiply: 16 \u00d7 14 = 224.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 4 \u00d7 14?",
+          "choices": [
+            {
+              "text": "52"
+            },
+            {
+              "text": "70"
+            },
+            {
+              "text": "56"
+            },
+            {
+              "text": "112"
+            }
+          ],
+          "correct": 2,
+          "explanation": "Multiply: 4 \u00d7 14 = 56.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 17 \u00d7 9?",
+          "choices": [
+            {
+              "text": "136"
+            },
+            {
+              "text": "153"
+            },
+            {
+              "text": "162"
+            },
+            {
+              "text": "306"
+            }
+          ],
+          "correct": 1,
+          "explanation": "Multiply: 17 \u00d7 9 = 153.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 7 \u00d7 8?",
+          "choices": [
+            {
+              "text": "64"
+            },
+            {
+              "text": "49"
+            },
+            {
+              "text": "112"
+            },
+            {
+              "text": "56"
+            }
+          ],
+          "correct": 3,
+          "explanation": "Multiply: 7 \u00d7 8 = 56.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 16 \u00d7 6?",
+          "choices": [
+            {
+              "text": "96"
+            },
+            {
+              "text": "192"
+            },
+            {
+              "text": "80"
+            },
+            {
+              "text": "102"
+            }
+          ],
+          "correct": 0,
+          "explanation": "Multiply: 16 \u00d7 6 = 96.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 6 \u00d7 5?",
+          "choices": [
+            {
+              "text": "60"
+            },
+            {
+              "text": "35"
+            },
+            {
+              "text": "30"
+            },
+            {
+              "text": "24"
+            }
+          ],
+          "correct": 2,
+          "explanation": "Multiply: 6 \u00d7 5 = 30.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 20 \u00d7 13?",
+          "choices": [
+            {
+              "text": "273"
+            },
+            {
+              "text": "520"
+            },
+            {
+              "text": "240"
+            },
+            {
+              "text": "260"
+            }
+          ],
+          "correct": 3,
+          "explanation": "Multiply: 20 \u00d7 13 = 260.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 3 \u00d7 2?",
+          "choices": [
+            {
+              "text": "12"
+            },
+            {
+              "text": "6"
+            },
+            {
+              "text": "3"
+            },
+            {
+              "text": "8"
+            }
+          ],
+          "correct": 1,
+          "explanation": "Multiply: 3 \u00d7 2 = 6.",
+          "timeLimit": 20
+        }
+      ]
+    },
+    {
+      "title": "Division (20)",
+      "questions": [
+        {
+          "text": "What is 20 \u00f7 2?",
+          "choices": [
+            {
+              "text": "11"
+            },
+            {
+              "text": "9"
+            },
+            {
+              "text": "12"
+            },
+            {
+              "text": "10"
+            }
+          ],
+          "correct": 3,
+          "explanation": "Divide: 20 \u00f7 2 = 10.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 33 \u00f7 11?",
+          "choices": [
+            {
+              "text": "2"
+            },
+            {
+              "text": "3"
+            },
+            {
+              "text": "5"
+            },
+            {
+              "text": "4"
+            }
+          ],
+          "correct": 1,
+          "explanation": "Divide: 33 \u00f7 11 = 3.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 55 \u00f7 11?",
+          "choices": [
+            {
+              "text": "6"
+            },
+            {
+              "text": "7"
+            },
+            {
+              "text": "4"
+            },
+            {
+              "text": "5"
+            }
+          ],
+          "correct": 3,
+          "explanation": "Divide: 55 \u00f7 11 = 5.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 96 \u00f7 8?",
+          "choices": [
+            {
+              "text": "14"
+            },
+            {
+              "text": "12"
+            },
+            {
+              "text": "13"
+            },
+            {
+              "text": "11"
+            }
+          ],
+          "correct": 1,
+          "explanation": "Divide: 96 \u00f7 8 = 12.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 156 \u00f7 12?",
+          "choices": [
+            {
+              "text": "15"
+            },
+            {
+              "text": "14"
+            },
+            {
+              "text": "13"
+            },
+            {
+              "text": "12"
+            }
+          ],
+          "correct": 2,
+          "explanation": "Divide: 156 \u00f7 12 = 13.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 32 \u00f7 8?",
+          "choices": [
+            {
+              "text": "4"
+            },
+            {
+              "text": "6"
+            },
+            {
+              "text": "5"
+            },
+            {
+              "text": "3"
+            }
+          ],
+          "correct": 0,
+          "explanation": "Divide: 32 \u00f7 8 = 4.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 6 \u00f7 3?",
+          "choices": [
+            {
+              "text": "3"
+            },
+            {
+              "text": "2"
+            },
+            {
+              "text": "1"
+            },
+            {
+              "text": "4"
+            }
+          ],
+          "correct": 1,
+          "explanation": "Divide: 6 \u00f7 3 = 2.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 30 \u00f7 3?",
+          "choices": [
+            {
+              "text": "10"
+            },
+            {
+              "text": "12"
+            },
+            {
+              "text": "9"
+            },
+            {
+              "text": "11"
+            }
+          ],
+          "correct": 0,
+          "explanation": "Divide: 30 \u00f7 3 = 10.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 28 \u00f7 4?",
+          "choices": [
+            {
+              "text": "6"
+            },
+            {
+              "text": "8"
+            },
+            {
+              "text": "9"
+            },
+            {
+              "text": "7"
+            }
+          ],
+          "correct": 3,
+          "explanation": "Divide: 28 \u00f7 4 = 7.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 24 \u00f7 6?",
+          "choices": [
+            {
+              "text": "4"
+            },
+            {
+              "text": "5"
+            },
+            {
+              "text": "3"
+            },
+            {
+              "text": "6"
+            }
+          ],
+          "correct": 0,
+          "explanation": "Divide: 24 \u00f7 6 = 4.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 154 \u00f7 11?",
+          "choices": [
+            {
+              "text": "16"
+            },
+            {
+              "text": "15"
+            },
+            {
+              "text": "13"
+            },
+            {
+              "text": "14"
+            }
+          ],
+          "correct": 3,
+          "explanation": "Divide: 154 \u00f7 11 = 14.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 36 \u00f7 12?",
+          "choices": [
+            {
+              "text": "2"
+            },
+            {
+              "text": "3"
+            },
+            {
+              "text": "5"
+            },
+            {
+              "text": "4"
+            }
+          ],
+          "correct": 1,
+          "explanation": "Divide: 36 \u00f7 12 = 3.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 39 \u00f7 3?",
+          "choices": [
+            {
+              "text": "13"
+            },
+            {
+              "text": "12"
+            },
+            {
+              "text": "15"
+            },
+            {
+              "text": "14"
+            }
+          ],
+          "correct": 0,
+          "explanation": "Divide: 39 \u00f7 3 = 13.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 55 \u00f7 11?",
+          "choices": [
+            {
+              "text": "7"
+            },
+            {
+              "text": "6"
+            },
+            {
+              "text": "5"
+            },
+            {
+              "text": "4"
+            }
+          ],
+          "correct": 2,
+          "explanation": "Divide: 55 \u00f7 11 = 5.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 90 \u00f7 10?",
+          "choices": [
+            {
+              "text": "10"
+            },
+            {
+              "text": "11"
+            },
+            {
+              "text": "9"
+            },
+            {
+              "text": "8"
+            }
+          ],
+          "correct": 2,
+          "explanation": "Divide: 90 \u00f7 10 = 9.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 96 \u00f7 12?",
+          "choices": [
+            {
+              "text": "9"
+            },
+            {
+              "text": "10"
+            },
+            {
+              "text": "8"
+            },
+            {
+              "text": "7"
+            }
+          ],
+          "correct": 2,
+          "explanation": "Divide: 96 \u00f7 12 = 8.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 98 \u00f7 7?",
+          "choices": [
+            {
+              "text": "14"
+            },
+            {
+              "text": "16"
+            },
+            {
+              "text": "13"
+            },
+            {
+              "text": "15"
+            }
+          ],
+          "correct": 0,
+          "explanation": "Divide: 98 \u00f7 7 = 14.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 52 \u00f7 4?",
+          "choices": [
+            {
+              "text": "13"
+            },
+            {
+              "text": "14"
+            },
+            {
+              "text": "12"
+            },
+            {
+              "text": "15"
+            }
+          ],
+          "correct": 0,
+          "explanation": "Divide: 52 \u00f7 4 = 13.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 20 \u00f7 10?",
+          "choices": [
+            {
+              "text": "3"
+            },
+            {
+              "text": "1"
+            },
+            {
+              "text": "4"
+            },
+            {
+              "text": "2"
+            }
+          ],
+          "correct": 3,
+          "explanation": "Divide: 20 \u00f7 10 = 2.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 20 \u00f7 10?",
+          "choices": [
+            {
+              "text": "3"
+            },
+            {
+              "text": "2"
+            },
+            {
+              "text": "4"
+            },
+            {
+              "text": "1"
+            }
+          ],
+          "correct": 1,
+          "explanation": "Divide: 20 \u00f7 10 = 2.",
+          "timeLimit": 20
+        }
+      ]
+    },
+    {
+      "title": "Decimals (20)",
+      "questions": [
+        {
+          "text": "What is 22.34 + 1.32? (2 decimal places)",
+          "choices": [
+            {
+              "text": "24.66"
+            },
+            {
+              "text": "24.16"
+            },
+            {
+              "text": "23.66"
+            },
+            {
+              "text": "23.16"
+            }
+          ],
+          "correct": 2,
+          "explanation": "Add decimals: 22.34 + 1.32 = 23.66.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 11.69 + 5.37? (2 decimal places)",
+          "choices": [
+            {
+              "text": "18.06"
+            },
+            {
+              "text": "16.56"
+            },
+            {
+              "text": "17.56"
+            },
+            {
+              "text": "17.06"
+            }
+          ],
+          "correct": 3,
+          "explanation": "Add decimals: 11.69 + 5.37 = 17.06.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 48.73 + 15.11? (2 decimal places)",
+          "choices": [
+            {
+              "text": "64.84"
+            },
+            {
+              "text": "63.34"
+            },
+            {
+              "text": "63.84"
+            },
+            {
+              "text": "64.34"
+            }
+          ],
+          "correct": 2,
+          "explanation": "Add decimals: 48.73 + 15.11 = 63.84.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 44.25 + 0.98? (2 decimal places)",
+          "choices": [
+            {
+              "text": "46.23"
+            },
+            {
+              "text": "45.23"
+            },
+            {
+              "text": "45.73"
+            },
+            {
+              "text": "44.73"
+            }
+          ],
+          "correct": 1,
+          "explanation": "Add decimals: 44.25 + 0.98 = 45.23.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 14.44 + 15.85? (2 decimal places)",
+          "choices": [
+            {
+              "text": "29.79"
+            },
+            {
+              "text": "31.29"
+            },
+            {
+              "text": "30.79"
+            },
+            {
+              "text": "30.29"
+            }
+          ],
+          "correct": 3,
+          "explanation": "Add decimals: 14.44 + 15.85 = 30.29.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 43.14 + 4.84? (2 decimal places)",
+          "choices": [
+            {
+              "text": "47.98"
+            },
+            {
+              "text": "47.48"
+            },
+            {
+              "text": "48.48"
+            },
+            {
+              "text": "48.98"
+            }
+          ],
+          "correct": 0,
+          "explanation": "Add decimals: 43.14 + 4.84 = 47.98.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 41.3 + 17.49? (2 decimal places)",
+          "choices": [
+            {
+              "text": "59.79"
+            },
+            {
+              "text": "58.29"
+            },
+            {
+              "text": "58.79"
+            },
+            {
+              "text": "59.29"
+            }
+          ],
+          "correct": 2,
+          "explanation": "Add decimals: 41.3 + 17.49 = 58.79.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 20.83 + 5.93? (2 decimal places)",
+          "choices": [
+            {
+              "text": "27.76"
+            },
+            {
+              "text": "26.26"
+            },
+            {
+              "text": "27.26"
+            },
+            {
+              "text": "26.76"
+            }
+          ],
+          "correct": 3,
+          "explanation": "Add decimals: 20.83 + 5.93 = 26.76.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 32.61 + 8.29? (2 decimal places)",
+          "choices": [
+            {
+              "text": "41.40"
+            },
+            {
+              "text": "41.90"
+            },
+            {
+              "text": "40.90"
+            },
+            {
+              "text": "40.40"
+            }
+          ],
+          "correct": 2,
+          "explanation": "Add decimals: 32.61 + 8.29 = 40.90.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 44.04 + 5.59? (2 decimal places)",
+          "choices": [
+            {
+              "text": "50.13"
+            },
+            {
+              "text": "50.63"
+            },
+            {
+              "text": "49.63"
+            },
+            {
+              "text": "49.13"
+            }
+          ],
+          "correct": 2,
+          "explanation": "Add decimals: 44.04 + 5.59 = 49.63.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 30.43 + 7.24? (2 decimal places)",
+          "choices": [
+            {
+              "text": "38.67"
+            },
+            {
+              "text": "37.67"
+            },
+            {
+              "text": "38.17"
+            },
+            {
+              "text": "37.17"
+            }
+          ],
+          "correct": 1,
+          "explanation": "Add decimals: 30.43 + 7.24 = 37.67.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 20.18 + 11.74? (2 decimal places)",
+          "choices": [
+            {
+              "text": "32.92"
+            },
+            {
+              "text": "32.42"
+            },
+            {
+              "text": "31.92"
+            },
+            {
+              "text": "31.42"
+            }
+          ],
+          "correct": 2,
+          "explanation": "Add decimals: 20.18 + 11.74 = 31.92.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 1.58 + 18.55? (2 decimal places)",
+          "choices": [
+            {
+              "text": "20.13"
+            },
+            {
+              "text": "19.63"
+            },
+            {
+              "text": "21.13"
+            },
+            {
+              "text": "20.63"
+            }
+          ],
+          "correct": 0,
+          "explanation": "Add decimals: 1.58 + 18.55 = 20.13.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 4.89 + 13.45? (2 decimal places)",
+          "choices": [
+            {
+              "text": "18.34"
+            },
+            {
+              "text": "18.84"
+            },
+            {
+              "text": "19.34"
+            },
+            {
+              "text": "17.84"
+            }
+          ],
+          "correct": 0,
+          "explanation": "Add decimals: 4.89 + 13.45 = 18.34.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 33.67 + 2.93? (2 decimal places)",
+          "choices": [
+            {
+              "text": "36.60"
+            },
+            {
+              "text": "37.10"
+            },
+            {
+              "text": "37.60"
+            },
+            {
+              "text": "36.10"
+            }
+          ],
+          "correct": 0,
+          "explanation": "Add decimals: 33.67 + 2.93 = 36.60.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 33.84 + 6.86? (2 decimal places)",
+          "choices": [
+            {
+              "text": "41.20"
+            },
+            {
+              "text": "40.70"
+            },
+            {
+              "text": "41.70"
+            },
+            {
+              "text": "40.20"
+            }
+          ],
+          "correct": 1,
+          "explanation": "Add decimals: 33.84 + 6.86 = 40.70.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 10.8 + 13.47? (2 decimal places)",
+          "choices": [
+            {
+              "text": "24.77"
+            },
+            {
+              "text": "24.27"
+            },
+            {
+              "text": "23.77"
+            },
+            {
+              "text": "25.27"
+            }
+          ],
+          "correct": 1,
+          "explanation": "Add decimals: 10.8 + 13.47 = 24.27.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 31.35 + 6.37? (2 decimal places)",
+          "choices": [
+            {
+              "text": "38.72"
+            },
+            {
+              "text": "37.22"
+            },
+            {
+              "text": "38.22"
+            },
+            {
+              "text": "37.72"
+            }
+          ],
+          "correct": 3,
+          "explanation": "Add decimals: 31.35 + 6.37 = 37.72.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 11.69 + 15.82? (2 decimal places)",
+          "choices": [
+            {
+              "text": "27.51"
+            },
+            {
+              "text": "28.51"
+            },
+            {
+              "text": "28.01"
+            },
+            {
+              "text": "27.01"
+            }
+          ],
+          "correct": 0,
+          "explanation": "Add decimals: 11.69 + 15.82 = 27.51.",
+          "timeLimit": 20
+        },
+        {
+          "text": "What is 22.94 + 4.67? (2 decimal places)",
+          "choices": [
+            {
+              "text": "28.11"
+            },
+            {
+              "text": "27.61"
+            },
+            {
+              "text": "27.11"
+            },
+            {
+              "text": "28.61"
+            }
+          ],
+          "correct": 1,
+          "explanation": "Add decimals: 22.94 + 4.67 = 27.61.",
+          "timeLimit": 20
+        }
+      ]
+    }
+  ]
+}

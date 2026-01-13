@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Admin — School</title>
+  <style>
+    :root{font-family:system-ui,Segoe UI,Roboto,Arial;}
+    body{margin:0;padding:18px;background:#f8fafc;color:#0f172a}
+    header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+    .brand{font-weight:700;font-size:18px}
+    .tabs{display:flex;gap:8px;margin-bottom:12px}
+    .tab{padding:8px 12px;border-radius:8px;border:none;background:#e6eef8;cursor:pointer}
+    .tab.active{background:#0ea5e9;color:white}
+    .page{display:none;background:white;padding:12px;border-radius:8px;box-shadow:0 6px 16px rgba(15,23,42,0.06)}
+    .page-header{display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
+    input[type=text], input[type=date], input[type=number], select{padding:8px;border-radius:6px;border:1px solid #e6eef8}
+    .btn{padding:8px 10px;border-radius:6px;border:none;cursor:pointer}
+    .btn-primary{background:#0ea5e9;color:white}
+    .btn-ghost{background:#f3f4f6}
+    .row{display:flex;justify-content:space-between;padding:10px;border-bottom:1px solid #f1f5f9}
+
+    /* Modal */
+    #modalBackdrop{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(2,6,23,0.45);z-index:60}
+    #modal{background:white;padding:12px;border-radius:8px;max-width:880px;width:94%;box-shadow:0 12px 40px rgba(2,6,23,.3)}
+    #modalTitle{font-weight:700;margin-bottom:8px}
+    #modalBody{max-height:60vh;overflow:auto}
+    #modalClose{position:absolute;right:18px;top:18px;background:#ef4444;color:white;border-radius:6px;padding:6px;border:none}
+
+    /* Toast */
+    #toast{position:fixed;right:18px;bottom:18px;background:#111827;color:white;padding:10px;border-radius:8px;display:none}
+
+    /* Small helpers */
+    .muted{color:#6b7280}
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">Admin — School System</div>
+    <div>
+      <button id="btnLogout" class="btn btn-ghost">Logout</button>
+    </div>
+  </header>
+
+  <nav class="tabs" role="navigation" aria-label="Admin pages">
+    <button id="tabStudents" class="tab active">Students</button>
+    <button id="tabClasses" class="tab">Classes</button>
+    <button id="tabSubjects" class="tab">Subjects</button>
+    <button id="tabExams" class="tab">Exams</button>
+    <button id="tabTeachers" class="tab">Teachers</button>
+    <!-- somewhere in header or nav buttons -->
+<button id="gotoLeaderboardBtn" class="btn">Leaderboard</button>
+
+  </nav>
+
+  <!-- PAGES -->
+  <main>
+    <section id="pageStudents" class="page" style="display:block">
+      <div class="page-header">
+        <input id="studentsSearch" type="text" placeholder="Search students..." />
+        <select id="studentsClassFilter"></select>
+        <select id="studentsExamForTotals"></select>
+        <button id="openAddStudent" class="btn btn-primary">+ Add Student</button>
+      </div>
+      <div id="studentsList"></div>
+    </section>
+
+    <section id="pageClasses" class="page">
+      <div class="page-header">
+        <input id="classSearch" type="text" placeholder="Search classes..." />
+        <button id="openAddClass" class="btn btn-primary">+ Add Class</button>
+      </div>
+      <div id="classesList"></div>
+    </section>
+
+    <section id="pageSubjects" class="page">
+      <div class="page-header">
+        <input id="subjectSearch" type="text" placeholder="Search subjects..." />
+        <button id="openAddSubject" class="btn btn-primary">+ Add Subject</button>
+      </div>
+      <div id="subjectsList"></div>
+    </section>
+
+    <section id="pageExams" class="page">
+      <div class="page-header">
+        <input id="examSearch" type="text" placeholder="Search exams..." />
+        <select id="examClassFilter"></select>
+        <button id="openAddExam" class="btn btn-primary">+ Add Exam</button>
+      </div>
+      <div id="examsList"></div>
+    </section>
+
+    <section id="pageTeachers" class="page">
+      <div class="page-header">
+        <input id="teachersSearch" type="text" placeholder="Search teachers..." />
+        <select id="teachersSubjectFilter"></select>
+        <button id="openAddTeacher" class="btn btn-primary">+ Add Teacher</button>
+      </div>
+      <div id="teachersList"></div>
+    </section>
+  </main>
+
+  <!-- Modal (shared) -->
+  <div id="modalBackdrop">
+    <div id="modal">
+      <button id="modalClose">✕</button>
+      <h3 id="modalTitle"></h3>
+      <div id="modalBody"></div>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+
+  <!-- Firebase config + app logic -->
+  <!-- Make sure database.js path is correct and it's type=module -->
+  <script type="module" src="firebase-config.js"></script>
+  <script type="module" src="database.js"></script>
+</body>
+</html>

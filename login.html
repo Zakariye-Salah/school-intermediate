@@ -1,0 +1,429 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Admin Login — Alfatxi School</title>
+
+  <!-- Responsive, modern styles for the login -->
+  <style>
+    :root{
+      --bg: #0f1724;
+      --card: #0b1220;
+      --muted: #9aa4b2;
+      --accent: #3b82f6; /* blue */
+      --success: #10b981;
+      --danger: #ef4444;
+      --glass: rgba(255,255,255,0.03);
+      --radius: 14px;
+      --shadow: 0 8px 30px rgba(2,6,23,0.6);
+      --max-width: 420px;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+    }
+
+    html,body{height:100%}
+    body{
+      margin:0;
+      background:
+        radial-gradient(1200px 500px at 10% 10%, rgba(59,130,246,0.08), transparent 6%),
+        linear-gradient(180deg, #071029 0%, #071022 60%);
+      color: #e6eef8;
+      -webkit-font-smoothing:antialiased;
+      -moz-osx-font-smoothing:grayscale;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      padding:24px;
+    }
+
+    /* Card */
+    .login-card{
+      width:100%;
+      max-width:var(--max-width);
+      background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+      border-radius:var(--radius);
+      padding:28px;
+      box-shadow:var(--shadow);
+      border:1px solid rgba(255,255,255,0.03);
+      backdrop-filter: blur(8px);
+    }
+
+    .brand {
+      display:flex;
+      align-items:center;
+      gap:12px;
+      margin-bottom:18px;
+    }
+    .brand .logo {
+      width:44px;
+      height:44px;
+      border-radius:10px;
+      display:inline-grid;
+      place-content:center;
+      font-weight:700;
+      background:linear-gradient(135deg,var(--accent),#6ee7b7 120%);
+      color:#012;
+      box-shadow:0 6px 18px rgba(59,130,246,0.18);
+    }
+    h2{
+      margin:0;
+      font-size:18px;
+      letter-spacing:0.2px;
+      color: #e6eef8;
+    }
+    p.lead{
+      margin:6px 0 20px;
+      color:var(--muted);
+      font-size:13px;
+    }
+
+    /* Form */
+    .form-row{display:flex;flex-direction:column;gap:12px}
+    label{
+      font-size:13px;
+      color:var(--muted);
+      margin-bottom:6px;
+      display:inline-block;
+    }
+    input[type="text"],
+    input[type="email"],
+    input[type="password"]{
+      width:100%;
+      padding:12px 14px;
+      border-radius:10px;
+      border:1px solid rgba(255,255,255,0.04);
+      background: linear-gradient(180deg, rgba(255,255,255,0.01), rgba(255,255,255,0.00));
+      color: #e6eef8;
+      outline: none;
+      font-size:15px;
+      transition: box-shadow .15s ease, border-color .12s ease, transform .08s ease;
+      box-shadow: inset 0 -1px 0 rgba(255,255,255,0.01);
+    }
+    input:focus{
+      border-color: rgba(59,130,246,0.9);
+      box-shadow: 0 6px 24px rgba(59,130,246,0.06);
+      transform: translateY(-1px);
+    }
+
+    /* password field wrapper to position eye icon */
+    .password-wrap{
+      position:relative;
+      display:flex;
+      align-items:center;
+    }
+    #togglePassword{
+      position:absolute;
+      right:8px;
+      background:transparent;
+      border:none;
+      height:40px;
+      width:40px;
+      display:inline-grid;
+      place-items:center;
+      border-radius:8px;
+      cursor:pointer;
+      color:var(--muted);
+      transition: background .12s ease, color .12s ease, transform .08s ease;
+    }
+    #togglePassword:focus{outline:2px solid rgba(59,130,246,0.18)}
+    #togglePassword:hover{background:rgba(255,255,255,0.02); color: #dbeafe; transform: translateY(-1px);}
+
+    /* Login button */
+    #login{
+      margin-top:6px;
+      width:100%;
+      padding:12px 14px;
+      border-radius:12px;
+      border:0;
+      font-weight:600;
+      font-size:15px;
+      cursor:pointer;
+      background: linear-gradient(90deg,var(--accent), #60a5fa);
+      color:#042;
+      box-shadow: 0 8px 28px rgba(59,130,246,0.14);
+      transition: transform .12s ease, box-shadow .12s ease, opacity .12s ease;
+    }
+    #login:active{transform: translateY(1px)}
+    #login[disabled]{opacity:0.65; cursor:not-allowed}
+
+    /* message / error */
+    #msg{
+      margin-top:10px;
+      min-height:20px;
+      font-size:13px;
+      color: var(--danger);
+    }
+
+    /* small extras */
+    .meta{
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      gap:8px;
+      margin-top:8px;
+      color:var(--muted);
+      font-size:13px;
+    }
+    .link-like{
+      color:var(--accent);
+      text-decoration:none;
+      cursor:pointer;
+    }
+
+    /* Responsive tweaks */
+    @media (max-width:420px){
+      .login-card{ padding:20px; border-radius:12px }
+      h2{ font-size:17px }
+      .brand .logo{ width:40px; height:40px }
+    }
+
+    @media (min-width:900px){
+      body{ padding:40px }
+      .login-card{ transform: translateY(-6px) }
+    }
+  </style>
+</head>
+<body>
+  <main class="login-card" role="main" aria-labelledby="loginHeading">
+    <div class="brand" aria-hidden="true">
+      <div class="logo">AS</div>
+      <div>
+        <h2 id="loginHeading">Admin Login</h2>
+        <p class="lead">Sign in to access the Alfatxi School admin panel.</p>
+      </div>
+    </div>
+
+    <div class="form-row" role="form" aria-describedby="msg">
+      <div>
+        <label for="email">Email</label>
+        <input id="email" type="email" inputmode="email" autocomplete="username" placeholder="you@school.org" />
+      </div>
+
+      <div>
+        <label for="password">Password</label>
+        <div class="password-wrap">
+          <!-- Keep the original password input id exactly as requested -->
+          <input id="password" type="password" autocomplete="current-password" placeholder="••••••••" />
+          <!-- toggle button (new id, won't affect your logic) -->
+          <button id="togglePassword" type="button" aria-label="Show password" title="Show password">
+            <!-- inline svg eye icon (starts as "eye" = hidden password) -->
+            <svg id="eyeIcon" width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+              <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <button id="login" type="button">Login</button>
+
+      <div id="msg" role="status" aria-live="polite" style="color:red;margin-top:8px"></div>
+
+      <div class="meta" aria-hidden="true">
+        <span style="opacity:.9">Need help? <a class="link-like" href="#">Contact admin</a></span>
+        <small style="color:var(--muted)">Alfatxi School</small>
+      </div>
+    </div>
+  </main>
+
+  <!-- <script type="module">
+    import { auth } from './firebase-config.js';
+    import { signInWithEmailAndPassword } from 'https://www.gstatic.com/firebasejs/9.22.2/firebase-auth.js';
+    import { doc, getDoc, getFirestore } from 'https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore.js';
+    import { db } from './firebase-config.js';
+
+    // keep your original IDs and logic intact
+    const emailI = document.getElementById('email');
+    const passI = document.getElementById('password');
+    const loginBtn = document.getElementById('login');
+    const msg = document.getElementById('msg');
+
+    // --- Show / hide password toggle (non-intrusive, preserves your IDs) ---
+    const toggleBtn = document.getElementById('togglePassword');
+    const eyeIcon = document.getElementById('eyeIcon');
+
+    function setEyeIcon(isHidden){
+      // isHidden=true when the password is hidden (type=password) so show "eye" icon
+      // isHidden=false when password is visible so show "eye-off" icon
+      if(isHidden){
+        eyeIcon.innerHTML = `
+          <path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+          <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+        `;
+        toggleBtn.setAttribute('aria-label','Show password');
+        toggleBtn.title = 'Show password';
+      }else{
+        // eye-off icon
+        eyeIcon.innerHTML = `
+          <path d="M3 3l18 18" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M17.94 17.94A9.95 9.95 0 0 1 12 19c-6 0-10-7-10-7a19.5 19.5 0 0 1 4.13-5.13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M9.88 9.88A3 3 0 0 0 14.12 14.12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+        `;
+        toggleBtn.setAttribute('aria-label','Hide password');
+        toggleBtn.title = 'Hide password';
+      }
+    }
+
+    // initial state (password hidden)
+    setEyeIcon(true);
+
+    toggleBtn.addEventListener('click', () => {
+      const currentType = passI.getAttribute('type') || 'password';
+      if (currentType === 'password') {
+        passI.setAttribute('type', 'text');
+        setEyeIcon(false);
+      } else {
+        passI.setAttribute('type', 'password');
+        setEyeIcon(true);
+      }
+      // keep focus on password after toggling
+      passI.focus();
+    });
+
+    // allow pressing Enter to submit when focused in inputs
+    [emailI, passI].forEach(inp => {
+      inp.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          loginBtn.click();
+        }
+      });
+    });
+
+    // --- Your original login logic preserved and unchanged ---
+    loginBtn.onclick = async () => {
+      msg.textContent = '';
+      try {
+        const userCred = await signInWithEmailAndPassword(auth, emailI.value.trim(), passI.value);
+        // Check admins collection for this uid or email
+        const adminDocByUid = await getDoc(doc(db, 'admin', userCred.user.uid));
+        const adminDocByEmail = await getDoc(doc(db, 'adminsEmails', userCred.user.email.replace('.',',')));
+        const isAdmin = (adminDocByUid.exists() && adminDocByUid.data().isAdmin) || (adminDocByEmail.exists() && adminDocByEmail.data().isAdmin);
+        if (!isAdmin) {
+          msg.textContent = 'Access denied. No admin record found.';
+          await auth.signOut();
+          return;
+        }
+        // redirect to admin page
+        window.location.href = 'admin.html';
+      } catch (err) {
+        console.error(err);
+        // Clean common firebase messages to be user-friendly (optional)
+        const raw = err && err.message ? err.message : 'Login failed';
+        // you can keep raw if you prefer the full error
+        msg.textContent = raw;
+      }
+    };
+  </script> -->
+
+  <script type="module">
+    /* login.js - admin login with email/password (keeps your IDs & toggle) */
+    import { auth, db } from './firebase-config.js';
+    import { signInWithEmailAndPassword } from 'https://www.gstatic.com/firebasejs/9.22.2/firebase-auth.js';
+    import { collection, query, where, getDocs, setDoc, doc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore.js';
+    
+    const emailI = document.getElementById('email');
+    const passI = document.getElementById('password');
+    const loginBtn = document.getElementById('login');
+    const msg = document.getElementById('msg');
+    
+    const toggleBtn = document.getElementById('togglePassword');
+    const eyeIcon = document.getElementById('eyeIcon');
+    
+    function setEyeIcon(isHidden){
+      if(isHidden){
+        eyeIcon.innerHTML = `
+          <path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+          <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+        `;
+        toggleBtn.setAttribute('aria-label','Show password');
+        toggleBtn.title = 'Show password';
+      } else {
+        eyeIcon.innerHTML = `
+          <path d="M3 3l18 18" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M17.94 17.94A9.95 9.95 0 0 1 12 19c-6 0-10-7-10-7a19.5 19.5 0 0 1 4.13-5.13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M9.88 9.88A3 3 0 0 0 14.12 14.12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+        `;
+        toggleBtn.setAttribute('aria-label','Hide password');
+        toggleBtn.title = 'Hide password';
+      }
+    }
+    setEyeIcon(true);
+    
+    toggleBtn.addEventListener('click', () => {
+      const currentType = passI.getAttribute('type') || 'password';
+      if (currentType === 'password') {
+        passI.setAttribute('type', 'text');
+        setEyeIcon(false);
+      } else {
+        passI.setAttribute('type', 'password');
+        setEyeIcon(true);
+      }
+      passI.focus();
+    });
+    
+    [emailI, passI].forEach(inp => {
+      inp.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          loginBtn.click();
+        }
+      });
+    });
+    
+    // next param decides where to go after login (default admin.html)
+    const params = new URLSearchParams(window.location.search);
+    const next = params.get('next') || 'admin.html';
+    
+    // Main login handler (keeps your UI elements)
+    loginBtn.onclick = async () => {
+      msg.textContent = '';
+      try {
+        const email = (emailI.value || '').trim();
+        const password = passI.value || '';
+        if(!email || !password){ msg.textContent = 'Enter email and password.'; return; }
+    
+        const userCred = await signInWithEmailAndPassword(auth, email, password);
+        const uid = userCred.user.uid;
+        const userEmail = (userCred.user.email || '').toLowerCase();
+    
+        // Check "admin" collection for either a document with matching uid or matching email field.
+        // (You said your collection is named 'admin' — keep that name)
+        const snapsByUid = await getDocs(query(collection(db,'admin'), where('uid','==', uid)));
+        const snapsByEmail = await getDocs(query(collection(db,'admin'), where('email','==', userEmail)));
+        const isAdmin = (snapsByUid.size > 0) || (snapsByEmail.size > 0);
+    
+        if(!isAdmin){
+          msg.textContent = 'Access denied. No admin record found.';
+          await auth.signOut();
+          return;
+        }
+    
+        // persist small users mapping so other pages can detect role quickly
+        try {
+          await setDoc(doc(db,'users', uid), { role:'admin', adminUid: uid, linkedAt: serverTimestamp() }, { merge:true });
+        } catch(e){
+          console.warn('Failed to persist users mapping (non-fatal)', e);
+        }
+    
+        // mark verified locally (leaderboard.js reads localStorage)
+        localStorage.setItem('verifiedRole','admin');
+        localStorage.removeItem('verifiedStudentId');
+        localStorage.setItem('verifiedStudentName', (userCred.user.displayName || ''));
+    
+        // redirect back to requested page (leaderboard or admin)
+        window.location.href = next;
+      } catch (err) {
+        console.error(err);
+        // friendly messages for common errors — add more codes if needed
+        const code = err && err.code ? err.code : '';
+        if(code === 'auth/wrong-password' || code === 'auth/invalid-login-credentials') msg.textContent = 'Incorrect email or password.';
+        else if(code === 'auth/user-not-found') msg.textContent = 'No account found with that email.';
+        else msg.textContent = (err && err.message) ? err.message : 'Login failed';
+      }
+    };
+    </script>
+    
+  
+</body>
+</html>
