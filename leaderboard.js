@@ -781,24 +781,8 @@ async function renderLeaderboard(){
       }
     }
 
-   // build row markup (replace existing tr.innerHTML assignment)
-tr.innerHTML = `
-<td data-label="Rank">
-  <div class="rank-badge ${r.rank===1? 'first' : r.rank===2? 'second' : r.rank===3? 'third' : ''}">${escapeHtml(String(r.rank||'—'))}</div>
-</td>
-<td data-label="Name">
-  <div class="cell">
-    <div class="student-name"><strong>${escapeHtml(r.studentName || '—')}</strong></div>
-    <div class="cell-muted">${escapeHtml(r.className || '—')}</div>
-  </div>
-</td>
-<td data-label="ID"><div class="cell-muted id-mask">${idMasked}</div></td>
-<td data-label="Points"><div class="points-badge">${points}</div></td>
-<td data-label="Action">
-  <div class="actions-wrap">${actionHtml}</div>
-</td>
-`;
-
+    tr.innerHTML = `<td>${rankCell}</td><td>${name}</td><td>${className}</td><td>${idMasked}</td><td><strong>${points}</strong></td><td>${actionHtml}</td>`;
+    leaderTbody.appendChild(tr);
   }
 
   // If admin expanded and there are additional scorers with points > 0 that are NOT in primaryRows, append them
@@ -1177,17 +1161,7 @@ function appendOrShowMyRow(me, isEmpty){
   const className = escapeHtml(me.className || '—');
   const idMasked = maskId(me.studentId || '');
   const points = escapeHtml(String(me.points || 0));
-  tr.innerHTML = `
-  <td data-label="Rank"><div class="rank-badge">${escapeHtml(String(me.rank || '—'))}</div></td>
-  <td data-label="Name">
-    <div class="cell"><div class="student-name"><strong>${escapeHtml(me.studentName || sessionStorage.getItem('verifiedStudentName') || '—')}</strong></div>
-      <div class="cell-muted">${escapeHtml(me.className || '—')}</div>
-    </div>
-  </td>
-  <td data-label="ID"><div class="cell-muted id-mask">${maskId(me.studentId || '')}</div></td>
-  <td data-label="Points"><div class="points-badge">${escapeHtml(String(me.points || 0))}</div></td>
-  <td data-label="Action"><div class="small-muted">Your rank</div></td>
-`;
+  tr.innerHTML = `<td>${rankCell}</td><td>${name}</td><td>${className}</td><td>${idMasked}</td><td><strong>${points}</strong></td><td class="small-muted">Your rank</td>`;
   leaderTbody.appendChild(tr);
   tr.scrollIntoView({ behavior:'smooth', block:'center' });
 }
