@@ -68,7 +68,6 @@ function nowSeconds() {
 
 function toast(msg, t = 2800){ const el = document.createElement('div'); el.className='card'; el.style.position='fixed'; el.style.right='18px'; el.style.bottom='18px'; el.style.zIndex=5000; el.textContent = msg; document.body.appendChild(el); setTimeout(()=>el.remove(),t); }
 function maskId(id){ if(!id) return '—'; const s=String(id); if(s.length<=4) return '*'.repeat(s.length); return '***'+s.slice(-4); }
-function nowSeconds(){ return Math.floor(Date.now()/1000); }
 function getVerifiedRole(){ return sessionStorage.getItem('verifiedRole') || localStorage.getItem('verifiedRole') || null; }
 function getVerifiedStudentId(){ return sessionStorage.getItem('verifiedStudentId') || localStorage.getItem('verifiedStudentId') || null; }
 function getVerifiedStudentName(){ return sessionStorage.getItem('verifiedStudentName') || localStorage.getItem('verifiedStudentName') || ''; }
