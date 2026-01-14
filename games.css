@@ -1,8 +1,12 @@
-/* games.css — responsive header & mobile improvements
+/* games.css — responsive header, action buttons fit mobile
    Replace your existing games.css with this file.
-   Key goals: mobile-friendly header, larger touch targets, compact actions on small screens,
-   better spacing and consistent rem-based sizes.
+   Key changes:
+   - actions-row will wrap and shrink nicely
+   - buttons reduce padding + font-size on small screens
+   - icon-only mode for very small screens (uses ::before icons for known IDs)
+   - keeps keyboard focus and accessibility in mind
 */
+
 :root{
   --card-bg: #fff;
   --muted: #6b7280;
@@ -19,7 +23,18 @@
 }
 
 /* base page */
-html,body{ height:100%; margin:0; font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale; background:var(--surface); color:#07122b; font-size:var(--fs-base); line-height:1.3; box-sizing:border-box; }
+html,body{
+  height:100%;
+  margin:0;
+  font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+  -webkit-font-smoothing:antialiased;
+  -moz-osx-font-smoothing:grayscale;
+  background:var(--surface);
+  color:#07122b;
+  font-size:var(--fs-base);
+  line-height:1.3;
+  box-sizing:border-box;
+}
 *,*::before,*::after{ box-sizing:inherit; }
 
 .container { max-width:68.75rem; /* 1100px */ margin:1.125rem auto; padding:0 0.75rem; }
@@ -45,26 +60,67 @@ header > div:first-child{ display:flex; flex-direction:column; min-width:0; gap:
 .small-muted { color:var(--muted); font-size:0.875rem; }
 
 /* actions area */
-.actions-row { display:flex; gap:var(--action-gap); align-items:center; flex:0 0 auto; }
+.actions-row {
+  display:flex;
+  gap:var(--action-gap);
+  align-items:center;
+  flex:0 0 auto;
+  /* allow the actions to move to next line when needed */
+  flex-wrap:wrap;
+  justify-content:flex-end;
+  align-self:stretch; /* allow alignment when header wraps */
+  max-width:60%; /* keep title area breathing on desktop */
+}
+
+/* On very narrow layouts allow actions row to be full-width so they can wrap under title */
+@media (max-width: 56rem) {
+  .actions-row{ max-width:100%; }
+}
 
 /* make the actions row horizontally scrollable on tiny screens if overflowed */
-.actions-row{ max-width:min(60vw,38rem); }
 .actions-row{ overflow:auto; -webkit-overflow-scrolling:touch; }
 .actions-row::-webkit-scrollbar{ display:none; }
 
 /* search */
 .search { display:flex; align-items:center; gap:0.45rem; }
-.search input { padding:0.5rem 0.6rem; border-radius:0.6rem; border:1px solid #e6eefc; font-size:0.95rem; width:14rem; transition:width .22s ease, opacity .18s ease; background:#fff; }
+.search input {
+  padding:0.5rem 0.6rem;
+  border-radius:0.6rem;
+  border:1px solid #e6eefc;
+  font-size:0.95rem;
+  width:14rem;
+  transition:width .22s ease, opacity .18s ease;
+  background:#fff;
+}
 #enterCodeInput::placeholder{ color: #9aa4bf; }
 
-/* small compact search on mobile: hide the input visually and show a small icon-styled button instead */
+/* small compact search on mobile: keep input but allow it to be focused-opened */
 #codeSearchBtn{ display:inline-flex; align-items:center; justify-content:center; padding:0.48rem 0.7rem; border-radius:0.6rem; cursor:pointer; border:0; background:transparent; font-size:0.95rem; }
 
 /* generic buttons */
-.btn { padding:0.56rem 0.75rem; border-radius:0.6rem; cursor:pointer; border:0; background:transparent; font-size:0.95rem; min-height:2.4rem; display:inline-flex; align-items:center; gap:0.45rem; }
+.btn {
+  padding:0.56rem 0.75rem;
+  border-radius:0.6rem;
+  cursor:pointer;
+  border:0;
+  background:transparent;
+  font-size:0.95rem;
+  min-height:2.4rem;
+  display:inline-flex;
+  align-items:center;
+  gap:0.45rem;
+  white-space:nowrap;
+  flex:0 0 auto; /* don't stretch by default */
+  transition: padding .12s ease, font-size .12s ease, min-width .12s ease;
+}
 .btn-primary { background:var(--primary); color:#fff; box-shadow:0 6px 18px rgba(37,99,235,0.08); }
 .btn-ghost { border:1px solid #e6eefc; background:transparent; }
 
+/* allow buttons to shrink a little on smaller widths */
+.btn { min-width: 2.4rem; }
+.btn.small { padding:0.4rem 0.5rem; font-size:0.9rem; }
+
+/* quick stat style */
 .stat { background:var(--card-bg); padding:0.5rem 0.6rem; border-radius:0.6rem; box-shadow:var(--shadow); font-weight:700; font-size:0.95rem; }
 
 /* List and cards */
@@ -115,35 +171,93 @@ header > div:first-child{ display:flex; flex-direction:column; min-width:0; gap:
   /* shrink stats row on mobile to wrap */
   .stats-row{ display:flex; gap:0.5rem; flex-wrap:wrap; margin-top:0.6rem }
 
-  /* make search input less dominant and switch to icon-only button when space is tight */
-  .search input { width:0; padding:0; border:0; opacity:0; pointer-events:none; transition:all .18s ease; }
-  /* show small search icon on the button via pseudo element */
+  /* reduce actions gap and allow wrapping to keep buttons visible */
+  .actions-row { gap:0.35rem; align-items:center; }
+
+  /* reduce search input dominance */
+  .search input {
+    width:10rem;
+    font-size:0.92rem;
+    padding:0.45rem 0.5rem;
+  }
+
+  /* make the search button compact */
   #codeSearchBtn{ min-width:2.6rem; padding:0.44rem; border-radius:0.6rem; }
-  #codeSearchBtn::before{ content: '🔍'; font-size:1.05rem; display:inline-block; }
-  /* visually hide the written label but keep it for accessibility */
-  #codeSearchBtn span{ position:absolute !important; left:-9999px !important; }
 
   /* make .actions-row wrap nicely — push actions to a new line when needed */
   .actions-row{ width:100%; justify-content:flex-end; gap:0.4rem; }
 
-  /* enlarge tap targets */
-  .btn, .stat { padding:0.6rem 0.75rem; min-height:2.8rem; }
+  /* enlarge tap targets slightly */
+  .btn, .stat { padding:0.56rem 0.7rem; min-height:2.6rem; }
 
   /* game card spacing reduced slightly */
   .game-card{ padding:0.6rem; }
 }
 
-/* extra small screens — ensure everything still fits */
-@media (max-width: 360px){
+/* extra-small screens: compress labels but keep icons */
+@media (max-width: 420px){
+  /* tighten header height */
   :root{ --header-height:4rem; }
-  .title{ font-size:1rem }
-  .game-title{ font-size:0.92rem }
-  .small-muted{ font-size:0.78rem }
+
+  /* make action buttons smaller and icon-friendly */
+  .btn {
+    padding:0.44rem;
+    min-width:2.6rem;
+    font-size:0.88rem;
+    gap:0.28rem;
+  }
+
+  /* hide long label text visually by setting font-size:0 on buttons,
+     but show an icon via ::before. This keeps the original text in the DOM
+     for accessibility/readers while improving layout on very small screens. */
+  .actions-row .btn {
+    /* visually compress text */
+    font-size:0;              /* hides textual content visually */
+    line-height:1;
+    height:auto;
+    padding:0.44rem 0.5rem;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+  }
+
+  /* set icons for known buttons (IDs in your HTML) */
+  #codeSearchBtn::before{ content: '🔍'; font-size:1.05rem; display:inline-block; }
+  #filterStudentsBtn::before{ content: '👩\u200D🎓'; font-size:1.05rem; display:inline-block; }
+  #filterBotsBtn::before{ content: '🤖'; font-size:1.05rem; display:inline-block; }
+  #settingsBtn::before{ content: '⚙'; font-size:1.05rem; display:inline-block; }
+  #newGameBtn::before{ content: '➕'; font-size:1.05rem; display:inline-block; }
+
+  /* small styling to position ::before */
+  .actions-row .btn::before{
+    display:inline-block;
+    vertical-align:middle;
+    color:inherit;
+  }
+
+  /* keep focus ring visible for keyboard users */
+  .btn:focus{ outline:3px solid rgba(37,99,235,0.12); }
+
+  /* small font for titles/subtitle */
+  .title{ font-size:1rem; }
+  .small-muted{ font-size:0.78rem; }
+}
+
+/* ultra-small phones: switch to a wrapped layout and allow horizontal scroll on actions */
+@media (max-width: 340px){
+  .actions-row { overflow-x:auto; -webkit-overflow-scrolling:touch; gap:0.28rem; padding-bottom:0.15rem; }
+  .actions-row .btn{ padding:0.36rem; min-width:2.4rem; }
 }
 
 /* keyboard / focus accessibility improvements */
-.search input:focus{ outline:2px solid rgba(37,99,235,0.14); box-shadow:0 6px 18px rgba(37,99,235,0.06); opacity:1; pointer-events:auto; width:12rem; }
-.btn:focus{ outline:3px solid rgba(37,99,235,0.12); }
+.search input:focus{
+  outline:2px solid rgba(37,99,235,0.14);
+  box-shadow:0 6px 18px rgba(37,99,235,0.06);
+  opacity:1;
+  pointer-events:auto;
+  width:12rem;
+}
+.btn:focus{ outline-offset:2px; }
 
 /* utility: hidden class used in the markup */
 .hidden{ display:none !important; }
