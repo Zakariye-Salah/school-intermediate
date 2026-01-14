@@ -225,22 +225,42 @@ function openEditProfileModal(){
   let optionsHtml = '<div style="display:flex;flex-wrap:wrap;gap:8px">';
   for(let i=1;i<=10;i++){
     const src = `assets/avatar${i}.png`;
-    optionsHtml += `<label style="cursor:pointer"><input type="radio" name="avatarPick" value="${src}" style="display:none"><img src="${src}" data-src="${src}" style="width:64px;height:64px;border-radius:8px;border:2px solid transparent" class="avatar-pick" /></label>`;
+    optionsHtml += `<label style="cursor:pointer"><input type="radio" name="avatarPick" value="${src}" style="display:none"><img src="${src}" data-src="${src}" style="width:64px;height:64px;border-radius:8px;border:2px solid transparent;object-fit:cover" class="avatar-pick" /></label>`;
   }
   optionsHtml += '</div>';
   optionsHtml += `<div style="margin-top:8px"><label>Avatar frame (name): <input id="avatarFrameInput" class="input-small" placeholder="frame_level_1"></label></div>`;
   optionsHtml += `<div style="text-align:right;margin-top:10px"><button id="cancelProfileEdit" class="btn">Cancel</button> <button id="saveProfileEdit" class="btn btn-primary">Save</button></div>`;
 
   showModal(optionsHtml, { title: 'Edit profile' });
+
+  // pre-select current avatar if exists
+  const currentAvatar = currentStudentProfile?.avatar || null;
+  if(currentAvatar){
+    const all = modalRoot.querySelectorAll('.avatar-pick');
+    all.forEach(img => {
+      if(img.dataset.src === currentAvatar || img.src.endsWith(currentAvatar.split('/').pop())){
+        img.style.borderColor = '#2563eb';
+        const radio = img.previousElementSibling;
+        if(radio) radio.checked = true;
+      }
+    });
+  }
+
   // wire image clicks
   modalRoot.querySelectorAll('.avatar-pick').forEach(img => {
     img.onclick = () => {
       // clear borders then highlight
       modalRoot.querySelectorAll('.avatar-pick').forEach(i => i.style.borderColor = 'transparent');
       img.style.borderColor = '#2563eb';
-      img.previousElementSibling.checked = true;
+      const radio = img.previousElementSibling;
+      if(radio) radio.checked = true;
     };
   });
+
+  // fill avatarFrame input with current value
+  const frameInput = modalRoot.querySelector('#avatarFrameInput');
+  if(frameInput) frameInput.value = currentStudentProfile?.avatarFrame || '';
+
   document.getElementById('cancelProfileEdit').onclick = closeModal;
   document.getElementById('saveProfileEdit').onclick = async () => {
     const sel = modalRoot.querySelector('input[name="avatarPick"]:checked');
@@ -249,7 +269,7 @@ function openEditProfileModal(){
     const avatarSrc = sel.value;
     try {
       await updateDoc(doc(db,'students', vId), { avatar: avatarSrc, avatarFrame: frame, updatedAt: serverTimestamp() });
-      // refresh local profile cache
+      // refresh local profile cache from authoritative doc
       const sSnap = await getDoc(doc(db,'students', vId));
       if(sSnap.exists()) currentStudentProfile = sSnap.data();
       toast('Profile updated');
@@ -258,6 +278,7 @@ function openEditProfileModal(){
     } catch(e){ console.error('save profile failed', e); alert('Save failed'); }
   };
 }
+
 
 
 async function initPage(){
@@ -753,11 +774,14 @@ function renderHeaderMiniProfile(){
     const level = currentStudentProfile.level || 1;
     const points = Number(currentStudentProfile.totalPoints || 0);
 
+    // Avatar: either image (if avatar field present) or initials
+    const avatarHtml = (currentStudentProfile.avatar)
+      ? `<img src="${escapeHtml(currentStudentProfile.avatar)}" alt="avatar" style="width:40px;height:40px;border-radius:8px;object-fit:cover">`
+      : `<div class="avatar-initials" style="width:40px;height:40px;border-radius:8px;display:flex;align-items:center;justify-content:center;background:#eef2f6;font-weight:700">${escapeHtml((name||'').slice(0,2))}</div>`;
+
     miniProfileTag.innerHTML = `
       <div class="mini-profile" style="display:flex;align-items:center;gap:10px">
-        <div class="avatar ${currentStudentProfile.avatarFrame?('frame-'+currentStudentProfile.avatarFrame):''}">
-          ${escapeHtml((name||'').slice(0,2))}
-        </div>
+        <div class="avatar-wrap" style="width:40px;height:40px">${avatarHtml}</div>
         <div class="profile-txt" style="min-width:0">
           <div class="name" style="font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
             ${escapeHtml(name)}
