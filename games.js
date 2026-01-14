@@ -64,6 +64,54 @@ function getVerifiedRole(){ return sessionStorage.getItem('verifiedRole') || loc
 function getVerifiedStudentId(){ return sessionStorage.getItem('verifiedStudentId') || localStorage.getItem('verifiedStudentId') || null; }
 function getVerifiedStudentName(){ return sessionStorage.getItem('verifiedStudentName') || localStorage.getItem('verifiedStudentName') || ''; }
 
+// Fetch freshest student profile and fallbacks (competitionScores) if needed
+async function refreshStudentProfile() {
+  if(!currentStudentId) return null;
+  let prof = currentStudentProfile || {};
+  try {
+    const sSnap = await getDoc(doc(db, 'students', currentStudentId));
+    if (sSnap.exists()) {
+      prof = sSnap.data();
+      // accept different point field names
+      prof.totalPoints = Number(prof.totalPoints ?? prof.points ?? 0);
+      currentStudentProfile = prof;
+    }
+  } catch (e) {
+    console.warn('refresh student doc failed', e);
+  }
+
+  // if points are 0 or missing, try competitionScores fallback (leaderboard)
+  const pts = Number(prof.totalPoints || 0);
+  if(pts <= 0) {
+    try {
+      // try to find best available competitionScore for this student
+      const q = query(collection(db, 'competitionScores'), where('studentId', '==', currentStudentId), orderBy('points','desc'), limit(1));
+      const snaps = await getDocs(q);
+      if (snaps.size > 0) {
+        const docSnap = snaps.docs[0];
+        const cs = docSnap.data();
+        const csPoints = Number(cs.points || 0);
+        if (csPoints > pts) {
+          // write back to students doc as a non-destructive helpful sync (optional)
+          try { 
+            await updateDoc(doc(db,'students', currentStudentId), { totalPoints: csPoints, updatedAt: serverTimestamp() });
+          } catch(e){ /* ignore write failures (security rules) */ }
+          // ensure local profile shows accurate points
+          currentStudentProfile = { ...(currentStudentProfile||{}), totalPoints: csPoints };
+        }
+      }
+    } catch(e){
+      console.warn('competitionScores fallback failed', e);
+    }
+  }
+
+  // final ensure numeric
+  currentStudentProfile = currentStudentProfile || {};
+  currentStudentProfile.totalPoints = Number(currentStudentProfile.totalPoints || 0);
+  return currentStudentProfile;
+}
+
+
 /* ---------- local JSON loader (your function, integrated) ---------- */
 async function loadLocalTestSets() {
   const paths = ['./math_questions_100.json', '/math_questions_100.json', './data/math_questions_100.json', '/data/math_questions_100.json'];
@@ -229,25 +277,48 @@ async function initPage(){
 
   await loadBots();
 
+  // refresh student profile from Firestore (authoritative)
   if(currentRole === 'student' && currentStudentId){
     try {
-      const sSnap = await getDoc(doc(db,'students', currentStudentId));
-      if(sSnap.exists()) currentStudentProfile = sSnap.data();
-    } catch(e){ console.warn('fetch student profile failed', e); }
+      await refreshStudentProfile(); // ensures currentStudentProfile is freshest (and syncs fallback)
+    } catch(e){ console.warn('refreshStudentProfile failed', e); }
   }
 
+  // render header mini-profile (uses currentStudentProfile)
   renderHeaderMiniProfile();
+
+  // inject header buttons (leaderboard/games/gear) if page has appropriate container
   injectHeaderButtons();
+
+  // Ensure the page-level settings button (#settingsBtn) is visible and wired
+  const settingsBtnEl = document.getElementById('settingsBtn');
+  if(settingsBtnEl){
+    // make sure it is visible and accessible
+    settingsBtnEl.style.display = (currentRole === 'student') ? '' : 'none';
+    settingsBtnEl.style.visibility = (currentRole === 'student') ? 'visible' : 'hidden';
+    settingsBtnEl.onclick = () => {
+      const vrole = getVerifiedRole();
+      if(vrole !== 'student') { toast('Verify as a student to edit profile'); return; }
+      openEditProfileModal();
+    };
+  }
+
+  // show/hide newGame button for verified students
+  if(newGameBtn){
+    newGameBtn.style.display = (currentRole === 'student') ? '' : 'none';
+  }
 
   await loadGames();
   subscribeStats();
 
+  // wire UI actions
   newGameBtn.onclick = onNewGameClick;
   codeSearchBtn.onclick = onCodeSearch;
   filterStudentsBtn.onclick = () => { filterStudentsBtn.classList.add('btn-ghost'); filterBotsBtn.classList.remove('btn-ghost'); renderGames('students'); };
   filterBotsBtn.onclick = () => { filterBotsBtn.classList.add('btn-ghost'); filterStudentsBtn.classList.remove('btn-ghost'); renderGames('bots'); };
   filterStudentsBtn.classList.add('btn-ghost');
 }
+
 
 /* ---------- load games ---------- */
 async function loadGames(){
