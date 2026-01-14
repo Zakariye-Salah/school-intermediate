@@ -1,5 +1,8 @@
-/* games.css - matches leaderboard theme (use rem units for sizes) */
-
+/* games.css — responsive header & mobile improvements
+   Replace your existing games.css with this file.
+   Key goals: mobile-friendly header, larger touch targets, compact actions on small screens,
+   better spacing and consistent rem-based sizes.
+*/
 :root{
   --card-bg: #fff;
   --muted: #6b7280;
@@ -9,32 +12,69 @@
   --radius: 0.75rem;
   --gap: 0.75rem;
   --fs-base: 1rem; /* 16px */
+  --header-height: 4.25rem; /* comfortable header height */
+  --header-pad: 0.6rem;
+  --action-gap: 0.5rem;
+  --mobile-break: 48rem; /* 768px */
 }
 
+/* base page */
 html,body{ height:100%; margin:0; font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale; background:var(--surface); color:#07122b; font-size:var(--fs-base); line-height:1.3; box-sizing:border-box; }
 *,*::before,*::after{ box-sizing:inherit; }
 
 .container { max-width:68.75rem; /* 1100px */ margin:1.125rem auto; padding:0 0.75rem; }
 
-header { display:flex; justify-content:space-between; align-items:center; gap:0.75rem; margin-bottom:0.75rem; flex-wrap:wrap; }
-.title { font-weight:800; font-size:1.0625rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+/* Header — reworked for responsiveness */
+header {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:var(--gap);
+  margin-bottom:0.75rem;
+  padding:calc(var(--header-pad) * 0.4) calc(var(--header-pad) * 0.6);
+  min-height:var(--header-height);
+  background:linear-gradient(90deg, rgba(37,99,235,0.06), rgba(37,99,235,0.02));
+  border-radius:0.85rem;
+  box-shadow: var(--shadow);
+  flex-wrap:wrap;
+}
+
+/* left block (title + subtitle) uses min-width 0 so ellipsis works */
+header > div:first-child{ display:flex; flex-direction:column; min-width:0; gap:0.18rem; }
+.title { font-weight:800; font-size:clamp(1rem, 1.7vw, 1.125rem); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .small-muted { color:var(--muted); font-size:0.875rem; }
 
-.actions-row { display:flex; gap:0.5rem; align-items:center; }
-.search input { padding:0.375rem 0.5rem; border-radius:0.5rem; border:1px solid #e6eefc; font-size:0.95rem; }
-.btn { padding:0.48rem 0.7rem; border-radius:0.5rem; cursor:pointer; border:0; background:transparent; font-size:0.95rem; }
+/* actions area */
+.actions-row { display:flex; gap:var(--action-gap); align-items:center; flex:0 0 auto; }
+
+/* make the actions row horizontally scrollable on tiny screens if overflowed */
+.actions-row{ max-width:min(60vw,38rem); }
+.actions-row{ overflow:auto; -webkit-overflow-scrolling:touch; }
+.actions-row::-webkit-scrollbar{ display:none; }
+
+/* search */
+.search { display:flex; align-items:center; gap:0.45rem; }
+.search input { padding:0.5rem 0.6rem; border-radius:0.6rem; border:1px solid #e6eefc; font-size:0.95rem; width:14rem; transition:width .22s ease, opacity .18s ease; background:#fff; }
+#enterCodeInput::placeholder{ color: #9aa4bf; }
+
+/* small compact search on mobile: hide the input visually and show a small icon-styled button instead */
+#codeSearchBtn{ display:inline-flex; align-items:center; justify-content:center; padding:0.48rem 0.7rem; border-radius:0.6rem; cursor:pointer; border:0; background:transparent; font-size:0.95rem; }
+
+/* generic buttons */
+.btn { padding:0.56rem 0.75rem; border-radius:0.6rem; cursor:pointer; border:0; background:transparent; font-size:0.95rem; min-height:2.4rem; display:inline-flex; align-items:center; gap:0.45rem; }
 .btn-primary { background:var(--primary); color:#fff; box-shadow:0 6px 18px rgba(37,99,235,0.08); }
 .btn-ghost { border:1px solid #e6eefc; background:transparent; }
 
 .stat { background:var(--card-bg); padding:0.5rem 0.6rem; border-radius:0.6rem; box-shadow:var(--shadow); font-weight:700; font-size:0.95rem; }
 
-.list { margin-top:0.75rem; display:flex; flex-direction:column; gap:0.5rem; }
+/* List and cards */
+.list { margin-top:0.75rem; display:flex; flex-direction:column; gap:0.6rem; }
 
-.game-card { display:flex; justify-content:space-between; align-items:center; background:var(--card-bg); padding:0.6rem; border-radius:0.8rem; box-shadow:var(--shadow); gap:0.5rem; min-height:3.25rem; }
-.game-left { display:flex; gap:0.6rem; align-items:center; min-width:0; overflow:hidden; }
+.game-card { display:flex; justify-content:space-between; align-items:center; background:var(--card-bg); padding:0.7rem; border-radius:0.8rem; box-shadow:var(--shadow); gap:0.6rem; min-height:3.25rem; }
+.game-left { display:flex; gap:0.7rem; align-items:center; min-width:0; overflow:hidden; }
 .avatar { width:2.75rem; height:2.75rem; border-radius:50%; background:#eef6ff; display:inline-flex; align-items:center; justify-content:center; font-weight:700; color:#07122b; flex:0 0 auto; overflow:hidden; }
 .avatar img { width:100%; height:100%; object-fit:cover; display:block; }
-.avatar.frame-1 { border:0.15rem solid #FFD700; } /* example frame styling */
+.avatar.frame-1 { border:0.15rem solid #FFD700; }
 .game-meta { display:flex; flex-direction:column; gap:0.15rem; min-width:0; overflow:hidden; }
 .game-title { font-weight:800; font-size:0.95rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .game-sub { color:var(--muted); font-size:0.85rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -44,6 +84,7 @@ header { display:flex; justify-content:space-between; align-items:center; gap:0.
 .tag.public { background:linear-gradient(180deg,#ecf9ff,#e6f2ff); color:#0b74ff; }
 .tag.private { background:linear-gradient(180deg,#fff7ec,#fff3de); color:#b35d00; }
 
+/* modal & match pane: ensure fit on small screens */
 .modal { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(2,6,23,0.45); z-index:2000; padding:1rem; }
 .modal-card { width:46rem; max-width:100%; max-height:92vh; overflow:auto; background:var(--card-bg); padding:1rem; border-radius:1rem; box-shadow:0 1.8rem 4.8rem rgba(2,6,23,0.28); }
 .modal-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem; }
@@ -60,9 +101,51 @@ header { display:flex; justify-content:space-between; align-items:center; gap:0.
 
 .timer { font-weight:800; font-size:1.05rem; color:#0b1220; }
 
-@media (max-width:48rem){
+/* responsive tweaks */
+@media (max-width: var(--mobile-break)){
   .container{ padding:0 0.6rem }
   .avatar{ width:2.25rem; height:2.25rem }
   .modal-card{ width:95% }
   .match-pane{ inset:5vh 3vw 5vh 3vw }
+
+  /* make header compact: actions move to second line if needed */
+  header { padding:0.5rem; }
+  header > div:first-child { width:100%; }
+
+  /* shrink stats row on mobile to wrap */
+  .stats-row{ display:flex; gap:0.5rem; flex-wrap:wrap; margin-top:0.6rem }
+
+  /* make search input less dominant and switch to icon-only button when space is tight */
+  .search input { width:0; padding:0; border:0; opacity:0; pointer-events:none; transition:all .18s ease; }
+  /* show small search icon on the button via pseudo element */
+  #codeSearchBtn{ min-width:2.6rem; padding:0.44rem; border-radius:0.6rem; }
+  #codeSearchBtn::before{ content: '🔍'; font-size:1.05rem; display:inline-block; }
+  /* visually hide the written label but keep it for accessibility */
+  #codeSearchBtn span{ position:absolute !important; left:-9999px !important; }
+
+  /* make .actions-row wrap nicely — push actions to a new line when needed */
+  .actions-row{ width:100%; justify-content:flex-end; gap:0.4rem; }
+
+  /* enlarge tap targets */
+  .btn, .stat { padding:0.6rem 0.75rem; min-height:2.8rem; }
+
+  /* game card spacing reduced slightly */
+  .game-card{ padding:0.6rem; }
 }
+
+/* extra small screens — ensure everything still fits */
+@media (max-width: 360px){
+  :root{ --header-height:4rem; }
+  .title{ font-size:1rem }
+  .game-title{ font-size:0.92rem }
+  .small-muted{ font-size:0.78rem }
+}
+
+/* keyboard / focus accessibility improvements */
+.search input:focus{ outline:2px solid rgba(37,99,235,0.14); box-shadow:0 6px 18px rgba(37,99,235,0.06); opacity:1; pointer-events:auto; width:12rem; }
+.btn:focus{ outline:3px solid rgba(37,99,235,0.12); }
+
+/* utility: hidden class used in the markup */
+.hidden{ display:none !important; }
+
+/* end of file */
