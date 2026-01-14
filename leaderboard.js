@@ -757,7 +757,6 @@ function shortDisplay(str, len = 5) {
 }
 
 /* ---------- modal helpers (replace existing implementations) ---------- */
-const modalRoot = document.getElementById('modalRoot');
 
 function showModalInner(html, opts = {}) {
   if (!modalRoot) return;
