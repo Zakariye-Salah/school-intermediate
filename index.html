@@ -3,243 +3,347 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Alfatxi School — Results</title>
-  <style>
-    :root{
-      --bg:#fbfdff; --text:#0f172a; --muted:#6b7280; --card-shadow:0 6px 18px rgba(15,23,42,0.04);
-      --primary:#0b74ff; --btn-font:15px; --tiny-size:9px;
-    }
-    html,body{height:100%;margin:0}
-    body{font-family:Inter,system-ui,Arial,sans-serif;background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased}
-    .container { max-width:900px; margin:16px auto; padding:12px; box-sizing:border-box; }
+  <title>Leaderboard — AL-FATXI</title>
+  <link rel="stylesheet" href="style.css">
+<style>
+  :root{
+  --bg:#fbfdff;
+  --text:#0f172a;
+  --muted:#6b7280;
+  --card-bg:#fff;
+  --card-shadow:0 8px 30px rgba(15,23,42,0.04);
+  --primary:#0b74ff;
+  --radius:12px;
+  --gap:8px;
 
-    h1{font-size:1.12rem;margin:0 0 6px 0}
-    p.lead{margin:0 0 10px 0;color:var(--muted);font-size:0.95rem}
+  /* compact scale values (adjust if you want even smaller) */
+  --fs-base:14px;
+  --fs-small:12px;
+  --fs-tiny:11px;
+  --pad-td:8px;
+  --pad-td-mobile:6px;
+}
 
-    .card { background:#fff;border-radius:12px;padding:12px;box-shadow:var(--card-shadow);margin-bottom:12px;box-sizing:border-box }
-    .small-card{padding:10px}
-    .btn { display:inline-flex; align-items:center; gap:8px; border-radius:10px; padding:8px 12px; font-weight:700; border:1px solid rgba(11,116,255,0.12); background:#fff; cursor:pointer; font-size:var(--btn-font) }
-    .btn-primary{background:var(--primary);color:#fff;border-color:var(--primary)}
-    .btn-ghost{background:#fff;color:var(--text);border-color:#e6eefc}
-    .icon { width:18px; height:18px; display:inline-block; vertical-align:middle }
+/* base page */
+html,body{height:100%;margin:0}
+body{
+  font-family:Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+  -webkit-font-smoothing:antialiased;
+  -moz-osx-font-smoothing:grayscale;
+  background:var(--bg);
+  color:var(--text);
+  font-size:var(--fs-base);
+  line-height:1.25;
+}
 
-    .input-row { display:flex; gap:8px; align-items:center }
-    input#studentId { flex:1; padding:10px; border-radius:8px; border:1px solid #e6eefc; font-size:1rem; box-sizing:border-box }
+/* container */
+.container{ max-width:980px; margin:14px auto; padding:12px; box-sizing:border-box; }
 
-    .result-school { font-weight:900; font-size:1rem; margin-bottom:6px }
-    .result-header { display:flex; flex-direction:column; gap:6px; }
-    .student-line { display:block }
-    .student-name { font-size:1.18rem; font-weight:900; font-style:italic; transform:skewX(-2deg); display:inline-block; padding:6px 12px; border-radius:10px; background:linear-gradient(90deg, rgba(11,116,255,0.06), rgba(11,116,255,0.02)); color:var(--text) }
+/* cards */
+.card{ background:var(--card-bg); border-radius:var(--radius); padding:12px; box-shadow:var(--card-shadow); margin-bottom:12px; }
 
-    .id-class-line, .exam-line, .mother-line, .published-line, .source-line { font-weight:700; color:var(--muted); font-size:0.95rem }
-    .id-class-line strong, .exam-line strong { color:var(--text); font-weight:900 }
+/* header */
+header{ display:flex; gap:12px; align-items:center; justify-content:space-between; flex-wrap:wrap; }
+header h1{ margin:0; font-size:1.05rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 
-    /* Table */
-    #resultArea table { width:100%; border-collapse:collapse; font-family:inherit; }
-    #resultArea thead tr { background:#f8fafc }
-    #resultArea th { font-weight:800; text-align:center; white-space:normal; font-size:12px; padding:8px 10px; border-bottom:1px solid #f1f5f9 }
-    #resultArea th:first-child { font-size:13px; text-align:left; padding-left:12px; }
-    #resultArea td { font-weight:700; text-align:center; font-size:13px; padding:8px 10px; border-bottom:1px solid #fbfdff }
-    #resultArea td:first-child { text-align:left; font-weight:800; font-size:13px; padding-left:12px; }
+/* tiny helper */
+.small-muted{ color:var(--muted); font-size:var(--fs-small); }
 
-    .small { display:none; font-size:11px; color:var(--muted); line-height:1.05 }
+/* compact buttons */
+.btn{ display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border-radius:8px; cursor:pointer; font-weight:700; font-size:0.95rem; border:1px solid rgba(11,116,255,0.06); background:#fff; }
+.btn-primary{ background:var(--primary); color:#fff; border-color:var(--primary); }
+.btn-ghost{ background:#fff; color:var(--text); border-color:#e6eefc; }
 
-    #resultArea td:not(:first-child), #resultArea th:not(:first-child) { white-space:nowrap; min-width:36px; padding:6px 8px; }
+/* table wrapper (enable scroll on narrow screens) */
+.table-wrap { width:100%; overflow-x:auto; -webkit-overflow-scrolling:touch; border-radius:10px; padding:6px; background:linear-gradient(180deg,#fff,#fbfdff); box-sizing:border-box; }
 
-    .totals-card { margin-top:12px; padding:12px; border-radius:10px; }
-    .totals-block { display:flex; flex-direction:column; gap:8px; font-weight:800; }
-    .tot-line { display:flex; gap:18px; align-items:center; flex-wrap:wrap; justify-content:flex-start; }
+/* stable table layout for compactness */
+table.leader{
+  width:100%;
+  border-collapse:collapse;
+  table-layout: fixed; /* keeps columns compact & predictable */
+  min-width:640px;     /* allow scroller if needed on very small screens */
+  font-family:inherit;
+}
 
-    .grade-badge { padding:6px 10px; border-radius:8px; color:#fff; font-weight:900; display:inline-block }
+/* columns via colgroup classes (you included them already) */
+.col-rank  { width:64px; }
+.col-name  { width:auto; }
+.col-class { width:56px; }
+.col-id    { width:68px; }
+.col-points{ width:68px; }
+.col-action{ width:96px; }
 
-    .actions-group { margin-top:8px; display:flex; gap:8px; align-items:center; flex-wrap:wrap }
+/* header cells */
+table.leader thead th{
+  font-weight:800;
+  color:var(--muted);
+  font-size:13px;
+  padding:10px 8px;
+  text-align:left;
+  vertical-align:middle;
+  border-bottom:1px solid rgba(241,245,249,0.9);
+  white-space:nowrap;
+}
 
-    /* loader */
-    #loaderOverlay{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(8,12,20,0.2);z-index:1100}
-    .loader-card{background:#fff;padding:14px 16px;border-radius:12px;box-shadow:0 12px 30px rgba(2,6,23,0.18);text-align:center}
-    .dots{display:inline-flex;gap:8px;align-items:flex-end;margin-bottom:8px}
-    .dots .d{width:8px;height:8px;background:var(--primary);border-radius:50%;animation:jump .9s infinite}
-    .dots .d:nth-child(2){animation-delay:.12s}.dots .d:nth-child(3){animation-delay:.24s}
-    @keyframes jump{0%{transform:translateY(0)}25%{transform:translateY(-6px)}50%{transform:translateY(0)}}
+/* body cells */
+table.leader td{
+  padding:var(--pad-td) 8px;
+  font-weight:800;
+  font-size:14px;
+  text-align:left;
+  vertical-align:middle;
+  border-bottom:1px solid rgba(245,248,251,0.9);
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
 
-    /* Celebration overlay + falling emojis */
-    .celebration-overlay{
-      position:fixed; inset:0; display:none; align-items:flex-start; justify-content:center; z-index:1300;
-      padding-top:5vh; /* keep modal near top */
-    }
-    .celebration-overlay.active{display:flex}
-    .celebration-backdrop{
-      position:absolute; inset:0; background:linear-gradient(180deg, rgba(2,6,23,0.45), rgba(2,6,23,0.28)); backdrop-filter:blur(3px);
-    }
-    .celebration-fall {
-      position:absolute; inset:0; pointer-events:none; overflow:hidden; z-index:1295;
-    }
-    .fall-emoji {
-      position:absolute; top:-6%; font-size:18px; will-change: transform, opacity; display:inline-block;
-      animation-name: fallSpin; animation-iteration-count: 1; animation-timing-function: linear;
-      opacity:0.95;
-      text-shadow:0 6px 18px rgba(0,0,0,0.08);
-      transform-origin:center center;
-    }
-    @keyframes fallSpin { to { transform: translate3d(var(--tx,0), 120vh, 0) rotate(var(--rot,0)); opacity: 0.95; } }
+/* rank badge */
+.rank-badge{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  min-width:44px;
+  height:44px;
+  border-radius:10px;
+  font-weight:900;
+  box-shadow:0 6px 18px rgba(2,6,23,0.06);
+  background:#fff9e6;
+  color:#07122b;
+  font-size:1rem;
+}
 
-    .celebration-modal{
-      position:relative; z-index:1310; width:min(640px, 94%); max-width:720px;
-      background:linear-gradient(180deg,#fffefecb,#29f4eab3); border-radius:14px; padding:18px; box-shadow:0 30px 80px rgba(233, 163, 191, 0.544);
-      text-align:center; font-weight:800; transform-origin:top center; opacity:0;
-    }
-    .celebration-modal.pop { animation: modalPop .36s cubic-bezier(.2,.9,.3,1) forwards; }
-    @keyframes modalPop { from { transform: translateY(-8px) scale(.98); opacity:0 } to { transform: translateY(0) scale(1); opacity:1 } }
+/* small rank sizes for tiny screens */
+.rank-badge.small { min-width:36px; height:36px; font-size:0.92rem; }
 
-    .modal-logo{ width:64px;height:64px; object-fit:contain; border-radius:8px; display:block; margin:0 auto 8px auto; }
-    .modal-badge{ width:88px; height:88px; border-radius:999px; display:inline-grid; place-items:center; font-size:28px; font-weight:900; color:#0f172a; margin:6px auto 12px auto; box-shadow:0 12px 40px rgba(59,130,246,0.15); background:linear-gradient(135deg,#fff176,#ffd54f); border:6px solid rgba(255,255,255,0.85); }
-    .modal-badge.glow{ box-shadow:0 18px 48px rgba(59,130,246,0.18), 0 6px 20px rgba(0,0,0,0.06); }
-    .modal-title{ font-size:1.28rem; margin:6px 0 6px 0; letter-spacing:0.2px }
-    .modal-sub{ font-size:0.95rem; color:var(--muted); margin-bottom:8px }
-    .modal-msg{ font-size:0.98rem; color:var(--muted); font-weight:700; margin:6px 0 6px 0; line-height:1.35 }
-    .modal-school{ font-size:0.9rem; color:#0f172a; margin-top:10px; font-weight:800 }
-    .modal-close{ position:absolute; right:12px; top:12px; background:transparent;border:0;font-size:18px;font-weight:900;color:var(--muted); cursor:pointer }
-    .celebration-actions{ margin-top:10px; display:flex; gap:8px; justify-content:center; flex-wrap:wrap }
+/* points badge */
+.points-badge{ display:inline-block; padding:6px 10px; border-radius:8px; font-weight:800; min-width:56px; text-align:center; font-size:0.95rem; background:linear-gradient(180deg,#f3f9ff,#eef6ff); }
 
-    /* modal structured info styling */
-    .modal-info { margin-top:8px; font-weight:900; display:flex; flex-direction:column; gap:8px; align-items:center }
-    .modal-info .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap }
-    .modal-info .label { color:var(--muted); font-weight:800; margin-right:6px }
+/* ID mask monospace */
+.id-mask{ font-family:monospace; letter-spacing:0.6px; font-size:0.95rem; color:var(--muted); }
 
-    /* small responsive tweaks */
-    @media (max-width:760px){
-      .container{padding:10px}
-      .student-name{font-size:1.02rem}
-      #resultArea th{font-size:11px}
-      #resultArea td{font-size:12px}
-      .grade-badge{font-size:0.9rem;padding:5px 8px}
-      .btn{font-size:14px;padding:8px 10px;border-radius:9px}
-      #resultArea td:not(:first-child){min-width:40px}
-      .small { display:block; }
-      .modal-badge{width:72px;height:72px;font-size:22px}
-    }
+/* actions */
+.actions-wrap{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.actions-wrap .btn, .btn { padding:6px 8px; font-size:0.88rem; }
 
-    @media (min-width:761px){
-      .small { display:none; }
-    }
+/* clickable truncated name/class */
+.student-toggle, .class-toggle{
+  cursor:pointer;
+  color:inherit;
+  text-decoration:none;
+  display:inline-block;
+  max-width:100%;
+  overflow:hidden;
+  white-space:nowrap;
+  text-overflow:ellipsis;
+  vertical-align:middle;
+  transition:all .18s ease;
+  font-weight:800;
+  font-size:0.95rem;
+}
 
-    @media (max-width:420px){
-      #resultArea th{font-size:10px}
-      #resultArea td{font-size:11px}
-      .id-class-line, .exam-line, .published-line { font-size:0.95rem }
-    }
+/* when toggled, allow wrapping and show full text (only for that element) */
+.student-toggle.expanded, .class-toggle.expanded{
+  white-space:normal;
+  display:block;
+  font-weight:900;
+  font-size:1rem;
+  line-height:1.15;
+  word-break:break-word;
+}
 
-    /* ===== Highlighted result labels (user requested) ===== */
-    .label-strong { font-weight: 900; }
-    .rank-text { font-size: 1.15rem; font-weight: 900; text-transform: capitalize }
+/* subtle focus */
+.student-toggle:focus, .class-toggle:focus{ outline:2px solid rgba(11,116,255,0.12); outline-offset:3px; border-radius:6px; }
 
-    .total-blue { color: #2563eb; font-weight: 900; }
-    .total-green { color: #10b981; font-weight: 900; }
-    .total-red { color: #dc2626; font-weight: 900; }
+/* hover styles */
+table.leader tbody tr:hover{ background: #fbfdff; }
 
-    .avg-green { color: #16a34a; font-weight: 900; }
-    .avg-red { color: #dc2626; font-weight: 900; }
+/* compact variant for 'your rank' row highlight */
+#myRankRow{ background:#f7fbff; box-shadow:0 6px 20px rgba(37,99,235,0.04); }
 
-    .grade-badge { font-weight: 900; padding: 6px 10px; border-radius: 8px; color: #fff; }
+/* Divider row */
+.table-divider td{ text-align:center; padding:8px; color:var(--muted); font-weight:700 }
 
-    .status-pass { background: #16a34a; color: #fff; font-weight: 900; padding: 6px 10px; border-radius: 8px; }
-    .status-fail { background: #dc2626; color: #fff; font-weight: 900; padding: 6px 10px; border-radius: 8px; }
+/* Make table visually compact even more on narrow screens */
+@media (max-width: 940px){
+  .container{ padding:10px; max-width:760px; }
+  header h1{ font-size:1rem; }
+  table.leader{ min-width:580px; }
+  table.leader thead th{ font-size:12px; padding:8px 6px; }
+  table.leader td{ padding:8px 6px; font-size:13px; }
+  .btn{ padding:6px 10px; font-size:0.88rem; }
+  .rank-badge{ min-width:40px; height:40px; font-size:0.95rem; }
+  .col-name{ width:auto; }
+}
 
-  </style>
+/* Small/mobile: make everything compact, show scroller if needed */
+@media (max-width: 720px){
+  :root{
+    --fs-base:13px;
+    --pad-td:6px;
+  }
+  body{ font-size:13px; }
+  .container{ padding:8px; max-width:640px; }
+  table.leader{ min-width:520px; }
+  table.leader thead th{ font-size:11px; padding:6px 6px; }
+  table.leader td{ padding:6px 6px; font-size:12px; }
+
+  /* make columns tighter */
+  .col-rank { width:48px; }
+  .col-class { width:44px; }
+  .col-id    { width:58px; }
+  .col-points{ width:58px; }
+  .col-action{ width:72px; }
+
+  /* name & class compact truncation */
+  .student-toggle, .class-toggle{
+    font-size:0.95rem;
+    max-width:120px; /* ensure truncation */
+    white-space:nowrap;
+    text-overflow:ellipsis;
+    overflow:hidden;
+    display:inline-block;
+    padding-right:4px;
+  }
+
+  /* tiny badges */
+  .rank-badge{ min-width:36px; height:36px; font-size:0.9rem; }
+  .points-badge{ min-width:52px; padding:6px 6px; font-size:0.88rem; }
+  .actions-wrap .btn{ padding:6px 8px; font-size:0.82rem; }
+
+  /* remove large row paddings */
+  table.leader td:first-child{ padding-left:10px; }
+
+  /* allow only expanded element to wrap and take space in row — other rows remain compact */
+  .student-toggle.expanded, .class-toggle.expanded{
+    position:relative;
+    display:block;
+    white-space:normal;
+    font-size:1rem;
+  }
+}
+
+/* Very small phones */
+@media (max-width:420px){
+  :root{ --fs-base:12px; }
+  body{ font-size:12px; }
+  .container{ padding:6px; max-width:420px; }
+  table.leader{ min-width:480px; }
+  table.leader thead th{ font-size:10px; padding:6px 6px; }
+  table.leader td{ font-size:11px; padding:6px 6px; }
+
+  .student-toggle, .class-toggle{ max-width:90px; }
+  .col-rank { width:44px; }
+  .col-action{ width:64px; }
+  .id-mask{ font-size:0.9rem; }
+  .rank-badge{ min-width:34px; height:34px; font-size:0.88rem; }
+}
+
+/* small scrollbar polish (webkit) */
+.table-wrap::-webkit-scrollbar{ height:8px; width:8px; }
+.table-wrap::-webkit-scrollbar-thumb{ background:rgba(11,116,255,0.16); border-radius:8px; }
+.table-wrap::-webkit-scrollbar-track{ background:transparent; }
+
+/* Safe default for text truncation inside td if long content exists */
+table.leader td > *{ max-width:100%; overflow:hidden; text-overflow:ellipsis; }
+
+/* Utility to visually reduce the header space (if you want even closer headers) */
+.header-tight header, .header-tight .comp-actions { padding:0; margin:0; gap:6px; }
+
+/* accessibility focus for keyboard users */
+.btn:focus, a:focus{ outline-offset:2px; outline:2px solid rgba(11,116,255,0.12); }
+
+/* End of stylesheet */
+
+</style>
 </head>
 <body>
   <div class="container">
-    <h1>Soo dhawoow, arday!</h1>
-    <p class="lead">Fadlan geli aqoonsigaaga (ID) si aad u aragto natiijooyinka.</p>
-
-    <div class="card small-card">
-      <label for="studentId">Geli ID-gaaga halkan</label>
-      <div class="input-row" style="margin-top:6px">
-        <input id="studentId" placeholder="STD042687284" />
-        <button id="toggleIdInputBtn" class="btn" title="Toggle ID input visibility" aria-label="Toggle ID input"
-        style="color:var(--primary); padding:6px 8px; background:transparent; border:1px solid rgba(11,116,255,0.06)">
-  <!-- eye (open) - shown by default -->
-  <svg id="toggleOpen" class="icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:inline-block;stroke:currentColor">
-    <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z" stroke="currentColor" stroke-width="1.2" fill="none"/>
-    <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.2" fill="none"/>
-  </svg>
-
-  <!-- eye (closed) - hidden by default -->
-  <svg id="toggleClosed" class="icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:none;stroke:currentColor">
-    <path d="M3 3l18 18" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z" stroke="currentColor" stroke-width="1.2" fill="none"/>
-  </svg>
-</button>
-          
-        </button>
+    <header>
+      <div class="comp-info">
+        <div style="display:flex;gap:8px;align-items:center">
+          <h1>Leaderboard</h1>
+          <div id="studentTag" class="small-muted" style="font-weight:700"></div>
+        </div>
+        <div class="small-muted" id="competitionSub">Loading competition…</div>
       </div>
-   <!-- BEFORE: input + search area -->
-<div style="margin-top:10px;display:flex;gap:10px;align-items:center">
-  <select id="resultModeSelect" aria-label="Result or Test">
-    <option value="exam">Exam (default)</option>
-    <option value="test">Testing (Leaderboards)</option>
-  </select>
 
-  <button id="searchBtn" class="btn btn-primary">Raadi</button>
-  <button id="audioToggleBtn" class="btn" title="Toggle audio (default OFF)">🔈 Audio: OFF</button>
-  <div id="message" style="color:#c00;font-weight:700"></div>
+      <div class="comp-actions">
+        <button id="backBtn" class="btn">Back</button>
+        <button id="verifyBtn" class="btn">Verify</button>
+        <button id="viewAroundBtn" class="btn">View around me</button>
+        <button id="toggleBgBtn" class="btn">BG Sound: OFF</button>
+        <button id="toggleFxBtn" class="btn">FX Sound: ON</button>
+        <button id="testYourselfBtn" class="btn btn-primary">Test Yourself</button>
+        <button id="logoutBtn" class="btn">Logout</button>
+      </div>
+    </header>
+
+    <div id="adminControls" class="card hidden">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+        <div>
+          <label style="font-weight:700">Manage competition</label>
+          <div class="small-muted">
+            Manage competition settings and view all scorers.
+          </div>
+        </div>
+    
+        <div style="display:flex;gap:8px;align-items:center">
+          <!-- ONLY these buttons stay -->
+          <button id="manageCompBtn" class="btn" style="display:none">Manage</button>
+          <button id="viewAllBtn" class="btn" style="display:none">View all scorers</button>
+        </div>
+      </div>
+    </div>
+    
+
+    <div id="leaderContainer" class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <strong id="compTitle">—</strong>
+          <div class="small-muted" id="compRange"></div>
+        </div>
+        <!-- <div class="small-muted">Top ranks (ties allowed) — showing rank, student, class, id (last 4 digits), points</div> -->
+      </div>
+
+     <!-- put this inside #leaderContainer where your table currently is -->
+<div class="table-wrap">
+  <table class="leader" id="leaderTable">
+    <colgroup>
+      <col class="col-rank">
+      <col class="col-name">
+      <col class="col-class">
+      <col class="col-id">
+      <col class="col-points">
+      <col class="col-action">
+    </colgroup>
+    <thead>
+      <tr>
+        <th class="col-rank">Rank</th>
+        <th class="col-name">Name</th>
+        <th class="col-class">Class</th>
+        <th class="col-id">ID</th>
+        <th class="col-points">Points</th>
+        <th class="col-action">Action</th>
+      </tr>
+    </thead>
+    <tbody id="leaderTbody">
+      <tr><td colspan="6" class="small-muted">Loading…</td></tr>
+    </tbody>
+  </table>
 </div>
+
     </div>
 
-    <div id="resultArea" style="display:none"></div>
+    <div id="moreArea"></div>
   </div>
 
-  <div id="loaderOverlay"><div class="loader-card"><div class="dots"><span class="d"></span><span class="d"></span><span class="d"></span></div><div id="loaderMessage" style="color:var(--muted)">Fadlan sug...</div></div></div>
+  <!-- modal container -->
+  <div id="modalRoot" class="hidden"></div>
 
-  <!-- celebration overlay (same as you had) -->
-  <div id="celebrationOverlay" class="celebration-overlay" aria-hidden="true">
-    <div class="celebration-backdrop"></div>
-    <div id="celebrationFall" class="celebration-fall" aria-hidden="true"></div>
-
-    <div id="celebrationModal" class="celebration-modal" role="dialog" aria-modal="true" style="display:none">
-      <button id="celebrationClose" class="modal-close" aria-label="Close">✕</button>
-      <img src="assets/logo.png" alt="AL-FATXI logo" class="modal-logo" onerror="this.style.display='none'"/>
-      <div id="modalBadge" class="modal-badge">1</div>
-      <div id="modalTitle" class="modal-title">Waxaad gashay kaalinta 1aad!</div>
-      <div id="modalMsg" class="modal-sub">AL-FATXI — Ugu imow waxbarasho tayo leh</div>
-
-      <div class="modal-info" aria-live="polite">
-        <!-- <div class="row"><span class="label-strong">Magaca:</span> <span id="modalStudentName" class="rank-text">Sufyaan Geedi</span></div> -->
-        <div class="row"><span class="label-strong">Magaca:</span> <span id="modalStudentName" class="rank-text"></span></div>
-        <div class="row"><span class="label-strong">Class:</span> <span id="modalClassName" class="rank-text" style="color:#2563eb"></span></div>
-
-        <div class="row"><span class="label-strong">Total:</span> <span id="modalTotalGot" class="total-blue">537</span> <span>/</span> <span id="modalTotalMax" class="total-green">600</span></div>
-        <div class="row"><span class="label-strong">Average:</span> <span id="modalAverage" class="avg-green">89.50%</span></div>
-        <div class="row"><span class="label-strong">Grade:</span> <span id="modalGrade" class="grade-badge" style="background:#3b82f6">A</span></div>
-        <div class="row"><span class="label-strong">Status:</span> <span id="modalStatus" class="status-pass">Gudbay</span></div>
-      </div>
-
-      <div class="modal-school">AL-FATXI PRIMARY AND SECONDARY SCHOOL — Ugu imow waxbarasho tayo leh</div>
-
-      <div class="celebration-actions">
-        <button id="toggleEmojisBtn" class="btn" title="Show / Hide emojis" aria-pressed="true" style="min-width:48px">
-          <span id="toggleEmojisIcon">🎊</span>
-        </button>
-        <button id="celebrationCloseBtn" class="btn btn-ghost">Xir</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- **Important**: single clean audio element. Make sure the real file is named exactly one of these. -->
-  <audio id="clapAudio" preload="auto" style="display:none" aria-hidden="true">
-    <!-- Primary: MP3 -->
-    <source src="assets/clap.mp3" type="audio/mpeg">
-    <!-- Fallback: WAV -->
-    <source src="assets/clap.wav" type="audio/wav">
-    Your browser does not support the audio element.
-  </audio>
-
-  <!-- libs -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js"></script>
-
-  <!-- your module script -->
-  <script type="module" src="main.js"></script>
+  <!-- scripts -->
+  <script type="module" src="firebase-config.js"></script>
+  <script type="module" src="leaderboard.js"></script>
 </body>
 </html>
