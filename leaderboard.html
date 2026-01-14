@@ -6,16 +6,20 @@
   <title>Leaderboard — AL-FATXI</title>
   <link rel="stylesheet" href="style.css">
   <style>
+    /* Reduced, mobile-first, rem-based sizing so the table fits on small screens
+       and uses minimal spacing. The table stays as rows (no stacked card mode).
+    */
     :root{
       --card-bg: #fff;
       --muted: #6b7280;
       --primary: #2563eb;
       --surface: #f8fafc;
       --shadow: 0 6px 22px rgba(14,30,63,0.06);
-      --radius: 12px;
-      --gap: 12px;
+      --radius: .6rem;
+      --gap: .6rem;
+      --fs-base: 1rem; /* 1rem = 16px default */
     }
-  
+
     /* page base */
     html,body{ height:100%; }
     body{
@@ -23,277 +27,85 @@
       color:#0f172a;
       font-family:Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
       margin:0;
-      padding:18px;
+      padding:1rem;
       -webkit-font-smoothing:antialiased;
       -moz-osx-font-smoothing:grayscale;
-      line-height:1.3;
+      line-height:1.25;
       box-sizing:border-box;
+      font-size: var(--fs-base);
     }
     *,*::before,*::after{ box-sizing:inherit; }
-  
-    .container {
-      max-width:1100px;
-      margin:18px auto;
-      padding:0 12px;
-    }
-  
-    /* header */
-    header {
-      display:flex;
-      justify-content:space-between;
-      align-items:center;
-      gap:12px;
-      margin-bottom:16px;
-      flex-wrap:wrap;
-    }
-    header .comp-info { min-width:0; flex:1 1 auto; display:flex; flex-direction:column; gap:6px; }
-    header h1{ margin:0; font-size:20px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-    .comp-actions {
-      display:flex;
-      gap:8px;
-      align-items:center;
-      flex:0 0 auto;
-      flex-wrap:wrap;
-    }
-    .comp-actions .btn{ white-space:nowrap; }
-  
+
+    .container { max-width:1100px; margin:0.8rem auto; padding:0 0.6rem; }
+
+    header { display:flex; justify-content:space-between; align-items:center; gap:0.6rem; margin-bottom:0.6rem; flex-wrap:wrap; }
+    header .comp-info { min-width:0; flex:1 1 auto; display:flex; flex-direction:column; gap:0.25rem; }
+    header h1{ margin:0; font-size:1.05rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .comp-actions { display:flex; gap:0.4rem; align-items:center; flex:0 0 auto; flex-wrap:wrap; }
+
     /* cards and UI */
-    .card {
-      background:var(--card-bg);
-      border-radius:var(--radius);
-      padding:14px;
-      box-shadow:var(--shadow);
-      margin-bottom:12px;
-    }
-    .small-muted { color:var(--muted); font-size:0.92rem; }
-    .btn {
-      padding:8px 12px;
-      border-radius:8px;
-      cursor:pointer;
-      border:0;
-      background:transparent;
-      font-size:0.95rem;
-      min-height:38px;
-    }
+    .card { background:var(--card-bg); border-radius:var(--radius); padding:0.6rem; box-shadow:var(--shadow); margin-bottom:0.6rem; }
+    .small-muted { color:var(--muted); font-size:0.86rem; }
+    .btn { padding:0.4rem 0.6rem; border-radius:0.45rem; cursor:pointer; border:0; background:transparent; font-size:0.9rem; min-height:2.2rem; }
     .btn:active{ transform:translateY(1px); }
     .btn-primary { background:var(--primary); color:#fff; border:0; }
     .btn-ghost { background:transparent; border:1px solid #e6eefc; }
-    .settings-gear { font-size:16px; padding:6px; }
-  
-    .input-small {
-      padding:8px;
-      border-radius:6px;
-      border:1px solid #e2e8f0;
-      min-width:120px;
-      font-size:0.95rem;
-    }
-  
-    /* table area: make responsive by wrapping (horizontal scroll) and mobile stacked cards */
-    .table-wrap {
-      width:100%;
-      overflow:auto;
-      -webkit-overflow-scrolling:touch;
-      border-radius:10px;
-      background:linear-gradient(180deg, #fff, #fbfdff);
-      padding:8px;
-    }
-    table.leader {
-      width:100%;
-      border-collapse:collapse;
-      margin-top:6px;
-      min-width:700px; /* allows horizontal scroll on small screens */
-    }
-    table.leader th, table.leader td {
-      padding:10px 8px;
-      text-align:left;
-      border-bottom:1px solid #eef2f6;
-      vertical-align:middle;
-      font-size:0.95rem;
-    }
-    table.leader thead th { color:var(--muted); font-weight:700; font-size:0.92rem; }
+
+    .input-small { padding:0.4rem; border-radius:0.4rem; border:1px solid #e2e8f0; min-width:7.5rem; font-size:0.9rem; }
+
+    /* table area - keep rows horizontal and allow wrapping so there's no scrollbar */
+    .table-wrap { width:100%; overflow:visible; -webkit-overflow-scrolling:touch; border-radius:0.6rem; background:linear-gradient(180deg, #fff, #fbfdff); padding:0.4rem; }
+    table.leader { width:100%; border-collapse:collapse; margin-top:0.4rem; min-width:0; table-layout:auto; }
+    table.leader th, table.leader td { padding:0.45rem 0.5rem; text-align:left; border-bottom:1px solid #eef2f6; vertical-align:middle; font-size:0.95rem; }
+    table.leader thead th { color:var(--muted); font-weight:700; font-size:0.85rem; }
     table.leader tbody tr:hover { background: #fbfdff; }
-  
-    .rank-badge {
-      font-weight:900;
-      display:inline-block;
-      min-width:48px;
-      text-align:center;
-      padding:6px 8px;
-      border-radius:8px;
-      font-size:0.95rem;
+
+    /* allow wrapping and breaking of long names/ids so the table fits without horizontal scrolling */
+    table.leader td { white-space:normal; word-break:break-word; overflow-wrap:anywhere; }
+
+    .rank-badge { font-weight:900; display:inline-flex; align-items:center; justify-content:center; min-width:2.6rem; height:2.6rem; border-radius:0.6rem; padding:0 0.5rem; font-size:0.95rem; color:#07122b; background:#fff9e6; }
+    .rank-badge.first { background:#FFD700; }
+    .rank-badge.second { background:#c0c0c0; }
+    .rank-badge.third { background:#cd7f32; }
+
+    .student-name { font-size:0.95rem; line-height:1.1; }
+    .id-mask { font-family:monospace; font-size:0.88rem; }
+
+    .points-badge { display:inline-block; font-weight:800; padding:0.35rem 0.6rem; border-radius:0.45rem; background:linear-gradient(180deg,#f3f9ff,#eef6ff); min-width:3.8rem; text-align:center; font-size:0.95rem; }
+
+    .actions-wrap { display:flex; gap:0.3rem; align-items:center; }
+    .actions-wrap .btn { padding:0.35rem 0.5rem; font-size:0.85rem; min-height:2rem; }
+
+    /* Remove large default margins/spaces */
+    h1, h2, h3, p { margin:0; }
+
+    /* Loading dots for buttons */
+    .dots { display:inline-block; margin-left:0.35rem; font-weight:700; }
+    .dots span { opacity:0; display:inline-block; animation: dots 1s steps(3,end) infinite; }
+    .dots span:nth-child(1){ animation-delay:0s } .dots span:nth-child(2){ animation-delay:0.12s } .dots span:nth-child(3){ animation-delay:0.24s }
+    @keyframes dots { 0%{ opacity:0 } 50%{ opacity:1 } 100%{ opacity:0 } }
+
+    .btn.loading { pointer-events:none; opacity:0.8; }
+
+    /* very small screens: slightly smaller type, keep rows horizontal and compact */
+    @media (max-width:420px){
+      :root{ --fs-base: 0.95rem; }
+      body{ padding:0.6rem; }
+      .container{ padding:0 0.4rem; }
+      header h1{ font-size:1rem; }
+      .card{ padding:0.45rem; }
+      table.leader th, table.leader td { padding:0.35rem 0.4rem; font-size:0.85rem; }
+      .rank-badge{ min-width:2.2rem; height:2.2rem; font-size:0.85rem; }
+      .points-badge{ min-width:3.2rem; padding:0.25rem 0.4rem; font-size:0.85rem; }
+      .actions-wrap .btn{ padding:0.25rem 0.4rem; font-size:0.8rem; }
     }
-  
-    /* modal */
-    .modal {
-      position:fixed;
-      inset:0;
-      display:flex;
-      align-items:center;
-      justify-content:center;
-      z-index:1200;
-      background:rgba(2,6,23,0.45);
-      padding:18px;
-    }
-    .modal-card{
-      width:820px;
-      max-width:100%;
-      max-height:86vh;
-      overflow:auto;
-      border-radius:12px;
-      padding:18px;
-      background:linear-gradient(180deg,#fff,#fbfdff);
-      box-shadow:0 18px 48px rgba(2,6,23,0.28);
-      transform:translateY(0);
-    }
-    .modal-head{ display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px; }
-    .modal-title{ font-weight:800; font-size:18px; margin:0; }
-    .modal-sub{ color:var(--muted); font-size:0.95rem; }
-  
-    .modal-body{ font-size:0.98rem; color:#0b1220; }
-  
-    /* choices */
-    .choices label{
-      display:block;
-      margin-bottom:8px;
-      padding:10px;
-      border-radius:8px;
-      background:#fbfdff;
-      cursor:pointer;
-      border:1px solid #eef2f6;
-      user-select:none;
-    }
-    .choice-correct{ background:#ecfdf5; border-color:#bbf7d0; color:#064e3b; font-weight:700; }
-    .choice-wrong{ background:#fff1f2; border-color:#fecaca; color:#7f1d1d; font-weight:700; }
-    .choice-selected{ box-shadow:0 6px 20px rgba(37,99,235,0.08); }
-    .choice-meta{ float:right; font-weight:900; }
-  
-    .test-footer { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:12px; flex-wrap:wrap; }
-    .stats-line { display:flex; gap:12px; align-items:center; color:var(--muted); font-size:0.95rem; }
-  
-    /* your small utility */
-    .hidden{ display:none !important; }
-  
-    /* mobile / small screens */
-    @media (max-width: 940px) {
-      body{ padding:12px; }
-      .container{ padding:0 10px; }
-      header { gap:10px; }
-      .modal-card{ padding:14px; }
-      .btn{ padding:8px 10px; font-size:0.93rem; min-height:36px; }
-    }
-  
-    @media (max-width: 720px) {
-      header { align-items:flex-start; }
-      header .comp-info { order:1; width:100%; }
-      .comp-actions { order:2; width:100%; justify-content:flex-start; gap:6px; padding-top:8px; border-top:1px dashed rgba(0,0,0,0.04); }
-      .comp-actions .btn{ flex:0 0 auto; padding:8px 10px; font-size:0.92rem; min-height:36px; }
-      .card{ padding:12px; border-radius:10px; }
-  
-      /* make modal full-width-ish and centered vertically when small */
-      .modal-card{
-        width:100%;
-        max-width:640px;
-        border-radius:10px;
-        max-height:92vh;
-      }
-  
-      /* Table -> allow horizontal scroll, but also provide stacked card appearance for rows */
-      .table-wrap{ padding:6px; }
-      table.leader{ min-width:640px; }
-  
-      /* smaller text in table */
-      table.leader th, table.leader td { padding:10px 6px; font-size:0.92rem; }
-  
-      /* if screen is very narrow, present rows as stacked cards (more readable) */
-      @media (max-width:420px) {
-        table.leader { border:0; }
-        table.leader thead { display:none; }
-        table.leader tbody tr { display:block; margin-bottom:10px; border-radius:10px; background: #fff; box-shadow: var(--shadow); padding:10px; }
-        table.leader tbody td { display:flex; justify-content:space-between; padding:6px 8px; border-bottom:0; }
-        table.leader tbody td:first-child{ font-weight:800; }
-        table.leader tbody td::before{
-          content: attr(data-label);
-          color: var(--muted);
-          font-weight:600;
-          margin-right:8px;
-          display:inline-block;
-          min-width:80px;
-        }
-      }
-    }
-  
-    /* small visual polish */
-    .small-muted a{ color:var(--primary); text-decoration:none; }
-    /* ensure focus states */
-    .btn:focus, .input-small:focus, .choices label:focus { outline:2px solid rgba(37,99,235,0.12); outline-offset:2px; }
-  
-     /* ---------- improved row styles ---------- */
-  .rank-badge {
-    font-weight:900;
-    display:inline-flex;
-    align-items:center;
-    justify-content:center;
-    min-width:46px;
-    height:46px;
-    border-radius:10px;
-    padding:6px 8px;
-    font-size:1rem;
-    color:#07122b;
-    background:#fff9e6;
-    box-shadow:0 6px 18px rgba(2,6,23,0.06);
-  }
-  
-  /* distinct top-3 colors */
-  .rank-badge.first { background:#FFD700; color:#111; }
-  .rank-badge.second { background:#c0c0c0; color:#111; }
-  .rank-badge.third { background:#cd7f32; color:#111; }
-  
-  /* standardized cell content */
-  .cell {
-    display:flex;
-    flex-direction:column;
-    gap:6px;
-  }
-  .student-name { font-size:0.99rem; line-height:1.2; word-break:break-word; }
-  .student-name strong { display:block; font-weight:700; }
-  .cell-muted { color:var(--muted); font-size:0.88rem; }
-  
-  /* ID masking */
-  .id-mask { font-family:monospace; letter-spacing:0.6px; }
-  
-  /* Points presentation */
-  .points-badge {
-    display:inline-block;
-    font-weight:800;
-    padding:6px 10px;
-    border-radius:8px;
-    background:linear-gradient(180deg,#f3f9ff,#eef6ff);
-    min-width:64px;
-    text-align:center;
-    font-size:0.98rem;
-  }
-  
-  /* action buttons layout */
-  .actions-wrap { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-  .actions-wrap .btn { padding:6px 10px; min-height:34px; font-size:0.92rem; }
-  
-  /* Improve spacing on table cells so text doesn't overlap the card edges */
-  table.leader td { vertical-align:middle; }
-  
-  /* very small screens: stack actions under the row */
-  @media (max-width:420px) {
-    .actions-wrap { width:100%; justify-content:flex-end; gap:6px; }
-    .rank-badge { width:38px; height:38px; min-width:38px; font-size:0.95rem; }
-    .points-badge { min-width:56px; font-size:0.95rem; padding:6px 8px; }
-  }
-  
   </style>
 </head>
 <body>
   <div class="container">
     <header>
       <div class="comp-info">
-        <div style="display:flex;gap:8px;align-items:center">
+        <div style="display:flex;gap:0.5rem;align-items:center">
           <h1>Leaderboard</h1>
           <div id="studentTag" class="small-muted" style="font-weight:700"></div>
         </div>
@@ -301,33 +113,15 @@
       </div>
 
       <div class="comp-actions">
-        <button id="backBtn" class="btn">Back</button>
-        <button id="verifyBtn" class="btn">Verify</button>
-        <button id="viewAroundBtn" class="btn">View around me</button>
-        <button id="toggleBgBtn" class="btn">BG Sound: OFF</button>
-        <button id="toggleFxBtn" class="btn">FX Sound: ON</button>
-        <button id="testYourselfBtn" class="btn btn-primary">Test Yourself</button>
-        <button id="logoutBtn" class="btn">Logout</button>
+        <button id="backBtn" class="btn" data-loading-text="Back">Back</button>
+        <button id="verifyBtn" class="btn" data-loading-text="Verifying…">Verify</button>
+        <button id="viewAroundBtn" class="btn" data-loading-text="Loading…">View around me</button>
+        <button id="toggleBgBtn" class="btn" data-loading-text="Toggling…">BG Sound: OFF</button>
+        <button id="toggleFxBtn" class="btn" data-loading-text="Toggling…">FX Sound: ON</button>
+        <button id="testYourselfBtn" class="btn btn-primary" data-loading-text="Starting…">Test Yourself</button>
+        <button id="logoutBtn" class="btn" data-loading-text="Logging out…">Logout</button>
       </div>
     </header>
-
-    <div id="adminControls" class="card hidden">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
-        <div>
-          <label style="font-weight:700">Manage competition</label>
-          <div class="small-muted">
-            Manage competition settings and view all scorers.
-          </div>
-        </div>
-    
-        <div style="display:flex;gap:8px;align-items:center">
-          <!-- ONLY these buttons stay -->
-          <button id="manageCompBtn" class="btn" style="display:none">Manage</button>
-          <button id="viewAllBtn" class="btn" style="display:none">View all scorers</button>
-        </div>
-      </div>
-    </div>
-    
 
     <div id="leaderContainer" class="card">
       <div style="display:flex;justify-content:space-between;align-items:center">
@@ -335,17 +129,25 @@
           <strong id="compTitle">—</strong>
           <div class="small-muted" id="compRange"></div>
         </div>
-        <div class="small-muted">Top ranks (ties allowed) — showing rank, student, class, id (last 4 digits), points</div>
       </div>
 
-      <table class="leader" id="leaderTable">
-        <thead>
-          <tr><th style="width:100px">Rank</th><th>Name</th><th>Class</th><th>ID</th><th style="width:120px">Points</th><th style="width:160px">Action</th></tr>
-        </thead>
-        <tbody id="leaderTbody">
-          <tr><td colspan="6" class="small-muted">Loading…</td></tr>
-        </tbody>
-      </table>
+      <div class="table-wrap">
+        <table class="leader" id="leaderTable" aria-describedby="competitionSub">
+          <thead>
+            <tr>
+              <th style="width:56px">Rank</th>
+              <th>Name</th>
+              <th style="width:72px">Class</th>
+              <th style="width:84px">ID</th>
+              <th style="width:84px">Points</th>
+              <th style="width:120px">Action</th>
+            </tr>
+          </thead>
+          <tbody id="leaderTbody">
+            <tr><td colspan="6" class="small-muted">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
     </div>
 
     <div id="moreArea"></div>
@@ -354,7 +156,52 @@
   <!-- modal container -->
   <div id="modalRoot" class="hidden"></div>
 
-  <!-- scripts -->
+  <!-- helper script for loading dots and auto-handling buttons with data-loading-text -->
+  <script>
+    // Simple utility to toggle a loading state on buttons. Use data-loading-text attribute if you want to
+    // change the button text while loading. Buttons created dynamically by leaderboard.js can include
+    // the attribute (e.g. <button class="btn" data-loading-text="Loading…">View</button>) and this
+    // script will show the animated dots automatically when clicked.
+
+    function setButtonLoading(btn, on, fallbackText) {
+      if(!btn) return;
+      if(on) {
+        if(!btn.dataset._orig) btn.dataset._orig = btn.innerHTML;
+        const loadingText = btn.dataset.loadingText || fallbackText || btn.textContent || '';
+        btn.classList.add('loading');
+        // set innerHTML and append animated dots span
+        btn.innerHTML = `${escapeHtml(loadingText)} <span class="dots"><span>.</span><span>.</span><span>.</span></span>`;
+      } else {
+        btn.classList.remove('loading');
+        if(btn.dataset._orig) { btn.innerHTML = btn.dataset._orig; delete btn.dataset._orig; }
+      }
+    }
+
+    // small helper to escape HTML text when setting innerHTML
+    function escapeHtml(s){ if(s==null) return ''; return String(s).replace(/[&<>'"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\'":"&#39;','"':'&quot;'}[c])); }
+
+    // Delegated click handler: if a button with `data-loading-text` or `data-auto-loading` is clicked,
+    // set it to loading. This will be cleared automatically after 6s to avoid stuck state — your
+    // real handlers should call setButtonLoading(btn,false) when their async work finishes.
+    document.addEventListener('click', (ev)=>{
+      const btn = ev.target.closest('button');
+      if(!btn) return;
+      // Only auto-toggle if the button declares it wants loading behaviour
+      if(btn.dataset.loadingText || btn.dataset.autoLoading !== undefined) {
+        setButtonLoading(btn, true);
+        // clear after 6s automatically; your code should clear earlier when finished
+        setTimeout(()=> setButtonLoading(btn, false), 6000);
+      }
+    }, { passive:true });
+
+    // Expose globally so leaderboard.js can call directly when async actions start/finish
+    window.setButtonLoading = setButtonLoading;
+
+    // make sure the table doesn't horizontally scroll - attempt to shrink long text by truncating the ID if needed
+    // NOTE: leaderboard.js masks ids already; the CSS above will allow wrap for names so no horizontal scrollbar appears.
+  </script>
+
+  <!-- load your app scripts (kept separate as requested) -->
   <script type="module" src="firebase-config.js"></script>
   <script type="module" src="leaderboard.js"></script>
 </body>
