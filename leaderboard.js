@@ -54,17 +54,17 @@ let adminShowAll = false; // when true, admin sees full list under top ranks
 /* ---------- init ---------- */
 SoundManager.preloadAll();
 /* ---------- modal helpers ---------- */
-function showModalInner(html, opts = {}) {
-  modalRoot.innerHTML = `<div class="modal" id="theModal"><div class="modal-card">
-    <div class="modal-head"><div><h3 class="modal-title">${opts.title || ''}</h3><div class="modal-sub">${opts.sub || ''}</div></div><div><button id="modalCloseBtn" class="btn">✕</button></div></div>
-    <div class="modal-body">${html}</div>
-  </div></div>`;
-  modalRoot.classList.remove('hidden');
-  document.getElementById('modalCloseBtn').onclick = () => {
-    closeModal();
-    if(typeof opts.onClose === 'function') opts.onClose();
-  };
-}
+// function showModalInner(html, opts = {}) {
+//   modalRoot.innerHTML = `<div class="modal" id="theModal"><div class="modal-card">
+//     <div class="modal-head"><div><h3 class="modal-title">${opts.title || ''}</h3><div class="modal-sub">${opts.sub || ''}</div></div><div><button id="modalCloseBtn" class="btn">✕</button></div></div>
+//     <div class="modal-body">${html}</div>
+//   </div></div>`;
+//   modalRoot.classList.remove('hidden');
+//   document.getElementById('modalCloseBtn').onclick = () => {
+//     closeModal();
+//     if(typeof opts.onClose === 'function') opts.onClose();
+//   };
+// }
 function closeModal(){ modalRoot.innerHTML = ''; modalRoot.classList.add('hidden'); }
 function toast(msg, t=2500){ const el = document.createElement('div'); el.className='card'; el.style.position='fixed'; el.style.right='18px'; el.style.bottom='18px'; el.style.zIndex=80; el.textContent = msg; document.body.appendChild(el); setTimeout(()=>el.remove(), t); }
 /* ---------- helpers ---------- */
