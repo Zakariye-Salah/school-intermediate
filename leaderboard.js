@@ -1,3 +1,4 @@
+
 // leaderboard.js (updated)
 // required imports (your firebase-config.js should export auth and db)
 // replace your existing auth import line with this
@@ -757,7 +758,6 @@ function shortDisplay(str, len = 5) {
 (function attachToggleHandler() {
   const tbody = document.getElementById('leaderTbody');
   if (!tbody) return;
-  // ensure we don't attach multiple handlers if this script runs more than once
   if (tbody._hasToggleHandler) return;
   tbody._hasToggleHandler = true;
 
@@ -765,15 +765,28 @@ function shortDisplay(str, len = 5) {
     const anchor = ev.target.closest('.student-toggle, .class-toggle');
     if (!anchor) return;
     ev.preventDefault();
-    const full = anchor.dataset.full || '';
-    const expanded = anchor.dataset.expanded === '1';
-    if (expanded) {
+
+    // toggle expanded state
+    const currentlyExpanded = anchor.classList.contains('expanded');
+    if (currentlyExpanded) {
+      anchor.classList.remove('expanded');
       anchor.dataset.expanded = '0';
+      // set short text
+      const full = anchor.dataset.full || '';
       const short = shortDisplay(full, 5);
-      anchor.innerHTML = `<strong>${escapeHtml(short)}</strong>`;
+      const strongEl = anchor.querySelector('strong');
+      if (strongEl) strongEl.textContent = short;
+      else anchor.textContent = short;
     } else {
+      anchor.classList.add('expanded');
       anchor.dataset.expanded = '1';
-      anchor.innerHTML = `<strong>${escapeHtml(full)}</strong>`;
+      const full = anchor.dataset.full || '';
+      const strongEl = anchor.querySelector('strong');
+      if (strongEl) strongEl.textContent = full;
+      else anchor.textContent = full;
+      // scroll the row into view a little so user sees expanded content on tiny screens
+      const tr = anchor.closest('tr');
+      if (tr) tr.scrollIntoView({ block: 'center', behavior: 'smooth' });
     }
   });
 })();
@@ -804,7 +817,16 @@ async function renderLeaderboard(){
     // Class: same behaviour as name
     const fullClass = r.className || '—';
     const shortClass = shortDisplay(fullClass, 5);
-    const classHtml = `<a href="#" class="class-toggle" data-full="${escapeHtml(fullClass)}" data-expanded="0">${escapeHtml(shortClass)}</a>`;
+    const classHtml = `<a href="#" class="class-toggle" data-full="${escapeHtml(fullClass)}" data-expanded="0"><strong>${escapeHtml(shortClass)}</strong></a>`;
+    tr.innerHTML = `<td>${rankCell}</td>
+                    <td class="name-cell">${nameHtml}</td>
+                    <td class="class-cell">${classHtml}</td>
+                    <td class="id-mask">${idMasked}</td>
+                    <td><strong>${points}</strong></td>
+                    <td>${actionHtml}</td>`;
+
+    
+
 
     const idMasked = maskId(r.studentId || r.id || '');
     const points = escapeHtml(String(r.points || 0));
