@@ -745,6 +745,39 @@ function buildRankedList(arr){
   }
   return { ranked, topRanks };
 }
+// helper: short display (first N chars + ' *' if truncated)
+function shortDisplay(str, len = 5) {
+  if (!str && str !== '') return '—';
+  const s = String(str).trim();
+  if (s.length <= len) return s;
+  return s.slice(0, len) + ' *';
+}
+
+// Delegated click handler: expand / collapse student name or class
+(function attachToggleHandler() {
+  const tbody = document.getElementById('leaderTbody');
+  if (!tbody) return;
+  // ensure we don't attach multiple handlers if this script runs more than once
+  if (tbody._hasToggleHandler) return;
+  tbody._hasToggleHandler = true;
+
+  tbody.addEventListener('click', (ev) => {
+    const anchor = ev.target.closest('.student-toggle, .class-toggle');
+    if (!anchor) return;
+    ev.preventDefault();
+    const full = anchor.dataset.full || '';
+    const expanded = anchor.dataset.expanded === '1';
+    if (expanded) {
+      anchor.dataset.expanded = '0';
+      const short = shortDisplay(full, 5);
+      anchor.innerHTML = `<strong>${escapeHtml(short)}</strong>`;
+    } else {
+      anchor.dataset.expanded = '1';
+      anchor.innerHTML = `<strong>${escapeHtml(full)}</strong>`;
+    }
+  });
+})();
+
 /* ---------- render leaderboard (async) ---------- */
 async function renderLeaderboard(){
   leaderTbody.innerHTML = '';
@@ -757,21 +790,25 @@ async function renderLeaderboard(){
   const vrole = getVerifiedRole();
   const admin = isAdmin();
 
-  // Decide which primary rows to show:
-  // - Admins: if not expanded -> show topRanks; if expanded -> show ranked (all)
-  // - Non-admins: show topRanks only
   const primaryRows = admin ? (adminShowAll ? ranked : topRanks) : topRanks;
 
-  // Build primary rows:
   for(const r of primaryRows){
     const tr = document.createElement('tr');
     const rankCell = `<div class="rank-badge" style="background:${r.rank===1? '#FFD700': r.rank===2? '#C0C0C0' : r.rank===3? '#CD7F32': '#eef6ff'}">${r.rank}</div>`;
-    const name = `<strong>${escapeHtml(r.studentName || '—')}</strong>`;
-    const className = escapeHtml(r.className || '—');
+
+    // Name: show first 5 chars + " *" by default, clickable to expand
+    const fullName = r.studentName || '—';
+    const shortName = shortDisplay(fullName, 5);
+    const nameHtml = `<a href="#" class="student-toggle" data-full="${escapeHtml(fullName)}" data-expanded="0"><strong>${escapeHtml(shortName)}</strong></a>`;
+
+    // Class: same behaviour as name
+    const fullClass = r.className || '—';
+    const shortClass = shortDisplay(fullClass, 5);
+    const classHtml = `<a href="#" class="class-toggle" data-full="${escapeHtml(fullClass)}" data-expanded="0">${escapeHtml(shortClass)}</a>`;
+
     const idMasked = maskId(r.studentId || r.id || '');
     const points = escapeHtml(String(r.points || 0));
 
-    // action column
     let actionHtml = `<button class="btn" data-view="${escapeHtml(r.id)}">View</button>`;
     if(admin){
       actionHtml += ` <button class="btn settingsBtn" data-student="${escapeHtml(r.studentId)}" data-scoredoc="${escapeHtml(r.id)}">⚙</button>`;
@@ -781,7 +818,7 @@ async function renderLeaderboard(){
       }
     }
 
-    tr.innerHTML = `<td>${rankCell}</td><td>${name}</td><td>${className}</td><td>${idMasked}</td><td><strong>${points}</strong></td><td>${actionHtml}</td>`;
+    tr.innerHTML = `<td>${rankCell}</td><td>${nameHtml}</td><td>${classHtml}</td><td>${idMasked}</td><td><strong>${points}</strong></td><td>${actionHtml}</td>`;
     leaderTbody.appendChild(tr);
   }
 
@@ -1665,3 +1702,4 @@ async function getHighestStreakHolder(){
 }
 /* ---------- export minor helpers if you reuse in other files ---------- */
 export { renderCompetitionHeader, loadCompetitionScores, loadCompetitionAndScores, getHighestStreakHolder };
+
