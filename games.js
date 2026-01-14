@@ -116,6 +116,102 @@ onAuthStateChanged(auth, async user => {
   await initPage();
 });
 
+/* ---------- header buttons and profile edit ---------- */
+function injectHeaderButtons(){
+  // try to find manageCompBtn parent to append buttons
+  try {
+    const manageBtn = document.getElementById('manageCompBtn');
+    const parent = manageBtn ? manageBtn.parentNode : document.querySelector('.comp-actions');
+    if(!parent) return;
+    // avoid duplicates
+    if(document.getElementById('goToGamesBtn')) return;
+
+    // Game button (visible only to verified students)
+    const gameBtn = document.createElement('button');
+    gameBtn.id = 'goToGamesBtn';
+    gameBtn.className = 'btn';
+    gameBtn.textContent = 'Games';
+    gameBtn.onclick = () => { window.location.href = 'games.html'; };
+
+    // Leaderboard button
+    const lbBtn = document.createElement('button');
+    lbBtn.id = 'goToLeaderboardBtn';
+    lbBtn.className = 'btn';
+    lbBtn.textContent = 'Leaderboard';
+    lbBtn.onclick = () => { window.location.href = 'leaderboard.html'; };
+
+    // Gear/profile button
+    const gear = document.createElement('button');
+    gear.id = 'profileGearBtn';
+    gear.className = 'btn';
+    gear.title = 'Edit profile';
+    gear.innerHTML = '⚙';
+    gear.onclick = () => {
+      const vrole = getVerifiedRole();
+      if(vrole !== 'student') { toast('Verify as a student to edit profile'); return; }
+      openEditProfileModal();
+    };
+
+    // Only show Games button for verified students
+    parent.appendChild(lbBtn);
+    parent.appendChild(gameBtn);
+    parent.appendChild(gear);
+    // show/hide based on verification every time
+    const refreshVisibility = () => {
+      const v = getVerifiedRole();
+      gameBtn.style.display = v === 'student' ? '' : 'none';
+      lbBtn.style.display = v ? '' : 'none';
+      gear.style.display = v === 'student' ? '' : 'none';
+    };
+    refreshVisibility();
+    // watch storage changes (user may verify)
+    window.addEventListener('storage', refreshVisibility);
+  } catch(e){ console.warn('injectHeaderButtons failed', e); }
+}
+
+/* ---------- Edit profile modal (avatar select & save) ---------- */
+function openEditProfileModal(){
+  const vId = getVerifiedStudentId();
+  if(!vId) return toast('Verify first');
+  // build avatar grid for assets/avatar1.png .. avatar10.png
+  let optionsHtml = '<div style="display:flex;flex-wrap:wrap;gap:8px">';
+  for(let i=1;i<=10;i++){
+    const src = `assets/avatar${i}.png`;
+    optionsHtml += `<label style="cursor:pointer"><input type="radio" name="avatarPick" value="${src}" style="display:none"><img src="${src}" data-src="${src}" style="width:64px;height:64px;border-radius:8px;border:2px solid transparent" class="avatar-pick" /></label>`;
+  }
+  optionsHtml += '</div>';
+  optionsHtml += `<div style="margin-top:8px"><label>Avatar frame (name): <input id="avatarFrameInput" class="input-small" placeholder="frame_level_1"></label></div>`;
+  optionsHtml += `<div style="text-align:right;margin-top:10px"><button id="cancelProfileEdit" class="btn">Cancel</button> <button id="saveProfileEdit" class="btn btn-primary">Save</button></div>`;
+
+  showModal(optionsHtml, { title: 'Edit profile' });
+  // wire image clicks
+  modalRoot.querySelectorAll('.avatar-pick').forEach(img => {
+    img.onclick = () => {
+      // clear borders then highlight
+      modalRoot.querySelectorAll('.avatar-pick').forEach(i => i.style.borderColor = 'transparent');
+      img.style.borderColor = '#2563eb';
+      img.previousElementSibling.checked = true;
+    };
+  });
+  document.getElementById('cancelProfileEdit').onclick = closeModal;
+  document.getElementById('saveProfileEdit').onclick = async () => {
+    const sel = modalRoot.querySelector('input[name="avatarPick"]:checked');
+    const frame = document.getElementById('avatarFrameInput').value.trim() || null;
+    if(!sel){ alert('Choose an avatar'); return; }
+    const avatarSrc = sel.value;
+    try {
+      await updateDoc(doc(db,'students', vId), { avatar: avatarSrc, avatarFrame: frame, updatedAt: serverTimestamp() });
+      // refresh local profile cache
+      const sSnap = await getDoc(doc(db,'students', vId));
+      if(sSnap.exists()) currentStudentProfile = sSnap.data();
+      toast('Profile updated');
+      closeModal();
+      renderHeaderMiniProfile();
+    } catch(e){ console.error('save profile failed', e); alert('Save failed'); }
+  };
+}
+
+
 async function initPage(){
   // try to load local sets first
   try {
@@ -141,6 +237,8 @@ async function initPage(){
   }
 
   renderHeaderMiniProfile();
+  injectHeaderButtons();
+
   await loadGames();
   subscribeStats();
 
@@ -285,18 +383,33 @@ async function onPlayBotNow(bot){
 }
 
 async function createQuickBotGame(botId, titles = null){
-  // similar to existing create flow but minimal
   const vrole = getVerifiedRole(), vId = getVerifiedStudentId();
   if(vrole !== 'student' || !vId) { toast('Verify as student'); throw new Error('not verified'); }
 
-  // check profile points (use currentStudentProfile if available)
-  const prof = currentStudentProfile || (await getDoc(doc(db,'students', vId))).data();
+  // ALWAYS fetch fresh student doc before any point checks
+  let prof = {};
+  try {
+    const snap = await getDoc(doc(db,'students', vId));
+    prof = snap.exists() ? snap.data() : {};
+    currentStudentProfile = prof; // refresh cached profile for UI
+  } catch(err){
+    console.warn('fetch student doc failed', err);
+    prof = currentStudentProfile || {};
+  }
+
   const stake = 50; // minimal default for quick games
-  if((prof.totalPoints||0) < stake) { toast('Not enough points'); throw new Error('insufficient'); }
+  const available = Number(prof.totalPoints || 0);
+  if(available < stake) {
+    toast('Not enough points to start a quick bot game.');
+    throw new Error('insufficient');
+  }
+
+  const titlesToUse = titles && titles.length ? titles
+                      : (localSetsCache && localSetsCache.length ? [localSetsCache[0].title || localSetsCache[0].id] : []);
 
   const newGame = {
     name: `Quick vs ${botId}`,
-    titles: titles && titles.length ? titles : (localSetsCache.length ? [ localSetsCache[0].title || localSetsCache[0].id ] : []),
+    titles: titlesToUse,
     isPublic: false,
     stake,
     secondsPerQuestion: 15,
@@ -315,12 +428,21 @@ async function createQuickBotGame(botId, titles = null){
     reservedPoints: {},
     players: []
   };
+
+  // create game doc
   const ref = await addDoc(collection(db,'games'), newGame);
-  // auto-join creator
-  await joinGameById(ref.id, vId);
+  // auto-join creator (transaction enforces points)
+  const joined = await joinGameById(ref.id, vId);
+  if(!joined){
+    // joining failed (race or transaction error) -> clean up the game doc
+    try { await updateDoc(doc(db,'games', ref.id), { status:'expired', updatedAt: serverTimestamp() }); } catch(e){}
+    throw new Error('join_failed');
+  }
   // start match
   await startMatchForGame(ref.id);
+  return ref.id;
 }
+
 
 /* ---------- new game modal (unchanged except titles uses local sets) ---------- */
 async function onNewGameClick(){
@@ -392,10 +514,20 @@ async function onNewGameClick(){
     if(!name) return alert('Enter game name');
     if(chosen.length === 0) return alert('Select at least one title');
     if(stake < 50) return alert('Minimum stake is 50');
-    const profSnap = currentStudentProfile;
-    const availablePoints = (profSnap && profSnap.totalPoints) ? Number(profSnap.totalPoints) : 0;
-    if(stake > availablePoints) { return alert('Not enough points to create this stake'); }
-
+      // refresh profile BEFORE validating stake (avoid stale cache)
+      let profData = currentStudentProfile || {};
+      try {
+        const sSnap = await getDoc(doc(db,'students', currentStudentId));
+        if(sSnap.exists()) profData = sSnap.data();
+        currentStudentProfile = profData;
+      } catch(e){
+        console.warn('refresh student doc failed', e);
+      }
+      const availablePoints = Number(profData.totalPoints || 0);
+      if(stake > availablePoints) {
+        return alert('Not enough points to create this stake');
+      }
+  
     try {
       const newGame = {
         name,
@@ -791,14 +923,35 @@ async function openMatchById(matchId){
   // subscribe to match doc
   const matchRef = doc(db,'matches', matchId);
   if(currentMatchUnsub){ currentMatchUnsub(); currentMatchUnsub = null; }
-  currentMatchUnsub = onSnapshot(matchRef, snap => {
-    if(!snap.exists()) { toast('Match ended or removed'); closeMatchOverlay(); return; }
-    const data = snap.data();
-    currentMatchState = data;
-    renderMatchUI(data, matchRef);
-  }, err => {
-    console.warn('match onSnapshot error', err);
-  });
+// robust onSnapshot with retry
+let snapshotRetries = 0;
+function subscribeMatch() {
+  if(currentMatchUnsub){ currentMatchUnsub(); currentMatchUnsub = null; }
+  try {
+    currentMatchUnsub = onSnapshot(matchRef, snap => {
+      snapshotRetries = 0;
+      if(!snap.exists()) { toast('Match ended or removed'); closeMatchOverlay(); return; }
+      const data = snap.data();
+      currentMatchState = data;
+      renderMatchUI(data, matchRef);
+    }, err => {
+      console.warn('match onSnapshot error', err);
+      // try a few times to recover (transient Listen errors)
+      snapshotRetries++;
+      if(snapshotRetries <= 4){
+        const delay = 1000 * Math.pow(2, snapshotRetries); // exponential backoff
+        toast('Realtime connection lost — retrying...');
+        setTimeout(() => subscribeMatch(), delay);
+      } else {
+        toast('Realtime unavailable — using fallback (refresh page to retry).');
+      }
+    });
+  } catch(e){
+    console.warn('subscribeMatch failed', e);
+  }
+}
+subscribeMatch();
+
   // open blank overlay until snapshot arrives
   matchRoot.innerHTML = `<div class="match-pane"><div class="match-top"><div>Loading match…</div><div><button id="closeMatchBtn" class="btn">Close</button></div></div><div class="match-body"></div></div>`;
   matchRoot.classList.remove('hidden'); matchRoot.removeAttribute('aria-hidden');
