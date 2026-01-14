@@ -124,6 +124,60 @@ table.leader td { vertical-align:middle; }
 /* safety for long nodes inside cells */
 table.leader td > *{max-width:100%;overflow:hidden;text-overflow:ellipsis}
 
+  /* ===== Choices (modal question options) ===== */
+.choices { margin-top: 8px; display:block; width:100%; box-sizing:border-box; }
+
+.choices label {
+  display: block;                 /* take full width */
+  background: #ffffff;            /* visible on modal bg */
+  color: var(--text, #0f172a);    /* ensure readable text */
+  border: 1px solid #eef2f6;      /* subtle border */
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 0.95rem;             /* readable but compact */
+  line-height: 1.25;
+  word-break: break-word;         /* wrap long answers */
+  white-space: normal;            /* allow wrapping */
+  transition: box-shadow .12s ease, transform .06s ease;
+  box-sizing: border-box;
+}
+
+/* meta mark (tick/cross) at the right side of the label */
+.choices label .choice-meta {
+  float: right;
+  font-weight: 900;
+  margin-left: 8px;
+}
+
+/* hover & focus accessibility */
+.choices label:hover { box-shadow: 0 8px 22px rgba(2,6,23,0.06); transform: translateY(-1px); }
+.choices label:focus { outline: 2px solid rgba(11,116,255,0.12); outline-offset: 2px; }
+
+/* selected / result states your JS uses */
+.choice-selected { box-shadow: 0 8px 20px rgba(37,99,235,0.08); }
+.choice-correct {
+  background: #ecfdf5;
+  border-color: #bbf7d0;
+  color: #064e3b;
+}
+.choice-wrong {
+  background: #fff1f2;
+  border-color: #fecaca;
+  color: #7f1d1d;
+}
+
+/* Ensure labels are visible inside modal even if modal-body has limited height */
+#modalRoot .modal .modal-body .choices { z-index: 1; position: relative; }
+
+/* Mobile tweaks: slightly larger tap targets */
+@media (max-width:720px){
+  .choices label { padding: 12px 14px; font-size: 1rem; border-radius: 10px; }
+}
+
+
 </style>
 </head>
 <body>
@@ -215,3 +269,4 @@ table.leader td > *{max-width:100%;overflow:hidden;text-overflow:ellipsis}
   <script type="module" src="leaderboard.js"></script>
 </body>
 </html>
+
