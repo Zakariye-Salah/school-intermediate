@@ -286,104 +286,7 @@
     .rank-badge { width:38px; height:38px; min-width:38px; font-size:0.95rem; }
     .points-badge { min-width:56px; font-size:0.95rem; padding:6px 8px; }
   }
-
-
-
-
-
-      /* Reduced, mobile-first, rem-based sizing so the table fits on small screens
-       and uses minimal spacing. The table stays as rows (no stacked card mode).
-    */
-    :root{
-      --card-bg: #fff;
-      --muted: #6b7280;
-      --primary: #2563eb;
-      --surface: #f8fafc;
-      --shadow: 0 6px 22px rgba(14,30,63,0.06);
-      --radius: .6rem;
-      --gap: .6rem;
-      --fs-base: 1rem; /* 1rem = 16px default */
-    }
-
-    /* page base */
-    html,body{ height:100%; }
-    body{
-      background:var(--surface);
-      color:#0f172a;
-      font-family:Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
-      margin:0;
-      padding:1rem;
-      -webkit-font-smoothing:antialiased;
-      -moz-osx-font-smoothing:grayscale;
-      line-height:1.25;
-      box-sizing:border-box;
-      font-size: var(--fs-base);
-    }
-    *,*::before,*::after{ box-sizing:inherit; }
-
-    .container { max-width:1100px; margin:0.8rem auto; padding:0 0.6rem; }
-
-    header { display:flex; justify-content:space-between; align-items:center; gap:0.6rem; margin-bottom:0.6rem; flex-wrap:wrap; }
-    header .comp-info { min-width:0; flex:1 1 auto; display:flex; flex-direction:column; gap:0.25rem; }
-    header h1{ margin:0; font-size:1.05rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-    .comp-actions { display:flex; gap:0.4rem; align-items:center; flex:0 0 auto; flex-wrap:wrap; }
-
-    /* cards and UI */
-    .card { background:var(--card-bg); border-radius:var(--radius); padding:0.6rem; box-shadow:var(--shadow); margin-bottom:0.6rem; }
-    .small-muted { color:var(--muted); font-size:0.86rem; }
-    .btn { padding:0.4rem 0.6rem; border-radius:0.45rem; cursor:pointer; border:0; background:transparent; font-size:0.9rem; min-height:2.2rem; }
-    .btn:active{ transform:translateY(1px); }
-    .btn-primary { background:var(--primary); color:#fff; border:0; }
-    .btn-ghost { background:transparent; border:1px solid #e6eefc; }
-
-    .input-small { padding:0.4rem; border-radius:0.4rem; border:1px solid #e2e8f0; min-width:7.5rem; font-size:0.9rem; }
-
-    /* table area - keep rows horizontal and allow wrapping so there's no scrollbar */
-    .table-wrap { width:100%; overflow:visible; -webkit-overflow-scrolling:touch; border-radius:0.6rem; background:linear-gradient(180deg, #fff, #fbfdff); padding:0.4rem; }
-    table.leader { width:100%; border-collapse:collapse; margin-top:0.4rem; min-width:0; table-layout:auto; }
-    table.leader th, table.leader td { padding:0.45rem 0.5rem; text-align:left; border-bottom:1px solid #eef2f6; vertical-align:middle; font-size:0.95rem; }
-    table.leader thead th { color:var(--muted); font-weight:700; font-size:0.85rem; }
-    table.leader tbody tr:hover { background: #fbfdff; }
-
-    /* allow wrapping and breaking of long names/ids so the table fits without horizontal scrolling */
-    table.leader td { white-space:normal; word-break:break-word; overflow-wrap:anywhere; }
-
-    .rank-badge { font-weight:900; display:inline-flex; align-items:center; justify-content:center; min-width:2.6rem; height:2.6rem; border-radius:0.6rem; padding:0 0.5rem; font-size:0.95rem; color:#07122b; background:#fff9e6; }
-    .rank-badge.first { background:#FFD700; }
-    .rank-badge.second { background:#c0c0c0; }
-    .rank-badge.third { background:#cd7f32; }
-
-    .student-name { font-size:0.95rem; line-height:1.1; }
-    .id-mask { font-family:monospace; font-size:0.88rem; }
-
-    .points-badge { display:inline-block; font-weight:800; padding:0.35rem 0.6rem; border-radius:0.45rem; background:linear-gradient(180deg,#f3f9ff,#eef6ff); min-width:3.8rem; text-align:center; font-size:0.95rem; }
-
-    .actions-wrap { display:flex; gap:0.3rem; align-items:center; }
-    .actions-wrap .btn { padding:0.35rem 0.5rem; font-size:0.85rem; min-height:2rem; }
-
-    /* Remove large default margins/spaces */
-    h1, h2, h3, p { margin:0; }
-
-    /* Loading dots for buttons */
-    .dots { display:inline-block; margin-left:0.35rem; font-weight:700; }
-    .dots span { opacity:0; display:inline-block; animation: dots 1s steps(3,end) infinite; }
-    .dots span:nth-child(1){ animation-delay:0s } .dots span:nth-child(2){ animation-delay:0.12s } .dots span:nth-child(3){ animation-delay:0.24s }
-    @keyframes dots { 0%{ opacity:0 } 50%{ opacity:1 } 100%{ opacity:0 } }
-
-    .btn.loading { pointer-events:none; opacity:0.8; }
-
-    /* very small screens: slightly smaller type, keep rows horizontal and compact */
-    @media (max-width:420px){
-      :root{ --fs-base: 0.95rem; }
-      body{ padding:0.6rem; }
-      .container{ padding:0 0.4rem; }
-      header h1{ font-size:1rem; }
-      .card{ padding:0.45rem; }
-      table.leader th, table.leader td { padding:0.35rem 0.4rem; font-size:0.85rem; }
-      .rank-badge{ min-width:2.2rem; height:2.2rem; font-size:0.85rem; }
-      .points-badge{ min-width:3.2rem; padding:0.25rem 0.4rem; font-size:0.85rem; }
-      .actions-wrap .btn{ padding:0.25rem 0.4rem; font-size:0.8rem; }
-    }
+  
   </style>
 </head>
 <body>
@@ -432,6 +335,7 @@
           <strong id="compTitle">—</strong>
           <div class="small-muted" id="compRange"></div>
         </div>
+        <!-- <div class="small-muted">Top ranks (ties allowed) — showing rank, student, class, id (last 4 digits), points</div> -->
       </div>
 
       <table class="leader" id="leaderTable">
@@ -455,5 +359,3 @@
   <script type="module" src="leaderboard.js"></script>
 </body>
 </html>
-
-
