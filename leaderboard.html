@@ -295,7 +295,78 @@
   }
 }
 
-  
+  /* --- tighter compact table for small screens --- */
+table.leader {
+  table-layout: fixed; /* keep columns compact and predictable */
+  width: 100%;
+}
+
+/* column widths: name auto, others tiny */
+.col-rank { width:56px; }
+.col-name  { width:auto; }
+.col-class { width:44px; }
+.col-id    { width:64px; }
+.col-points{ width:64px; }
+.col-action{ width:88px; }
+
+/* very compact table cells */
+table.leader th, table.leader td {
+  padding: 6px 6px;
+  font-size: 0.86rem;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+/* header smaller and lighter on mobile */
+@media (max-width: 720px) {
+  table.leader thead th {
+    font-size: 0.74rem;
+    font-weight: 700;
+    color: var(--muted);
+    padding: 6px 6px;
+  }
+
+  /* Make the overall font a bit smaller so content fits */
+  table.leader th, table.leader td { font-size: 0.82rem; padding: 6px 6px; }
+
+  /* really reduce action button size on tiny screens */
+  .actions-wrap .btn, .btn { padding: 6px 8px; font-size:0.8rem; min-height:32px; }
+
+  /* Name & Class compact behaviour */
+  .name-cell, .class-cell { padding: 0; }
+  .name-cell .student-toggle,
+  .class-cell .class-toggle {
+    display: inline-block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;       /* default: single-line truncated */
+    font-weight: 700;
+    font-size: 0.9rem;
+    line-height: 1.1;
+  }
+
+  /* When expanded (only for that element) allow wrapping and normal spacing.
+     This affects only the clicked anchor because JS will toggle .expanded on it. */
+  .student-toggle.expanded,
+  .class-toggle.expanded {
+    white-space: normal;
+    display: block;
+  }
+
+  /* ID masking smaller and monospace to save space */
+  .id-mask { font-family: monospace; font-size:0.86rem; letter-spacing:0.6px; }
+
+  /* compact rank badge */
+  .rank-badge { min-width:40px; height:40px; font-size:0.92rem; }
+
+  /* tighten points badge */
+  .points-badge { min-width:56px; padding:6px 6px; font-size:0.88rem; }
+
+  /* ensure the table wrapper gives a horizontal scrollbar on very narrow screens */
+  .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; padding:6px; }
+}
+
   </style>
 </head>
 <body>
@@ -347,14 +418,33 @@
         <!-- <div class="small-muted">Top ranks (ties allowed) — showing rank, student, class, id (last 4 digits), points</div> -->
       </div>
 
-      <table class="leader" id="leaderTable">
-        <thead>
-          <tr><th style="width:100px">Rank</th><th>Name</th><th>Class</th><th>ID</th><th style="width:120px">Points</th><th style="width:160px">Action</th></tr>
-        </thead>
-        <tbody id="leaderTbody">
-          <tr><td colspan="6" class="small-muted">Loading…</td></tr>
-        </tbody>
-      </table>
+     <!-- put this inside #leaderContainer where your table currently is -->
+<div class="table-wrap">
+  <table class="leader" id="leaderTable">
+    <colgroup>
+      <col class="col-rank">
+      <col class="col-name">
+      <col class="col-class">
+      <col class="col-id">
+      <col class="col-points">
+      <col class="col-action">
+    </colgroup>
+    <thead>
+      <tr>
+        <th class="col-rank">Rank</th>
+        <th class="col-name">Name</th>
+        <th class="col-class">Class</th>
+        <th class="col-id">ID</th>
+        <th class="col-points">Points</th>
+        <th class="col-action">Action</th>
+      </tr>
+    </thead>
+    <tbody id="leaderTbody">
+      <tr><td colspan="6" class="small-muted">Loading…</td></tr>
+    </tbody>
+  </table>
+</div>
+
     </div>
 
     <div id="moreArea"></div>
