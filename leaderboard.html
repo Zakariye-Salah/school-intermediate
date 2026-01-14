@@ -6,280 +6,202 @@
   <title>Leaderboard — AL-FATXI</title>
   <link rel="stylesheet" href="style.css">
   <style>
+    /* -------------------------
+       Compact responsive leaderboard
+       - rem-based sizing
+       - no horizontal scrollbar on mobile
+       - compact paddings/margins
+       - modal centered over content
+       ------------------------- */
     :root{
       --card-bg: #fff;
       --muted: #6b7280;
       --primary: #2563eb;
       --surface: #f8fafc;
       --shadow: 0 6px 22px rgba(14,30,63,0.06);
-      --radius: 12px;
-      --gap: 12px;
+      --radius: 10px;
+      --gap: 0.5rem;
+      --fs-base: 0.95rem; /* ~15px */
     }
-  
-    /* page base */
-    html,body{ height:100%; }
+
+    html,body{ height:100%; width:100%; overflow-x:hidden; }
     body{
       background:var(--surface);
       color:#0f172a;
       font-family:Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
       margin:0;
-      padding:18px;
+      padding:1.125rem; /* 18px */
       -webkit-font-smoothing:antialiased;
       -moz-osx-font-smoothing:grayscale;
-      line-height:1.3;
+      line-height:1.25;
       box-sizing:border-box;
+      font-size:var(--fs-base);
     }
     *,*::before,*::after{ box-sizing:inherit; }
-  
+
+    /* container — make it narrow on big screens but compact margins on mobile */
     .container {
-      max-width:1100px;
-      margin:18px auto;
-      padding:0 12px;
+      max-width:64rem; /* 1024px */
+      margin:0.5rem auto;
+      padding:0 0.5rem;
     }
-  
+
     /* header */
     header {
       display:flex;
       justify-content:space-between;
       align-items:center;
-      gap:12px;
-      margin-bottom:16px;
+      gap:0.5rem;
+      margin-bottom:0.5rem;
       flex-wrap:wrap;
     }
-    header .comp-info { min-width:0; flex:1 1 auto; display:flex; flex-direction:column; gap:6px; }
-    header h1{ margin:0; font-size:20px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    header .comp-info { min-width:0; flex:1 1 auto; display:flex; flex-direction:column; gap:0.25rem; }
+    header h1{ margin:0; font-size:1.05rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
     .comp-actions {
       display:flex;
-      gap:8px;
+      gap:0.4rem;
       align-items:center;
       flex:0 0 auto;
       flex-wrap:wrap;
     }
-    .comp-actions .btn{ white-space:nowrap; }
-  
+    .comp-actions .btn{ white-space:nowrap; font-size:0.85rem; padding:0.36rem 0.5rem; min-height:2.2rem; }
+
     /* cards and UI */
     .card {
       background:var(--card-bg);
       border-radius:var(--radius);
-      padding:14px;
+      padding:0.6rem;
       box-shadow:var(--shadow);
-      margin-bottom:12px;
+      margin-bottom:0.5rem;
     }
-    .small-muted { color:var(--muted); font-size:0.92rem; }
+    .small-muted { color:var(--muted); font-size:0.85rem; }
     .btn {
-      padding:8px 12px;
-      border-radius:8px;
+      padding:0.36rem 0.5rem;
+      border-radius:0.45rem;
       cursor:pointer;
       border:0;
       background:transparent;
-      font-size:0.95rem;
-      min-height:38px;
+      font-size:0.85rem;
+      min-height:2.2rem;
     }
     .btn:active{ transform:translateY(1px); }
     .btn-primary { background:var(--primary); color:#fff; border:0; }
     .btn-ghost { background:transparent; border:1px solid #e6eefc; }
-    .settings-gear { font-size:16px; padding:6px; }
-  
+    .settings-gear { font-size:1rem; padding:0.25rem; }
+
     .input-small {
-      padding:8px;
-      border-radius:6px;
+      padding:0.36rem;
+      border-radius:0.4rem;
       border:1px solid #e2e8f0;
-      min-width:120px;
-      font-size:0.95rem;
+      min-width:8rem;
+      font-size:0.85rem;
     }
-  
-    /* table area: make responsive by wrapping (horizontal scroll) and mobile stacked cards */
-    .table-wrap {
-      width:100%;
-      overflow:auto;
-      -webkit-overflow-scrolling:touch;
-      border-radius:10px;
-      background:linear-gradient(180deg, #fff, #fbfdff);
-      padding:8px;
-    }
+
+    /* table area - compact and responsive */
+    .table-wrap { width:100%; overflow:auto; -webkit-overflow-scrolling:touch; border-radius:0.5rem; background:linear-gradient(180deg, #fff, #fbfdff); padding:0.35rem; }
     table.leader {
       width:100%;
       border-collapse:collapse;
-      margin-top:6px;
-      min-width:700px; /* allows horizontal scroll on small screens */
+      margin-top:0.25rem;
+      min-width:0; /* allow shrinking */
+      font-size:0.9rem;
     }
+    table.leader thead { border-bottom:1px solid rgba(0,0,0,0.04); }
     table.leader th, table.leader td {
-      padding:10px 8px;
+      padding:0.45rem 0.5rem;
       text-align:left;
       border-bottom:1px solid #eef2f6;
       vertical-align:middle;
-      font-size:0.95rem;
+      font-size:0.9rem;
     }
-    table.leader thead th { color:var(--muted); font-weight:700; font-size:0.92rem; }
+    table.leader thead th { color:var(--muted); font-weight:700; font-size:0.82rem; padding:0.45rem 0.5rem; }
     table.leader tbody tr:hover { background: #fbfdff; }
-  
+
+    /* prevent horizontal scrollbar by truncating content and using ellipsis */
+    table.leader td { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:0; }
+    table.leader td > .cell { display:flex; gap:0.25rem; align-items:center; }
+    .student-name { font-weight:700; font-size:0.9rem; }
+    .cell-muted { color:var(--muted); font-size:0.78rem; }
+
+    /* ranking badge */
     .rank-badge {
       font-weight:900;
-      display:inline-block;
-      min-width:48px;
-      text-align:center;
-      padding:6px 8px;
-      border-radius:8px;
-      font-size:0.95rem;
-    }
-  
-    /* modal */
-    .modal {
-      position:fixed;
-      inset:0;
-      display:flex;
+      display:inline-flex;
       align-items:center;
       justify-content:center;
-      z-index:1200;
-      background:rgba(2,6,23,0.45);
-      padding:18px;
+      min-width:2.6rem;
+      height:2.6rem;
+      border-radius:0.5rem;
+      padding:0.25rem;
+      font-size:0.95rem;
+      color:#07122b;
+      background:#fff9e6;
+      box-shadow:0 6px 14px rgba(2,6,23,0.05);
     }
-    .modal-card{
-      width:820px;
-      max-width:100%;
-      max-height:86vh;
-      overflow:auto;
-      border-radius:12px;
-      padding:18px;
-      background:linear-gradient(180deg,#fff,#fbfdff);
-      box-shadow:0 18px 48px rgba(2,6,23,0.28);
-      transform:translateY(0);
+
+    /* points */
+    .points-badge { font-weight:800; padding:0.28rem 0.5rem; border-radius:0.45rem; background:#eef6ff; font-size:0.9rem; min-width:3.6rem; text-align:center; }
+
+    /* actions */
+    .actions-wrap { display:flex; gap:0.3rem; align-items:center; flex-wrap:nowrap; }
+
+    /* modal: center and overlap the list; full-screen dim + centered card */
+    .modal { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; z-index:2400; background:rgba(2,6,23,0.45); padding:0.75rem; }
+    .modal-card{ width:44rem; max-width:100%; max-height:88vh; overflow:auto; border-radius:0.6rem; padding:0.75rem; background:linear-gradient(180deg,#fff,#fbfdff); box-shadow:0 18px 48px rgba(2,6,23,0.28); transform:translateY(0); }
+    .modal-head{ display:flex; justify-content:space-between; align-items:center; gap:0.5rem; margin-bottom:0.4rem; }
+    .modal-title{ font-weight:800; font-size:1rem; margin:0; }
+    .modal-sub{ color:var(--muted); font-size:0.85rem; }
+
+    .modal-body{ font-size:0.95rem; color:#0b1220; }
+
+    /* tiny loading dots (inline spinner text) */
+    .btn-loading {
+      pointer-events:none;
+      opacity:0.75;
     }
-    .modal-head{ display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px; }
-    .modal-title{ font-weight:800; font-size:18px; margin:0; }
-    .modal-sub{ color:var(--muted); font-size:0.95rem; }
-  
-    .modal-body{ font-size:0.98rem; color:#0b1220; }
-  
-    /* choices */
-    .choices label{
-      display:block;
-      margin-bottom:8px;
-      padding:10px;
-      border-radius:8px;
-      background:#fbfdff;
-      cursor:pointer;
-      border:1px solid #eef2f6;
-      user-select:none;
+    .dots::after {
+      content: '';
+      display:inline-block;
+      width:0.9rem;
+      height:0.9rem;
+      vertical-align:middle;
+      margin-left:0.45rem;
+      background:transparent;
+      position:relative;
     }
-    .choice-correct{ background:#ecfdf5; border-color:#bbf7d0; color:#064e3b; font-weight:700; }
-    .choice-wrong{ background:#fff1f2; border-color:#fecaca; color:#7f1d1d; font-weight:700; }
-    .choice-selected{ box-shadow:0 6px 20px rgba(37,99,235,0.08); }
-    .choice-meta{ float:right; font-weight:900; }
-  
-    .test-footer { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:12px; flex-wrap:wrap; }
-    .stats-line { display:flex; gap:12px; align-items:center; color:var(--muted); font-size:0.95rem; }
-  
-    /* your small utility */
-    .hidden{ display:none !important; }
-  
-    /* mobile / small screens */
-    @media (max-width: 940px) {
-      body{ padding:12px; }
-      .container{ padding:0 10px; }
-      header { gap:10px; }
-      .modal-card{ padding:14px; }
-      .btn{ padding:8px 10px; font-size:0.93rem; min-height:36px; }
+    .dots::after { content: '…'; font-weight:700; }
+
+    /* small-screen overrides */
+    @media (max-width:720px){
+      body{ padding:0.6rem; }
+      .container{ padding:0 0.3rem; }
+      header h1{ font-size:1rem; }
+      .btn { font-size:0.82rem; padding:0.28rem 0.4rem; min-height:2rem; }
+      .card { padding:0.45rem; }
+      table.leader thead th { font-size:0.78rem; }
+      table.leader th, table.leader td { padding:0.36rem 0.45rem; font-size:0.85rem; }
+      .rank-badge { min-width:2.2rem; height:2.2rem; font-size:0.88rem; }
+      .points-badge { min-width:3rem; font-size:0.85rem; padding:0.2rem 0.4rem; }
+      .modal-card { width:95%; padding:0.6rem; }
     }
-  
-    @media (max-width: 720px) {
-      header { align-items:flex-start; }
-      header .comp-info { order:1; width:100%; }
-      .comp-actions { order:2; width:100%; justify-content:flex-start; gap:6px; padding-top:8px; border-top:1px dashed rgba(0,0,0,0.04); }
-      .comp-actions .btn{ flex:0 0 auto; padding:8px 10px; font-size:0.92rem; min-height:36px; }
-      .card{ padding:12px; border-radius:10px; }
-  
-      /* make modal full-width-ish and centered vertically when small */
-      .modal-card{
-        width:100%;
-        max-width:640px;
-        border-radius:10px;
-        max-height:92vh;
-      }
-  
-      /* Table -> allow horizontal scroll, but also provide stacked card appearance for rows */
-      .table-wrap{ padding:6px; }
-      table.leader{ min-width:640px; }
-  
-      /* smaller text in table */
-      table.leader th, table.leader td { padding:10px 6px; font-size:0.92rem; }
-  
-      /* if screen is very narrow, present rows as stacked cards (more readable) */
-     
+
+    /* very small narrow screens: stack key cells for clarity without horizontal scroll */
+    @media (max-width:420px) {
+      table.leader { border:0; }
+      table.leader thead { display:none; }
+      table.leader tbody tr { display:block; margin-bottom:0.45rem; border-radius:0.5rem; background:#fff; box-shadow:var(--shadow); padding:0.45rem; }
+      table.leader tbody td { display:flex; justify-content:space-between; padding:0.28rem 0.35rem; border-bottom:0; white-space:normal; }
+      table.leader tbody td::before { display:inline-block; min-width:5rem; color:var(--muted); font-weight:700; content: attr(data-label); margin-right:0.5rem; }
+      table.leader tbody td:last-child { margin-top:0.25rem; }
+      .actions-wrap { justify-content:flex-end; width:100%; }
     }
-  
-    /* small visual polish */
-    .small-muted a{ color:var(--primary); text-decoration:none; }
-    /* ensure focus states */
-    .btn:focus, .input-small:focus, .choices label:focus { outline:2px solid rgba(37,99,235,0.12); outline-offset:2px; }
-  
-     /* ---------- improved row styles ---------- */
-  .rank-badge {
-    font-weight:900;
-    display:inline-flex;
-    align-items:center;
-    justify-content:center;
-    min-width:46px;
-    height:46px;
-    border-radius:10px;
-    padding:6px 8px;
-    font-size:1rem;
-    color:#07122b;
-    background:#fff9e6;
-    box-shadow:0 6px 18px rgba(2,6,23,0.06);
-  }
-  
-  /* distinct top-3 colors */
-  .rank-badge.first { background:#FFD700; color:#111; }
-  .rank-badge.second { background:#c0c0c0; color:#111; }
-  .rank-badge.third { background:#cd7f32; color:#111; }
-  
-  /* standardized cell content */
-  .cell {
-    display:flex;
-    flex-direction:column;
-    gap:6px;
-  }
-  .student-name { font-size:0.99rem; line-height:1.2; word-break:break-word; }
-  .student-name strong { display:block; font-weight:700; }
-  .cell-muted { color:var(--muted); font-size:0.88rem; }
-  
-  /* ID masking */
-  .id-mask { font-family:monospace; letter-spacing:0.6px; }
-  
-  /* Points presentation */
-  .points-badge {
-    display:inline-block;
-    font-weight:800;
-    padding:6px 10px;
-    border-radius:8px;
-    background:linear-gradient(180deg,#f3f9ff,#eef6ff);
-    min-width:64px;
-    text-align:center;
-    font-size:0.98rem;
-  }
-  
-  /* action buttons layout */
-  .actions-wrap { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-  .actions-wrap .btn { padding:6px 10px; min-height:34px; font-size:0.92rem; }
-  
-  /* Improve spacing on table cells so text doesn't overlap the card edges */
-  table.leader td { vertical-align:middle; }
-  
-  /* very small screens: stack actions under the row */
-  @media (max-width:420px) {
-    .actions-wrap { width:100%; justify-content:flex-end; gap:6px; }
-    .rank-badge { width:38px; height:38px; min-width:38px; font-size:0.95rem; }
-    .points-badge { min-width:56px; font-size:0.95rem; padding:6px 8px; }
-  }
-  
   </style>
 </head>
 <body>
   <div class="container">
     <header>
       <div class="comp-info">
-        <div style="display:flex;gap:8px;align-items:center">
+        <div style="display:flex;gap:0.5rem;align-items:center">
           <h1>Leaderboard</h1>
           <div id="studentTag" class="small-muted" style="font-weight:700"></div>
         </div>
@@ -292,56 +214,159 @@
         <button id="viewAroundBtn" class="btn">View around me</button>
         <button id="toggleBgBtn" class="btn">BG Sound: OFF</button>
         <button id="toggleFxBtn" class="btn">FX Sound: ON</button>
-        <button id="testYourselfBtn" class="btn btn-primary">Test Yourself</button>
+        <button id="testYourselfBtn" class="btn btn-primary" data-auto-loading data-loading-text="Preparing test…">Test Yourself</button>
         <button id="logoutBtn" class="btn">Logout</button>
       </div>
     </header>
 
-    <div id="adminControls" class="card hidden">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+    <div id="adminControls" class="card hidden" aria-hidden="true">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:0.75rem">
         <div>
-          <label style="font-weight:700">Manage competition</label>
-          <div class="small-muted">
-            Manage competition settings and view all scorers.
-          </div>
+          <label style="font-weight:700;font-size:0.9rem">Manage competition</label>
+          <div class="small-muted" style="font-size:0.82rem">Manage competition settings and view all scorers.</div>
         </div>
-    
-        <div style="display:flex;gap:8px;align-items:center">
-          <!-- ONLY these buttons stay -->
+
+        <div style="display:flex;gap:0.4rem;align-items:center">
           <button id="manageCompBtn" class="btn" style="display:none">Manage</button>
           <button id="viewAllBtn" class="btn" style="display:none">View all scorers</button>
         </div>
       </div>
     </div>
-    
 
-    <div id="leaderContainer" class="card">
+    <div id="leaderContainer" class="card" role="region" aria-labelledby="compTitleLabel">
       <div style="display:flex;justify-content:space-between;align-items:center">
         <div>
-          <strong id="compTitle">—</strong>
-          <div class="small-muted" id="compRange"></div>
+          <strong id="compTitle" style="font-size:0.98rem">—</strong>
+          <div class="small-muted" id="compRange" style="font-size:0.82rem"></div>
         </div>
-        <!-- <div class="small-muted">Top ranks (ties allowed) — showing rank, student, class, id (last 4 digits), points</div> -->
       </div>
 
-      <table class="leader" id="leaderTable">
-        <thead>
-          <tr><th style="width:100px">Rank</th><th>Name</th><th>Class</th><th>ID</th><th style="width:120px">Points</th><th style="width:160px">Action</th></tr>
-        </thead>
-        <tbody id="leaderTbody">
-          <tr><td colspan="6" class="small-muted">Loading…</td></tr>
-        </tbody>
-      </table>
+      <div class="table-wrap" aria-live="polite">
+        <table class="leader" id="leaderTable" role="table" aria-describedby="competitionSub">
+          <thead>
+            <tr>
+              <th style="width:72px">Rank</th>
+              <th>Name</th>
+              <th style="width:84px">Class</th>
+              <th style="width:82px">ID</th>
+              <th style="width:88px">Points</th>
+              <th style="width:140px">Action</th>
+            </tr>
+          </thead>
+          <tbody id="leaderTbody">
+            <tr><td colspan="6" class="small-muted">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
     </div>
 
     <div id="moreArea"></div>
   </div>
 
-  <!-- modal container -->
-  <div id="modalRoot" class="hidden"></div>
+  <!-- modal container (kept empty until leaderboard.js inserts content) -->
+  <div id="modalRoot" class="hidden" aria-hidden="true"></div>
 
-  <!-- scripts -->
+  <!-- small helpers: loading indicator + auto-binding for clickable buttons -->
+  <script>
+    (function () {
+      // Basic button loading helper.
+      // btn: DOM element
+      // on: boolean
+      // text: optional alternate text when loading
+      window.setButtonLoading = function(btn, on, text) {
+        if(!btn) return;
+        if(on) {
+          // stash original
+          if(!btn.__origText) btn.__origText = btn.innerHTML;
+          btn.classList.add('btn-loading');
+          btn.setAttribute('aria-busy','true');
+          btn.disabled = true;
+          // visual: use dots and small loading message if provided
+          const loadingText = (text || btn.dataset.loadingText || btn.getAttribute('data-loading-text') || 'Loading');
+          // keep markup safe
+          btn.innerHTML = escapeHtml(String(loadingText)) + ' <span class="dots" aria-hidden="true"></span>';
+        } else {
+          btn.classList.remove('btn-loading');
+          btn.removeAttribute('aria-busy');
+          btn.disabled = false;
+          if(btn.__origText) {
+            btn.innerHTML = btn.__origText;
+            btn.__origText = null;
+          }
+        }
+      };
+
+      // Escape helper used above
+      function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;"}[c])); }
+
+      // Auto-bind: any button with data-auto-loading will get loading shown automatically
+      document.addEventListener('click', function (e) {
+        const b = e.target.closest && e.target.closest('button[data-auto-loading]');
+        if(!b) return;
+        // If the button already had loading, ignore
+        if(b.disabled) return;
+        // show loading for up to 6s to avoid stuck state (your async should call setButtonLoading explicitly)
+        window.setButtonLoading(b, true);
+        setTimeout(()=> {
+          // only remove if still in btn-loading state (prevent removing if your code set/unset)
+          if(b && b.classList && b.classList.contains('btn-loading')) {
+            window.setButtonLoading(b, false);
+          }
+        }, 6000);
+      }, { passive:true });
+
+      // Utility: when opening a modal we want focus trap / center. Many pages provide showModalInner in leaderboard.js.
+      // If showModalInner exists in leaderboard.js, it will use #modalRoot; otherwise provide a fallback.
+      window.ensureModalRoot = function(){
+        const root = document.getElementById('modalRoot');
+        if(!root) {
+          const n = document.createElement('div');
+          n.id = 'modalRoot';
+          document.body.appendChild(n);
+          return n;
+        }
+        return root;
+      };
+
+      // Provide a minimal fallback modal (only used if leaderboard.js doesn't provide one)
+      window.showFallbackModal = function(html, opts = {}) {
+        const root = ensureModalRoot();
+        root.innerHTML = `<div class="modal" role="dialog" aria-modal="true">
+          <div class="modal-card" role="document">
+            <div class="modal-head"><div><h3 class="modal-title">${opts.title||''}</h3><div class="modal-sub">${opts.sub||''}</div></div><div><button id="modalCloseBtn" class="btn">✕</button></div></div>
+            <div class="modal-body">${html}</div>
+          </div>
+        </div>`;
+        root.classList.remove('hidden');
+        root.removeAttribute('aria-hidden');
+        const closeBtn = document.getElementById('modalCloseBtn');
+        if(closeBtn) closeBtn.onclick = () => { root.innerHTML=''; root.classList.add('hidden'); root.setAttribute('aria-hidden','true'); };
+      };
+
+      // Make sure table cells in mobile mode include data-label attributes (used by stacked display)
+      function applyDataLabels() {
+        const headerCells = Array.from(document.querySelectorAll('#leaderTable thead th')).map(th => th.textContent.trim());
+        document.querySelectorAll('#leaderTable tbody tr').forEach(tr => {
+          Array.from(tr.children).forEach((td, idx) => {
+            if(!td.getAttribute('data-label')) td.setAttribute('data-label', headerCells[idx] || '');
+          });
+        });
+      }
+      // Observe table body to add data-labels when rows change
+      const tbody = document.querySelector('#leaderTbody');
+      if(tbody) {
+        const obs = new MutationObserver(() => applyDataLabels());
+        obs.observe(tbody, { childList:true, subtree:false });
+        // initial call
+        applyDataLabels();
+      }
+    })();
+  </script>
+
+  <!-- firebase config (your module) -->
   <script type="module" src="firebase-config.js"></script>
+
+  <!-- app logic (your leaderboard.js) - keep as module; it will call showModalInner / setButtonLoading as needed -->
   <script type="module" src="leaderboard.js"></script>
 </body>
 </html>
