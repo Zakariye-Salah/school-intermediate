@@ -758,56 +758,6 @@ function shortDisplay(str, len = 5) {
 
 /* ---------- modal helpers (replace existing implementations) ---------- */
 
-function showModalInner(html, opts = {}) {
-  if (!modalRoot) return;
-  // Build modal content
-  modalRoot.innerHTML = `
-    <div class="modal-backdrop" data-role="backdrop"></div>
-    <div class="modal" role="dialog" aria-modal="true" aria-label="${(opts.title||'Modal')}">
-      <div class="modal-head">
-        <div>
-          <h3 class="modal-title">${opts.title || ''}</h3>
-          <div class="modal-sub">${opts.sub || ''}</div>
-        </div>
-        <div><button id="modalCloseBtn" class="btn">✕</button></div>
-      </div>
-      <div class="modal-body">${html || ''}</div>
-      <div class="modal-actions">${opts.actions || ''}</div>
-    </div>
-  `;
-  // make visible & lock body scroll
-  modalRoot.classList.add('visible');
-  document.body.classList.add('modal-open');
-
-  // wire close
-  const closeBtn = document.getElementById('modalCloseBtn');
-  if (closeBtn) closeBtn.onclick = () => closeModal();
-
-  // backdrop click closes modal
-  const backdrop = modalRoot.querySelector('[data-role="backdrop"]');
-  if (backdrop) backdrop.onclick = () => closeModal();
-
-  // allow Escape to close
-  const escHandler = (ev) => { if (ev.key === 'Escape') closeModal(); };
-  document.addEventListener('keydown', escHandler);
-
-  // remove the handler when modal closes (we attach a cleanup on dataset)
-  modalRoot._escHandler = escHandler;
-}
-
-function closeModal() {
-  if (!modalRoot) return;
-  // clear content & classes
-  modalRoot.classList.remove('visible');
-  modalRoot.innerHTML = '';
-  document.body.classList.remove('modal-open');
-  // remove Escape handler if present
-  if (modalRoot._escHandler) {
-    document.removeEventListener('keydown', modalRoot._escHandler);
-    modalRoot._escHandler = null;
-  }
-}
-
 /* ---------- Name/Class toggle handler (collapsed 5 chars, expand on click) ---------- */
 (function attachToggleHandler() {
   const tbody = document.getElementById('leaderTbody');
