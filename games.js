@@ -57,6 +57,15 @@ function showModal(html, opts = {}) {
   if(typeof opts.onOpen === 'function') opts.onOpen();
 }
 function closeModal(){ modalRoot.innerHTML=''; modalRoot.classList.add('hidden'); modalRoot.setAttribute('aria-hidden','true'); }
+
+function nowMillis() {
+  return Date.now(); // number
+}
+
+function nowSeconds() {
+  return Math.floor(Date.now() / 1000);
+}
+
 function toast(msg, t = 2800){ const el = document.createElement('div'); el.className='card'; el.style.position='fixed'; el.style.right='18px'; el.style.bottom='18px'; el.style.zIndex=5000; el.textContent = msg; document.body.appendChild(el); setTimeout(()=>el.remove(),t); }
 function maskId(id){ if(!id) return '—'; const s=String(id); if(s.length<=4) return '*'.repeat(s.length); return '***'+s.slice(-4); }
 function nowSeconds(){ return Math.floor(Date.now()/1000); }
@@ -411,32 +420,44 @@ function appendGameCard(g){
 
 /* ---------- render bots list ---------- */
 function renderBotsList(){
-  // create a header row
-  const header = document.createElement('div'); header.style.display='flex'; header.style.justifyContent='space-between'; header.style.alignItems='center'; header.style.marginBottom='0.4rem';
-  const hleft = document.createElement('div'); hleft.style.fontWeight='800'; hleft.textContent = 'Bots';
-  const hright = document.createElement('div'); hright.className='small-muted'; hright.textContent = `${botsCache.length} bots available`;
+  // header row
+  const header = document.createElement('div');
+  header.style.display='flex';
+  header.style.justifyContent='space-between';
+  header.style.alignItems='center';
+  header.style.marginBottom='0.4rem';
+  const hleft = document.createElement('div'); hleft.style.fontWeight='800'; hleft.textContent = 'Bots (harder bots only)';
+  const hright = document.createElement('div'); hright.className='small-muted'; hright.textContent = `${botsCache.length} total`;
   header.appendChild(hleft); header.appendChild(hright);
   gamesList.appendChild(header);
 
+  // filter: show only bots with level >= 6 (the five hardest + ultra)
+  const hardBots = botsCache.filter(b => Number(b.level || 0) >= 1);
+
   // bot cards grid
-  const grid = document.createElement('div'); grid.style.display='grid'; grid.style.gridTemplateColumns='repeat(auto-fit,minmax(220px,1fr))'; grid.style.gap='0.5rem';
-  for(const b of botsCache){
+  const grid = document.createElement('div');
+  grid.style.display='grid';
+  grid.style.gridTemplateColumns='repeat(auto-fit,minmax(220px,1fr))';
+  grid.style.gap='0.5rem';
+  for(const b of hardBots){
     const c = document.createElement('div'); c.className='game-card';
     c.style.alignItems='center';
     const left = document.createElement('div'); left.className='game-left';
     const av = document.createElement('div'); av.className='avatar'; av.textContent = (b.name||'B').split(' ').map(x=>x[0]).join('').slice(0,2);
     const meta = document.createElement('div'); meta.className='game-meta';
     const t = document.createElement('div'); t.className='game-title'; t.textContent = `${b.name} (${b.difficultyTag})`;
-    const s = document.createElement('div'); s.className='game-sub small-muted'; s.textContent = `Level ${b.level} • Est. acc ${Math.round((b.accuracyEstimate||0)*100)}%`;
+    const s = document.createElement('div'); s.className='game-sub small-muted'; s.textContent = `Level ${b.level} • Est. acc ${Math.round((b.accuracyEstimate||0)*100)}% • Stake: 50`;
     meta.appendChild(t); meta.appendChild(s); left.appendChild(av); left.appendChild(meta);
     const right = document.createElement('div'); right.className='game-right';
-    const playBtn = document.createElement('button'); playBtn.className='btn btn-primary'; playBtn.textContent='▶ Play'; playBtn.onclick = () => onPlayBotNow(b);
+    const playBtn = document.createElement('button'); playBtn.className='btn btn-primary'; playBtn.textContent='▶ Play'; 
+    playBtn.onclick = () => onPlayBotNow(b);
     const infoBtn = document.createElement('button'); infoBtn.className='btn'; infoBtn.textContent='ℹ'; infoBtn.onclick = () => showBotOverview(b);
     right.appendChild(playBtn); right.appendChild(infoBtn);
     c.appendChild(left); c.appendChild(right); grid.appendChild(c);
   }
   gamesList.appendChild(grid);
 }
+
 
 /* ---------- quick bot helpers ---------- */
 function showBotOverview(bot){
@@ -751,12 +772,7 @@ async function pickQuestionsForTitles(titles, count){
   return out.slice(0, count).map((q, i) => ({ ...q, _idx:i, timeLimit: q.timeLimit || 15 }));
 }
 
-/* ---------- the rest of your match & game logic remains the same ---------- */
-/* For brevity I will reuse the previously provided functions for joinGameById, startMatchForGame,
-   renderMatchUI, submit-answer flows, bot simulation, onMatchFinish, level progression, etc.
-   (In your project paste the remainder of your games.js after the pickQuestionsForTitles function).
-   For clarity the remainder is unchanged from your previously provided games.js, so I won't repeat it here.
-*/
+
 
 /* ---------- small utility ---------- */
 function shuffleArray(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } }
@@ -969,14 +985,24 @@ async function joinGameById(gameId, studentId){
       // deduct stake and add to reserved
       const newPoints = Math.max(0, available - g.stake);
       t.update(studentRef, { totalPoints: newPoints });
-      // update game's reservedPoints
+
+      // update game's reservedPoints (plain object)
       const reserved = g.reservedPoints || {};
       reserved[studentId] = (reserved[studentId] || 0) + g.stake;
-      const players = g.players || [];
-      // add player object
-      const pObj = { playerId: studentId, joinedAt: serverTimestamp(), playerName: sdata.name || '', avatarFrame: sdata.avatarFrame || null, className: sdata.className || '' };
+
+      // build players array (avoid serverTimestamp() inside array elements)
+      const players = Array.isArray(g.players) ? g.players.slice() : [];
+      const joinedAtNumeric = nowSeconds(); // numeric timestamp (seconds)
+      const pObj = {
+        playerId: studentId,
+        joinedAt: joinedAtNumeric,         // <-- numeric, not serverTimestamp()
+        playerName: sdata.name || sdata.displayName || sdata.fullName || '',
+        avatarFrame: sdata.avatarFrame || null,
+        className: sdata.className || sdata.class || ''
+      };
       players.push(pObj);
-      // if opponentType is bot and botId present we will later start
+
+      // commit: updatedAt can still be serverTimestamp() (top-level field allowed)
       t.update(gameRef, { reservedPoints: reserved, players, updatedAt: serverTimestamp() }, { merge:true });
     });
     return true;
@@ -986,6 +1012,7 @@ async function joinGameById(gameId, studentId){
     return false;
   }
 }
+
 
 async function isStudentInActiveGame(studentId){
   try {
@@ -1191,11 +1218,20 @@ function renderMatchUI(match, matchRef){
 
           // update logs
           const logs = m.logs || [];
-          logs.push({ type:'answer', playerId: pid, choice: choiceIdx, correct: isCorrect, delta, at: serverTimestamp() });
+          logs.push({
+            type:'answer',
+            playerId: pid,
+            choice: choiceIdx,
+            correct: isCorrect,
+            delta,
+            at: nowMillis()
+          });
+        
+          
 
           // update question answered map to prevent double answer
           const answered = m.answered || {};
-          answered[`${currentIdx}_${pid}`] = { selected: choiceIdx, correct: isCorrect, at: serverTimestamp() };
+          answered[`${currentIdx}_${pid}`] = { selected: choiceIdx, correct: isCorrect, at: nowMillis() };
 
           // optionally advance question index if both players answered (simplified: advance immediately)
           let newIndex = currentIdx;
@@ -1282,7 +1318,7 @@ async function onMatchFinish(match, matchRef){
           updatedAt: serverTimestamp()
         });
         // log pointsHistory
-        await addDoc(collection(db,'pointsHistory'), { userId: winnerId, type:'game_win', amount: addPoints, before: winnerBefore, after: winnerAfter, referenceGameId: match.gameId, timestamp: serverTimestamp() });
+        await addDoc(collection(db,'pointsHistory'), { userId: winnerId, type:'game_win', amount: addPoints, before: winnerBefore, after: winnerAfter, referenceGameId: match.gameId, timestamp: nowMillis() });
         // update loser stats
         if(loserId){
           const loserRef = doc(db,'students', loserId);
@@ -1311,7 +1347,7 @@ async function onMatchFinish(match, matchRef){
         const before = Number(w.totalPoints||0);
         const after = before + pool;
         t.update(wRef, { totalPoints: after, totalWins: (Number(w.totalWins||0)+1), totalGames: (Number(w.totalGames||0)+1), updatedAt: serverTimestamp() });
-        await addDoc(collection(db,'pointsHistory'), { userId: winnerId, type:'game_win', amount: pool, before, after, referenceGameId: match.gameId, timestamp: serverTimestamp() });
+        await addDoc(collection(db,'pointsHistory'), { userId: winnerId, type:'game_win', amount: pool, before, after, referenceGameId: match.gameId, timestamp: nowMillis() });
         // losers recorded similarly
         for(const p of match.players || []){
           if(p.playerId === winnerId) continue;
@@ -1418,7 +1454,7 @@ async function simulateBotForMatch(match, matchRef){
         const correct = Array.isArray(q.correct) ? q.correct.map(Number).includes(chosen) : Number(q.correct) === chosen;
         players[pIdx].score = Math.max(0, (players[pIdx].score || 0) + (correct ? 2 : (m.wrongPenalty === 'sub1' ? -1 : 0)));
         const logs = m.logs || [];
-        logs.push({ type:'answer', playerId: bot.id, choice: chosen, correct, at: serverTimestamp() });
+        logs.push({ type:'answer', playerId: bot.id, choice: chosen, correct, at: nowMillis() });
         t.update(matchRef, { players, logs, currentIndex: (m.currentIndex || 0) + 1, updatedAt: serverTimestamp() });
       });
     } catch(e){ console.warn('bot answer failed', e); }
@@ -1439,10 +1475,25 @@ async function openPlayerProfileModal(studentId){
     const sSnap = await getDoc(doc(db,'students', studentId));
     if(!sSnap.exists()) return alert('Profile not found');
     const p = sSnap.data();
-    const html = `<div><div style="display:flex;gap:10px;align-items:center"><div class="avatar ${p.avatarFrame?('frame-'+p.avatarFrame):''}">${(p.name||'').slice(0,2)}</div><div><div style="font-weight:800">${escapeHtml(p.name||'—')}</div><div class="small-muted">Class ${escapeHtml(p.className||'—')} • ID ${maskId(p.studentId||'')}</div></div></div>
+
+    // robust fallbacks for name/class
+    const name = p.name || p.displayName || p.fullName || p.studentName || '—';
+    const className = p.className || p.class || p.cls || '—';
+    const avatarHtml = p.avatar ? `<img src="${escapeHtml(p.avatar)}" style="width:56px;height:56px;border-radius:8px;object-fit:cover" alt="avatar">`
+                                : `<div class="avatar-initials" style="width:56px;height:56px;border-radius:8px;display:flex;align-items:center;justify-content:center;background:#eef2f6;font-weight:700">${escapeHtml((name||'').slice(0,2))}</div>`;
+
+    const html = `<div>
+      <div style="display:flex;gap:12px;align-items:center">
+        <div>${avatarHtml}</div>
+        <div>
+          <div style="font-weight:800">${escapeHtml(name)}</div>
+          <div class="small-muted">Class ${escapeHtml(className)} • ID ${maskId(p.studentId || studentId || '')}</div>
+        </div>
+      </div>
       <div style="margin-top:8px" class="small-muted">Level: ${p.level||1} • Wins: ${p.totalWins||0} • Games: ${p.totalGames||0} • Points: ${p.totalPoints||0}</div>
       <div style="margin-top:10px">${(p.badges||[]).map(b=>`<span class="tag">${escapeHtml(b)}</span>`).join(' ')}</div>
-      <div style="text-align:right;margin-top:10px"><button id="closeProfile" class="btn btn-primary">Close</button></div></div>`;
+      <div style="text-align:right;margin-top:10px"><button id="closeProfile" class="btn btn-primary">Close</button></div>
+    </div>`;
     showModal(html, { title:'Player profile' });
     document.getElementById('closeProfile').onclick = closeModal;
   } catch(e){ console.error(e); }
