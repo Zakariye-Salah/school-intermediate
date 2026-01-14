@@ -272,6 +272,29 @@
     .rank-badge { width:38px; height:38px; min-width:38px; font-size:0.95rem; }
     .points-badge { min-width:56px; font-size:0.95rem; padding:6px 8px; }
   }
+  /* clickable truncation (add to your existing <style>) */
+.student-toggle, .class-toggle {
+  cursor: pointer;
+  color: inherit;
+  text-decoration: none;
+  display: inline-block;
+  vertical-align: middle;
+}
+.student-toggle strong, .class-toggle strong { font-weight:700; }
+
+/* mobile fitting */
+@media (max-width: 720px) {
+  table.leader th, table.leader td { padding:8px 6px; }
+  table.leader td .student-toggle,
+  table.leader td .class-toggle {
+    max-width:140px;
+    overflow:hidden;
+    white-space:nowrap;
+    text-overflow:ellipsis;
+    display:inline-block;
+  }
+}
+
   
   </style>
 </head>
