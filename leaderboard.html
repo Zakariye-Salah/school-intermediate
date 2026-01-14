@@ -254,6 +254,54 @@ table.leader td > *{ max-width:100%; overflow:hidden; text-overflow:ellipsis; }
 /* accessibility focus for keyboard users */
 .btn:focus, a:focus{ outline-offset:2px; outline:2px solid rgba(11,116,255,0.12); }
 
+
+  /* ---------- force 5-char compact name/class + tiny padding ---------- */
+/* Use ch for character width so 5 characters fit exactly */
+.name-cell, .class-cell { padding:4px 6px; box-sizing:border-box; }
+
+/* show exactly 5 characters + star visually (width limits) */
+.name-cell .student-toggle,
+.class-cell .class-toggle {
+  display: inline-block;
+  width: calc(5ch + 0.9rem);  /* 5 characters + room for " *" — tweak +/-0.1rem if needed */
+  max-width: calc(5ch + 0.9rem);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  padding: 0;
+  margin: 0;
+  vertical-align: middle;
+  font-weight: 800;
+}
+
+/* tiny font so it fits better on small devices */
+@media (max-width:720px){
+  .name-cell .student-toggle,
+  .class-cell .class-toggle { font-size:0.95rem; }
+}
+
+/* when expanded (only the element that has .expanded) allow full text */
+.name-cell .student-toggle.expanded,
+.class-cell .class-toggle.expanded {
+  width: auto;
+  max-width: none;
+  white-space: normal;
+  display: block;
+  font-weight:900;
+  line-height:1.15;
+  padding:2px 0;
+}
+
+/* remove extra whitespace in the containing TD when collapsed */
+.name-cell, .class-cell { white-space:nowrap; }
+
+/* ensure the ID column stays compact */
+.col-id { width: 64px; max-width:64px; }
+
+/* optional tiny polish: reduce left padding on first cell */
+table.leader td:first-child { padding-left:8px; }
+
+
 /* End of stylesheet */
 
 </style>
@@ -347,3 +395,4 @@ table.leader td > *{ max-width:100%; overflow:hidden; text-overflow:ellipsis; }
   <script type="module" src="leaderboard.js"></script>
 </body>
 </html>
+
