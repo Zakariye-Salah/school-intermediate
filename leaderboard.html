@@ -5,369 +5,258 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Leaderboard — AL-FATXI</title>
   <link rel="stylesheet" href="style.css">
-  <style>
-    :root{
-      --card-bg: #fff;
-      --muted: #6b7280;
-      --primary: #2563eb;
-      --surface: #f8fafc;
-      --shadow: 0 6px 22px rgba(14,30,63,0.06);
-      --radius: 12px;
-      --gap: 12px;
-    }
-  
-    /* page base */
-    html,body{ height:100%; }
-    body{
-      background:var(--surface);
-      color:#0f172a;
-      font-family:Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
-      margin:0;
-      padding:18px;
-      -webkit-font-smoothing:antialiased;
-      -moz-osx-font-smoothing:grayscale;
-      line-height:1.3;
-      box-sizing:border-box;
-    }
-    *,*::before,*::after{ box-sizing:inherit; }
-  
-    .container {
-      max-width:1100px;
-      margin:18px auto;
-      padding:0 12px;
-    }
-  
-    /* header */
-    header {
-      display:flex;
-      justify-content:space-between;
-      align-items:center;
-      gap:12px;
-      margin-bottom:16px;
-      flex-wrap:wrap;
-    }
-    header .comp-info { min-width:0; flex:1 1 auto; display:flex; flex-direction:column; gap:6px; }
-    header h1{ margin:0; font-size:20px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-    .comp-actions {
-      display:flex;
-      gap:8px;
-      align-items:center;
-      flex:0 0 auto;
-      flex-wrap:wrap;
-    }
-    .comp-actions .btn{ white-space:nowrap; }
-  
-    /* cards and UI */
-    .card {
-      background:var(--card-bg);
-      border-radius:var(--radius);
-      padding:14px;
-      box-shadow:var(--shadow);
-      margin-bottom:12px;
-    }
-    .small-muted { color:var(--muted); font-size:0.92rem; }
-    .btn {
-      padding:8px 12px;
-      border-radius:8px;
-      cursor:pointer;
-      border:0;
-      background:transparent;
-      font-size:0.95rem;
-      min-height:38px;
-    }
-    .btn:active{ transform:translateY(1px); }
-    .btn-primary { background:var(--primary); color:#fff; border:0; }
-    .btn-ghost { background:transparent; border:1px solid #e6eefc; }
-    .settings-gear { font-size:16px; padding:6px; }
-  
-    .input-small {
-      padding:8px;
-      border-radius:6px;
-      border:1px solid #e2e8f0;
-      min-width:120px;
-      font-size:0.95rem;
-    }
-  
-    /* table area: make responsive by wrapping (horizontal scroll) and mobile stacked cards */
-    .table-wrap {
-      width:100%;
-      overflow:auto;
-      -webkit-overflow-scrolling:touch;
-      border-radius:10px;
-      background:linear-gradient(180deg, #fff, #fbfdff);
-      padding:8px;
-    }
-    table.leader {
-      width:100%;
-      border-collapse:collapse;
-      margin-top:6px;
-      min-width:700px; /* allows horizontal scroll on small screens */
-    }
-    table.leader th, table.leader td {
-      padding:10px 8px;
-      text-align:left;
-      border-bottom:1px solid #eef2f6;
-      vertical-align:middle;
-      font-size:0.95rem;
-    }
-    table.leader thead th { color:var(--muted); font-weight:700; font-size:0.92rem; }
-    table.leader tbody tr:hover { background: #fbfdff; }
-  
-    .rank-badge {
-      font-weight:900;
-      display:inline-block;
-      min-width:48px;
-      text-align:center;
-      padding:6px 8px;
-      border-radius:8px;
-      font-size:0.95rem;
-    }
-  
-    /* modal */
-    .modal {
-      position:fixed;
-      inset:0;
-      display:flex;
-      align-items:center;
-      justify-content:center;
-      z-index:1200;
-      background:rgba(2,6,23,0.45);
-      padding:18px;
-    }
-    .modal-card{
-      width:820px;
-      max-width:100%;
-      max-height:86vh;
-      overflow:auto;
-      border-radius:12px;
-      padding:18px;
-      background:linear-gradient(180deg,#fff,#fbfdff);
-      box-shadow:0 18px 48px rgba(2,6,23,0.28);
-      transform:translateY(0);
-    }
-    .modal-head{ display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px; }
-    .modal-title{ font-weight:800; font-size:18px; margin:0; }
-    .modal-sub{ color:var(--muted); font-size:0.95rem; }
-  
-    .modal-body{ font-size:0.98rem; color:#0b1220; }
-  
-    /* choices */
-    .choices label{
-      display:block;
-      margin-bottom:8px;
-      padding:10px;
-      border-radius:8px;
-      background:#fbfdff;
-      cursor:pointer;
-      border:1px solid #eef2f6;
-      user-select:none;
-    }
-    .choice-correct{ background:#ecfdf5; border-color:#bbf7d0; color:#064e3b; font-weight:700; }
-    .choice-wrong{ background:#fff1f2; border-color:#fecaca; color:#7f1d1d; font-weight:700; }
-    .choice-selected{ box-shadow:0 6px 20px rgba(37,99,235,0.08); }
-    .choice-meta{ float:right; font-weight:900; }
-  
-    .test-footer { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:12px; flex-wrap:wrap; }
-    .stats-line { display:flex; gap:12px; align-items:center; color:var(--muted); font-size:0.95rem; }
-  
-    /* your small utility */
-    .hidden{ display:none !important; }
-  
-    /* mobile / small screens */
-    @media (max-width: 940px) {
-      body{ padding:12px; }
-      .container{ padding:0 10px; }
-      header { gap:10px; }
-      .modal-card{ padding:14px; }
-      .btn{ padding:8px 10px; font-size:0.93rem; min-height:36px; }
-    }
-  
-    @media (max-width: 720px) {
-      header { align-items:flex-start; }
-      header .comp-info { order:1; width:100%; }
-      .comp-actions { order:2; width:100%; justify-content:flex-start; gap:6px; padding-top:8px; border-top:1px dashed rgba(0,0,0,0.04); }
-      .comp-actions .btn{ flex:0 0 auto; padding:8px 10px; font-size:0.92rem; min-height:36px; }
-      .card{ padding:12px; border-radius:10px; }
-  
-      /* make modal full-width-ish and centered vertically when small */
-      .modal-card{
-        width:100%;
-        max-width:640px;
-        border-radius:10px;
-        max-height:92vh;
-      }
-  
-      /* Table -> allow horizontal scroll, but also provide stacked card appearance for rows */
-      .table-wrap{ padding:6px; }
-      table.leader{ min-width:640px; }
-  
-      /* smaller text in table */
-      table.leader th, table.leader td { padding:10px 6px; font-size:0.92rem; }
-  
-      /* if screen is very narrow, present rows as stacked cards (more readable) */
-     
-    }
-  
-    /* small visual polish */
-    .small-muted a{ color:var(--primary); text-decoration:none; }
-    /* ensure focus states */
-    .btn:focus, .input-small:focus, .choices label:focus { outline:2px solid rgba(37,99,235,0.12); outline-offset:2px; }
-  
-     /* ---------- improved row styles ---------- */
-  .rank-badge {
-    font-weight:900;
-    display:inline-flex;
-    align-items:center;
-    justify-content:center;
-    min-width:46px;
-    height:46px;
-    border-radius:10px;
-    padding:6px 8px;
-    font-size:1rem;
-    color:#07122b;
-    background:#fff9e6;
-    box-shadow:0 6px 18px rgba(2,6,23,0.06);
-  }
-  
-  /* distinct top-3 colors */
-  .rank-badge.first { background:#FFD700; color:#111; }
-  .rank-badge.second { background:#c0c0c0; color:#111; }
-  .rank-badge.third { background:#cd7f32; color:#111; }
-  
-  /* standardized cell content */
-  .cell {
-    display:flex;
-    flex-direction:column;
-    gap:6px;
-  }
-  .student-name { font-size:0.99rem; line-height:1.2; word-break:break-word; }
-  .student-name strong { display:block; font-weight:700; }
-  .cell-muted { color:var(--muted); font-size:0.88rem; }
-  
-  /* ID masking */
-  .id-mask { font-family:monospace; letter-spacing:0.6px; }
-  
-  /* Points presentation */
-  .points-badge {
-    display:inline-block;
-    font-weight:800;
-    padding:6px 10px;
-    border-radius:8px;
-    background:linear-gradient(180deg,#f3f9ff,#eef6ff);
-    min-width:64px;
-    text-align:center;
-    font-size:0.98rem;
-  }
-  
-  /* action buttons layout */
-  .actions-wrap { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-  .actions-wrap .btn { padding:6px 10px; min-height:34px; font-size:0.92rem; }
-  
-  /* Improve spacing on table cells so text doesn't overlap the card edges */
-  table.leader td { vertical-align:middle; }
-  
-  /* very small screens: stack actions under the row */
-  @media (max-width:420px) {
-    .actions-wrap { width:100%; justify-content:flex-end; gap:6px; }
-    .rank-badge { width:38px; height:38px; min-width:38px; font-size:0.95rem; }
-    .points-badge { min-width:56px; font-size:0.95rem; padding:6px 8px; }
-  }
-  /* clickable truncation (add to your existing <style>) */
-.student-toggle, .class-toggle {
-  cursor: pointer;
-  color: inherit;
-  text-decoration: none;
-  display: inline-block;
-  vertical-align: middle;
-}
-.student-toggle strong, .class-toggle strong { font-weight:700; }
+<style>
+  :root{
+  --bg:#fbfdff;
+  --text:#0f172a;
+  --muted:#6b7280;
+  --card-bg:#fff;
+  --card-shadow:0 8px 30px rgba(15,23,42,0.04);
+  --primary:#0b74ff;
+  --radius:12px;
+  --gap:8px;
 
-/* mobile fitting */
-@media (max-width: 720px) {
-  table.leader th, table.leader td { padding:8px 6px; }
-  table.leader td .student-toggle,
-  table.leader td .class-toggle {
-    max-width:140px;
-    overflow:hidden;
+  /* compact scale values (adjust if you want even smaller) */
+  --fs-base:14px;
+  --fs-small:12px;
+  --fs-tiny:11px;
+  --pad-td:8px;
+  --pad-td-mobile:6px;
+}
+
+/* base page */
+html,body{height:100%;margin:0}
+body{
+  font-family:Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+  -webkit-font-smoothing:antialiased;
+  -moz-osx-font-smoothing:grayscale;
+  background:var(--bg);
+  color:var(--text);
+  font-size:var(--fs-base);
+  line-height:1.25;
+}
+
+/* container */
+.container{ max-width:980px; margin:14px auto; padding:12px; box-sizing:border-box; }
+
+/* cards */
+.card{ background:var(--card-bg); border-radius:var(--radius); padding:12px; box-shadow:var(--card-shadow); margin-bottom:12px; }
+
+/* header */
+header{ display:flex; gap:12px; align-items:center; justify-content:space-between; flex-wrap:wrap; }
+header h1{ margin:0; font-size:1.05rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+/* tiny helper */
+.small-muted{ color:var(--muted); font-size:var(--fs-small); }
+
+/* compact buttons */
+.btn{ display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border-radius:8px; cursor:pointer; font-weight:700; font-size:0.95rem; border:1px solid rgba(11,116,255,0.06); background:#fff; }
+.btn-primary{ background:var(--primary); color:#fff; border-color:var(--primary); }
+.btn-ghost{ background:#fff; color:var(--text); border-color:#e6eefc; }
+
+/* table wrapper (enable scroll on narrow screens) */
+.table-wrap { width:100%; overflow-x:auto; -webkit-overflow-scrolling:touch; border-radius:10px; padding:6px; background:linear-gradient(180deg,#fff,#fbfdff); box-sizing:border-box; }
+
+/* stable table layout for compactness */
+table.leader{
+  width:100%;
+  border-collapse:collapse;
+  table-layout: fixed; /* keeps columns compact & predictable */
+  min-width:640px;     /* allow scroller if needed on very small screens */
+  font-family:inherit;
+}
+
+/* columns via colgroup classes (you included them already) */
+.col-rank  { width:64px; }
+.col-name  { width:auto; }
+.col-class { width:56px; }
+.col-id    { width:68px; }
+.col-points{ width:68px; }
+.col-action{ width:96px; }
+
+/* header cells */
+table.leader thead th{
+  font-weight:800;
+  color:var(--muted);
+  font-size:13px;
+  padding:10px 8px;
+  text-align:left;
+  vertical-align:middle;
+  border-bottom:1px solid rgba(241,245,249,0.9);
+  white-space:nowrap;
+}
+
+/* body cells */
+table.leader td{
+  padding:var(--pad-td) 8px;
+  font-weight:800;
+  font-size:14px;
+  text-align:left;
+  vertical-align:middle;
+  border-bottom:1px solid rgba(245,248,251,0.9);
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+
+/* rank badge */
+.rank-badge{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  min-width:44px;
+  height:44px;
+  border-radius:10px;
+  font-weight:900;
+  box-shadow:0 6px 18px rgba(2,6,23,0.06);
+  background:#fff9e6;
+  color:#07122b;
+  font-size:1rem;
+}
+
+/* small rank sizes for tiny screens */
+.rank-badge.small { min-width:36px; height:36px; font-size:0.92rem; }
+
+/* points badge */
+.points-badge{ display:inline-block; padding:6px 10px; border-radius:8px; font-weight:800; min-width:56px; text-align:center; font-size:0.95rem; background:linear-gradient(180deg,#f3f9ff,#eef6ff); }
+
+/* ID mask monospace */
+.id-mask{ font-family:monospace; letter-spacing:0.6px; font-size:0.95rem; color:var(--muted); }
+
+/* actions */
+.actions-wrap{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.actions-wrap .btn, .btn { padding:6px 8px; font-size:0.88rem; }
+
+/* clickable truncated name/class */
+.student-toggle, .class-toggle{
+  cursor:pointer;
+  color:inherit;
+  text-decoration:none;
+  display:inline-block;
+  max-width:100%;
+  overflow:hidden;
+  white-space:nowrap;
+  text-overflow:ellipsis;
+  vertical-align:middle;
+  transition:all .18s ease;
+  font-weight:800;
+  font-size:0.95rem;
+}
+
+/* when toggled, allow wrapping and show full text (only for that element) */
+.student-toggle.expanded, .class-toggle.expanded{
+  white-space:normal;
+  display:block;
+  font-weight:900;
+  font-size:1rem;
+  line-height:1.15;
+  word-break:break-word;
+}
+
+/* subtle focus */
+.student-toggle:focus, .class-toggle:focus{ outline:2px solid rgba(11,116,255,0.12); outline-offset:3px; border-radius:6px; }
+
+/* hover styles */
+table.leader tbody tr:hover{ background: #fbfdff; }
+
+/* compact variant for 'your rank' row highlight */
+#myRankRow{ background:#f7fbff; box-shadow:0 6px 20px rgba(37,99,235,0.04); }
+
+/* Divider row */
+.table-divider td{ text-align:center; padding:8px; color:var(--muted); font-weight:700 }
+
+/* Make table visually compact even more on narrow screens */
+@media (max-width: 940px){
+  .container{ padding:10px; max-width:760px; }
+  header h1{ font-size:1rem; }
+  table.leader{ min-width:580px; }
+  table.leader thead th{ font-size:12px; padding:8px 6px; }
+  table.leader td{ padding:8px 6px; font-size:13px; }
+  .btn{ padding:6px 10px; font-size:0.88rem; }
+  .rank-badge{ min-width:40px; height:40px; font-size:0.95rem; }
+  .col-name{ width:auto; }
+}
+
+/* Small/mobile: make everything compact, show scroller if needed */
+@media (max-width: 720px){
+  :root{
+    --fs-base:13px;
+    --pad-td:6px;
+  }
+  body{ font-size:13px; }
+  .container{ padding:8px; max-width:640px; }
+  table.leader{ min-width:520px; }
+  table.leader thead th{ font-size:11px; padding:6px 6px; }
+  table.leader td{ padding:6px 6px; font-size:12px; }
+
+  /* make columns tighter */
+  .col-rank { width:48px; }
+  .col-class { width:44px; }
+  .col-id    { width:58px; }
+  .col-points{ width:58px; }
+  .col-action{ width:72px; }
+
+  /* name & class compact truncation */
+  .student-toggle, .class-toggle{
+    font-size:0.95rem;
+    max-width:120px; /* ensure truncation */
     white-space:nowrap;
     text-overflow:ellipsis;
+    overflow:hidden;
     display:inline-block;
+    padding-right:4px;
+  }
+
+  /* tiny badges */
+  .rank-badge{ min-width:36px; height:36px; font-size:0.9rem; }
+  .points-badge{ min-width:52px; padding:6px 6px; font-size:0.88rem; }
+  .actions-wrap .btn{ padding:6px 8px; font-size:0.82rem; }
+
+  /* remove large row paddings */
+  table.leader td:first-child{ padding-left:10px; }
+
+  /* allow only expanded element to wrap and take space in row — other rows remain compact */
+  .student-toggle.expanded, .class-toggle.expanded{
+    position:relative;
+    display:block;
+    white-space:normal;
+    font-size:1rem;
   }
 }
 
-  /* --- tighter compact table for small screens --- */
-table.leader {
-  table-layout: fixed; /* keep columns compact and predictable */
-  width: 100%;
+/* Very small phones */
+@media (max-width:420px){
+  :root{ --fs-base:12px; }
+  body{ font-size:12px; }
+  .container{ padding:6px; max-width:420px; }
+  table.leader{ min-width:480px; }
+  table.leader thead th{ font-size:10px; padding:6px 6px; }
+  table.leader td{ font-size:11px; padding:6px 6px; }
+
+  .student-toggle, .class-toggle{ max-width:90px; }
+  .col-rank { width:44px; }
+  .col-action{ width:64px; }
+  .id-mask{ font-size:0.9rem; }
+  .rank-badge{ min-width:34px; height:34px; font-size:0.88rem; }
 }
 
-/* column widths: name auto, others tiny */
-.col-rank { width:56px; }
-.col-name  { width:auto; }
-.col-class { width:44px; }
-.col-id    { width:64px; }
-.col-points{ width:64px; }
-.col-action{ width:88px; }
+/* small scrollbar polish (webkit) */
+.table-wrap::-webkit-scrollbar{ height:8px; width:8px; }
+.table-wrap::-webkit-scrollbar-thumb{ background:rgba(11,116,255,0.16); border-radius:8px; }
+.table-wrap::-webkit-scrollbar-track{ background:transparent; }
 
-/* very compact table cells */
-table.leader th, table.leader td {
-  padding: 6px 6px;
-  font-size: 0.86rem;
-  vertical-align: middle;
-  white-space: nowrap;
-}
+/* Safe default for text truncation inside td if long content exists */
+table.leader td > *{ max-width:100%; overflow:hidden; text-overflow:ellipsis; }
 
-/* header smaller and lighter on mobile */
-@media (max-width: 720px) {
-  table.leader thead th {
-    font-size: 0.74rem;
-    font-weight: 700;
-    color: var(--muted);
-    padding: 6px 6px;
-  }
+/* Utility to visually reduce the header space (if you want even closer headers) */
+.header-tight header, .header-tight .comp-actions { padding:0; margin:0; gap:6px; }
 
-  /* Make the overall font a bit smaller so content fits */
-  table.leader th, table.leader td { font-size: 0.82rem; padding: 6px 6px; }
+/* accessibility focus for keyboard users */
+.btn:focus, a:focus{ outline-offset:2px; outline:2px solid rgba(11,116,255,0.12); }
 
-  /* really reduce action button size on tiny screens */
-  .actions-wrap .btn, .btn { padding: 6px 8px; font-size:0.8rem; min-height:32px; }
+/* End of stylesheet */
 
-  /* Name & Class compact behaviour */
-  .name-cell, .class-cell { padding: 0; }
-  .name-cell .student-toggle,
-  .class-cell .class-toggle {
-    display: inline-block;
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;       /* default: single-line truncated */
-    font-weight: 700;
-    font-size: 0.9rem;
-    line-height: 1.1;
-  }
-
-  /* When expanded (only for that element) allow wrapping and normal spacing.
-     This affects only the clicked anchor because JS will toggle .expanded on it. */
-  .student-toggle.expanded,
-  .class-toggle.expanded {
-    white-space: normal;
-    display: block;
-  }
-
-  /* ID masking smaller and monospace to save space */
-  .id-mask { font-family: monospace; font-size:0.86rem; letter-spacing:0.6px; }
-
-  /* compact rank badge */
-  .rank-badge { min-width:40px; height:40px; font-size:0.92rem; }
-
-  /* tighten points badge */
-  .points-badge { min-width:56px; padding:6px 6px; font-size:0.88rem; }
-
-  /* ensure the table wrapper gives a horizontal scrollbar on very narrow screens */
-  .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; padding:6px; }
-}
-
-  </style>
+</style>
 </head>
 <body>
   <div class="container">
