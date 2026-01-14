@@ -756,6 +756,9 @@ function shortDisplay(str, len = 5) {
 }
 
 // Delegated click handler: expand / collapse student name or class
+// helper already in your file:
+// function shortDisplay(str, len = 5) { ... }  // keeps 5-char + ' *'
+
 (function attachToggleHandler() {
   const tbody = document.getElementById('leaderTbody');
   if (!tbody) return;
@@ -763,34 +766,48 @@ function shortDisplay(str, len = 5) {
   tbody._hasToggleHandler = true;
 
   tbody.addEventListener('click', (ev) => {
+    // find clicked toggle (name or class)
     const anchor = ev.target.closest('.student-toggle, .class-toggle');
     if (!anchor) return;
     ev.preventDefault();
 
-    // toggle expanded state
-    const currentlyExpanded = anchor.classList.contains('expanded');
-    if (currentlyExpanded) {
+    // the full text is stored in data-full
+    const full = anchor.dataset.full || '';
+    const strongEl = anchor.querySelector('strong');
+
+    // If currently expanded -> collapse to short
+    if (anchor.classList.contains('expanded')) {
       anchor.classList.remove('expanded');
       anchor.dataset.expanded = '0';
-      // set short text
-      const full = anchor.dataset.full || '';
-      const short = shortDisplay(full, 5);
-      const strongEl = anchor.querySelector('strong');
+      const short = shortDisplay(full, 5); // e.g. "Abdi *"
       if (strongEl) strongEl.textContent = short;
       else anchor.textContent = short;
-    } else {
-      anchor.classList.add('expanded');
-      anchor.dataset.expanded = '1';
-      const full = anchor.dataset.full || '';
-      const strongEl = anchor.querySelector('strong');
-      if (strongEl) strongEl.textContent = full;
-      else anchor.textContent = full;
-      // scroll the row into view a little so user sees expanded content on tiny screens
-      const tr = anchor.closest('tr');
-      if (tr) tr.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      // keep layout stable (no scroll)
+      return;
     }
+
+    // Collapse any other expanded cell in tbody (optional: only allow one expanded at a time)
+    const prev = tbody.querySelector('.student-toggle.expanded, .class-toggle.expanded');
+    if (prev && prev !== anchor) {
+      prev.classList.remove('expanded');
+      prev.dataset.expanded = '0';
+      const prevFull = prev.dataset.full || '';
+      const prevStrong = prev.querySelector('strong');
+      if (prevStrong) prevStrong.textContent = shortDisplay(prevFull, 5);
+    }
+
+    // Expand clicked anchor: set full text and allow wrapping
+    anchor.classList.add('expanded');
+    anchor.dataset.expanded = '1';
+    if (strongEl) strongEl.textContent = full;
+    else anchor.textContent = full;
+
+    // scroll the row into view so user sees expanded content on small screens
+    const tr = anchor.closest('tr');
+    if (tr) tr.scrollIntoView({ block: 'center', behavior: 'smooth' });
   });
 })();
+
 
 /* ---------- render leaderboard (async) ---------- */
 /* ---------- render leaderboard (async) ---------- */
@@ -1708,4 +1725,5 @@ async function getHighestStreakHolder(){
 }
 /* ---------- export minor helpers if you reuse in other files ---------- */
 export { renderCompetitionHeader, loadCompetitionScores, loadCompetitionAndScores, getHighestStreakHolder };
+
 
