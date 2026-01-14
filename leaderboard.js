@@ -1,1724 +1,217 @@
-
-
-// leaderboard.js (updated)
-// required imports (your firebase-config.js should export auth and db)
-// replace your existing auth import line with this
-import { auth, db } from './firebase-config.js';
-import { SoundManager } from './sound.js';
-import {
-  onAuthStateChanged,
-  signOut,
-  signInWithPopup,
-  GoogleAuthProvider
-} from 'https://www.gstatic.com/firebasejs/9.22.2/firebase-auth.js';
-import {
-  collection, doc, getDoc, getDocs, query, where, orderBy, limit,
-  setDoc, updateDoc, runTransaction, addDoc, serverTimestamp
-} from 'https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore.js';
-/* ---------- DOM refs ---------- */
-/* ---------- DOM refs ---------- */
-const backBtn = document.getElementById('backBtn');
-const verifyBtn = document.getElementById('verifyBtn');
-const viewAroundBtn = document.getElementById('viewAroundBtn');
-const testYourselfBtn = document.getElementById('testYourselfBtn');
-const toggleBgBtn = document.getElementById('toggleBgBtn');
-const toggleFxBtn = document.getElementById('toggleFxBtn');
-const logoutBtn = document.getElementById('logoutBtn');
-const leaderTbody = document.getElementById('leaderTbody');
-const compTitleEl = document.getElementById('compTitle');
-const compRangeEl = document.getElementById('compRange');
-const competitionSub = document.getElementById('competitionSub');
-const studentTag = document.getElementById('studentTag');
-const adminControls = document.getElementById('adminControls');
-
-// These may be missing in your new HTML; guard before using them elsewhere
-const compNameInput = document.getElementById('compNameInput');
-const compSaveBtn = document.getElementById('compSaveBtn');
-const compToggleActiveBtn = document.getElementById('compToggleActiveBtn');
-
-// manage button and view-all button (must exist in new HTML)
-const manageCompBtn = document.getElementById('manageCompBtn');
-const viewAllBtn = document.getElementById('viewAllBtn');
-
-const modalRoot = document.getElementById('modalRoot');
-
-let currentUser = null;
-let currentRole = null; // 'admin' | 'student' | null
-let currentStudentId = null;
-let currentStudentName = '';
-let currentCompetition = null;
-let scoresCache = [];
-
-let adminShowAll = false; // when true, admin sees full list under top ranks
-
-/* ---------- init ---------- */
-SoundManager.preloadAll();
-/* ---------- modal helpers ---------- */
-function showModalInner(html, opts = {}) {
-  modalRoot.innerHTML = `<div class="modal" id="theModal"><div class="modal-card">
-    <div class="modal-head"><div><h3 class="modal-title">${opts.title || ''}</h3><div class="modal-sub">${opts.sub || ''}</div></div><div><button id="modalCloseBtn" class="btn">✕</button></div></div>
-    <div class="modal-body">${html}</div>
-  </div></div>`;
-  modalRoot.classList.remove('hidden');
-  document.getElementById('modalCloseBtn').onclick = () => {
-    closeModal();
-    if(typeof opts.onClose === 'function') opts.onClose();
-  };
-}
-function closeModal(){ modalRoot.innerHTML = ''; modalRoot.classList.add('hidden'); }
-function toast(msg, t=2500){ const el = document.createElement('div'); el.className='card'; el.style.position='fixed'; el.style.right='18px'; el.style.bottom='18px'; el.style.zIndex=80; el.textContent = msg; document.body.appendChild(el); setTimeout(()=>el.remove(), t); }
-/* ---------- helpers ---------- */
-function isAdmin(){
-  return sessionStorage.getItem('verifiedRole') === 'admin' || currentRole === 'admin';
-}
-function maskId(id){ if(!id) return '—'; 
-  const s=String(id); 
-  if(s.length<=4) return '*'.repeat(s.length); 
-  return '***'+s.slice(-4); 
-}
-function daysLeftUntil(endDate){ 
-  const now=new Date(); 
-  const e=new Date(endDate); 
-  const diff=Math.ceil((e-now)/(1000*60*60*24)); 
-  return diff>=0?diff:0; 
-}
-function escapeHtml(s){ 
-  if(s==null) return ''; 
-  return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;"}[c])); 
-}
-function shuffleArray(a){ 
-  for(let i=a.length-1;i>0;i--){ 
-    const j=Math.floor(Math.random()*(i+1)); 
-    [a[i],a[j]]=[a[j],a[i]]; 
-  } }
-function arraysEqualNoOrder(a,b){ 
-  if(!Array.isArray(a)||!Array.isArray(b)) return false; 
-  if(a.length!==b.length) return false; 
-  const sa=[...a].map(String).sort(), sb=[...b].map(String).sort(); 
-  for(let i=0;
-    i<sa.length;
-    i++) if(sa[i]!==sb[i]) return false; 
-  return true; 
-}
-// Local storage helpers: prefer localStorage (persistence across refresh)
-// Keys used: verifiedRole, verifiedStudentId, verifiedStudentName, visitorStudentId
-// Local/session helpers (unified so refresh and checks are consistent)
-function setVerifiedRole(role){
-  if(role == null){
-    localStorage.removeItem('verifiedRole');
-    sessionStorage.removeItem('verifiedRole');
-  } else {
-    localStorage.setItem('verifiedRole', role);
-    sessionStorage.setItem('verifiedRole', role);
-  }
-}
-function getVerifiedRole(){
-  return sessionStorage.getItem('verifiedRole') || localStorage.getItem('verifiedRole') || null;
+<!doctype html>
+<html lang="so">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Leaderboard — AL-FATXI</title>
+  <link rel="stylesheet" href="style.css">
+<style>
+  :root{
+  --bg:#fbfdff; --text:#0f172a; --muted:#6b7280; --card-bg:#fff;
+  --primary:#0b74ff; --radius:12px; --card-shadow:0 8px 30px rgba(15,23,42,0.04);
 }
 
-function setVerifiedStudentId(id){
-  if(id == null){
-    localStorage.removeItem('verifiedStudentId');
-    sessionStorage.removeItem('verifiedStudentId');
-  } else {
-    localStorage.setItem('verifiedStudentId', id);
-    sessionStorage.setItem('verifiedStudentId', id);
-  }
-}
-function getVerifiedStudentId(){
-  return sessionStorage.getItem('verifiedStudentId') || localStorage.getItem('verifiedStudentId') || null;
-}
+/* Page base */
+html,body{height:100%;margin:0;padding:0;font-family:Inter,system-ui,Arial,sans-serif;background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased}
+.container{max-width:980px;margin:14px auto;padding:12px;box-sizing:border-box}
 
-function setVerifiedStudentName(n){
-  if(n == null){
-    localStorage.removeItem('verifiedStudentName');
-    sessionStorage.removeItem('verifiedStudentName');
-  } else {
-    localStorage.setItem('verifiedStudentName', n);
-    sessionStorage.setItem('verifiedStudentName', n);
-  }
-}
-function getVerifiedStudentName(){
-  return sessionStorage.getItem('verifiedStudentName') || localStorage.getItem('verifiedStudentName') || '';
-}
-function setVisitorStudentId(id){ if(id==null) localStorage.removeItem('visitorStudentId'); else localStorage.setItem('visitorStudentId', id); }
-function getVisitorStudentId(){ return localStorage.getItem('visitorStudentId'); }
-function clearAppStorageForAuth(){
-  // only clear the keys this app uses for verification/session
-  localStorage.removeItem('verifiedRole');
-  localStorage.removeItem('verifiedStudentId');
-  localStorage.removeItem('verifiedStudentName');
-  localStorage.removeItem('visitorStudentId');
-  sessionStorage.removeItem('verifiedRole');
-  sessionStorage.removeItem('verifiedStudentId');
-  sessionStorage.removeItem('verifiedStudentName');
-  sessionStorage.removeItem('visitorStudentId');
-}
-/* ---------- auth & startup (adjusted to allow unauthenticated visitors) ---------- */
-onAuthStateChanged(auth, async user => {
-  if(user){
-    currentUser = user;
-    const vs = getVerifiedRole();
-    if(vs){
-      const vrole = vs;
-      if(vrole === 'student'){
-        currentRole = 'student';
-        currentStudentId = getVerifiedStudentId() || null;
-        currentStudentName = getVerifiedStudentName() || '';
-      } else if(vrole === 'admin'){
-        currentRole = 'admin';
-      }
-    }
-    await resolveRole();
-        // after resolveRole() succeeds for a signed-in user:
-    // attempt auto admin verification so a logged-in admin is auto-verified
-    try { await attemptAdminVerifyAuto(); } catch(e){ console.warn('auto-admin-verify failed', e); }
+/* Cards / header / buttons */
+.card{background:var(--card-bg);border-radius:var(--radius);padding:12px;box-shadow:var(--card-shadow);margin-bottom:12px}
+header{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+header h1{margin:0;font-size:1.05rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.small-muted{color:var(--muted);font-size:13px}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border-radius:8px;border:1px solid rgba(11,116,255,0.06);background:#fff;cursor:pointer;font-weight:700;font-size:14px}
+.btn-primary{background:var(--primary);color:#fff;border-color:var(--primary)}
 
-  } else {
-    currentUser = null;
-    currentRole = null;
-    const visitorId = getVisitorStudentId();
-    if(visitorId){
-      showStudentVerifyModal(visitorId);
-    }
-  }
+/* Table wrapper */
+.table-wrap{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;border-radius:10px;padding:6px;background:linear-gradient(180deg,#fff,#fbfdff);box-sizing:border-box}
+table.leader{width:100%;border-collapse:collapse;table-layout:fixed;min-width:520px;font-family:inherit}
 
-  await loadCompetitionAndScores();
-// after admin verification or when role changes:
-applyVerifiedUIState();
-applyAdminHeaderUI();
-applyManageButtonUI();
-renderCompetitionHeader();
-});
-function applyAdminHeaderUI(){
-  const admin = isAdmin();
+/* column defaults */
+table.leader col.col-rank{width:56px}
+table.leader col.col-class{width:56px}
+table.leader col.col-id{width:64px}
+table.leader col.col-points{width:64px}
+table.leader col.col-action{width:88px}
+table.leader col.col-name{width:auto}
 
-  // HARD HIDE old header controls (in case they exist in DOM)
-  if (compNameInput) compNameInput.style.display = 'none';
-  if (compSaveBtn) compSaveBtn.style.display = 'none';
-  if (compToggleActiveBtn) compToggleActiveBtn.style.display = 'none';
+/* header / body styling */
+table.leader thead th{font-weight:800;color:var(--muted);font-size:12px;padding:8px 6px;text-align:left;border-bottom:1px solid rgba(241,245,249,0.9);white-space:nowrap}
+table.leader td{padding:6px 6px;font-weight:800;font-size:13px;text-align:left;vertical-align:middle;border-bottom:1px solid rgba(245,248,251,0.9);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
-  // Manage & viewAll should be visible only to admins
-  if (viewAllBtn) viewAllBtn.style.display = admin ? '' : 'none';
-  if (manageCompBtn) manageCompBtn.style.display = admin ? '' : 'none';
+/* rank / points / id */
+.rank-badge{display:inline-flex;align-items:center;justify-content:center;min-width:40px;height:40px;border-radius:10px;font-weight:900;background:#fff9e6;color:#07122b;font-size:0.98rem;box-shadow:0 6px 18px rgba(2,6,23,0.06)}
+.points-badge{display:inline-block;padding:6px 8px;border-radius:8px;font-weight:800;min-width:54px;text-align:center;background:linear-gradient(180deg,#f3f9ff,#eef6ff)}
+.id-mask{font-family:monospace;letter-spacing:0.6px;color:var(--muted);font-size:0.95rem}
+
+/* actions */
+.actions-wrap{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.actions-wrap .btn{padding:6px 8px;font-size:12px}
+
+/* ============ NAME / CLASS COLLAPSE/EXPAND ============ */
+/* container cell */
+.name-cell, .class-cell{padding:4px 6px;box-sizing:border-box;white-space:nowrap}
+
+/* anchor that holds the text */
+.student-toggle, .class-toggle{display:inline-block;overflow:hidden;vertical-align:middle;text-decoration:none;color:inherit;border:0;background:transparent;padding:0;margin:0;font-weight:800}
+
+/* COLLAPSED: exact width for 5 characters + room for star */
+.student-toggle[data-expanded="0"], .class-toggle[data-expanded="0"]{
+  width: calc(5ch + 0.95rem);   /* tweak +/-.05rem if your font needs it */
+  max-width: calc(5ch + 0.95rem);
+  white-space:nowrap;
+  text-overflow:ellipsis;
+  overflow:hidden;
 }
 
-
-// applyVerifiedUIState();
-// applyAdminHeaderUI();
-
-
-// --- Manage competition modal & wiring ---
-// ensure element exists in DOM (if you added HTML snippet above)
-function applyManageButtonUI(){
-  if(!manageCompBtn) return;
-  manageCompBtn.style.display = isAdmin() ? '' : 'none';
-  manageCompBtn.textContent = 'Manage';
+/* ensure strong inside has no extra padding */
+.student-toggle[data-expanded="0"] strong, .class-toggle[data-expanded="0"] strong{
+  display:inline-block;padding:0;margin:0;line-height:1;vertical-align:middle;
 }
-applyManageButtonUI(); // initial call
 
-// call after any verify/change events too: ensure you call applyManageButtonUI() in applyVerifiedUIState success paths
+/* EXPANDED: full text allowed only for that element */
+.student-toggle[data-expanded="1"], .class-toggle[data-expanded="1"], .student-toggle.expanded, .class-toggle.expanded{
+  width:auto !important; max-width:none !important; white-space:normal; display:block; font-weight:900; line-height:1.15;
+}
 
-if(manageCompBtn){
-  manageCompBtn.onclick = () => {
-    if(!isAdmin()) return toast('Admin only');
-    if(!currentCompetition) return toast('No competition loaded');
-    const status = currentCompetition.active ? 'Active' : 'Inactive';
-    const html = `
-      <div style="display:flex;flex-direction:column;gap:10px">
-        <div style="display:flex;align-items:center;gap:10px">
-          <strong style="font-size:1.05rem">${escapeHtml(currentCompetition.name || 'Competition')}</strong>
-          <button id="manageEditNameBtn" class="btn" title="Edit name">✎</button>
+/* keep other rows compact always */
+table.leader td { vertical-align:middle; }
+
+/* tighter for small screens */
+@media (max-width:720px){
+  .container{padding:8px;max-width:640px}
+  table.leader{min-width:480px}
+  table.leader thead th{font-size:11px;padding:6px}
+  table.leader td{font-size:12px;padding:6px}
+  .student-toggle[data-expanded="0"], .class-toggle[data-expanded="0"]{width:calc(5ch + 0.85rem)}
+  .rank-badge{min-width:36px;height:36px;font-size:0.9rem}
+  .points-badge{min-width:50px;padding:6px 6px;font-size:0.86rem}
+  .actions-wrap .btn{padding:6px 6px;font-size:12px}
+}
+
+/* very small phones */
+@media (max-width:420px){
+  .student-toggle[data-expanded="0"], .class-toggle[data-expanded="0"]{width:calc(5ch + 0.75rem)}
+  table.leader{min-width:440px}
+  table.leader td{font-size:11px;padding:5px}
+  .id-mask{font-size:0.9rem}
+}
+
+/* scrollbar polish */
+.table-wrap::-webkit-scrollbar{height:8px}
+.table-wrap::-webkit-scrollbar-thumb{background:rgba(11,116,255,0.16);border-radius:8px}
+
+/* ============ MODAL (centered & on top) ============ */
+#modalRoot{position:fixed;inset:0;z-index:2400;display:none;align-items:center;justify-content:center;padding:18px;box-sizing:border-box}
+#modalRoot.visible{display:flex}
+#modalRoot .modal-backdrop{position:absolute;inset:0;background:rgba(2,6,23,0.45);backdrop-filter:blur(2px)}
+#modalRoot .modal{position:relative;z-index:2420;width:min(820px,96%);max-height:92vh;overflow:auto;border-radius:12px;padding:16px;box-sizing:border-box;background:linear-gradient(180deg,#fff,#fbfdff);box-shadow:0 18px 48px rgba(2,6,23,0.28);margin:auto}
+#modalRoot .modal .modal-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:8px}
+#modalRoot .modal .modal-title{font-weight:800;font-size:18px;margin:0}
+#modalRoot .modal .modal-sub{color:var(--muted);font-size:13px}
+#modalRoot .modal .modal-body{font-size:14px;color:var(--text);line-height:1.3}
+#modalRoot .modal .modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
+
+/* modal small screens */
+@media (max-width:720px){
+  #modalRoot .modal{width:min(640px,96%);padding:12px;border-radius:10px}
+  #modalRoot .modal .modal-title{font-size:16px}
+}
+
+/* prevent background scroll when modal open (toggle via JS: body.classList.add('modal-open')) */
+.modal-open{overflow:hidden;height:100%}
+
+/* safety for long nodes inside cells */
+table.leader td > *{max-width:100%;overflow:hidden;text-overflow:ellipsis}
+
+</style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="comp-info">
+        <div style="display:flex;gap:8px;align-items:center">
+          <h1>Leaderboard</h1>
+          <div id="studentTag" class="small-muted" style="font-weight:700"></div>
         </div>
+        <div class="small-muted" id="competitionSub">Loading competition…</div>
+      </div>
 
-        <div id="manageNameRow" style="display:none">
-          <input id="manageNameInput" class="input-small" value="${escapeHtml(currentCompetition.name||'')}" style="width:100%"/>
-          <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px">
-            <button id="manageCancelName" class="btn">Cancel</button>
-            <button id="manageSaveName" class="btn btn-primary">Save</button>
+      <div class="comp-actions">
+        <button id="backBtn" class="btn">Back</button>
+        <button id="verifyBtn" class="btn">Verify</button>
+        <button id="viewAroundBtn" class="btn">View around me</button>
+        <button id="toggleBgBtn" class="btn">BG Sound: OFF</button>
+        <button id="toggleFxBtn" class="btn">FX Sound: ON</button>
+        <button id="testYourselfBtn" class="btn btn-primary">Test Yourself</button>
+        <button id="logoutBtn" class="btn">Logout</button>
+      </div>
+    </header>
+
+    <div id="adminControls" class="card hidden">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+        <div>
+          <label style="font-weight:700">Manage competition</label>
+          <div class="small-muted">
+            Manage competition settings and view all scorers.
           </div>
         </div>
-
-        <div style="display:flex;align-items:center;justify-content:space-between">
-          <div>
-            <div class="small-muted">Status</div>
-            <div id="manageStatus" style="font-weight:700">${status}</div>
-          </div>
-          <div style="display:flex;gap:8px">
-            <button id="manageToggleActive" class="btn">${currentCompetition.active ? 'Deactivate' : 'Activate'}</button>
-            <button id="manageClose" class="btn">Close</button>
-          </div>
+    
+        <div style="display:flex;gap:8px;align-items:center">
+          <!-- ONLY these buttons stay -->
+          <button id="manageCompBtn" class="btn" style="display:none">Manage</button>
+          <button id="viewAllBtn" class="btn" style="display:none">View all scorers</button>
         </div>
       </div>
-    `;
-    showModalInner(html, { title: 'Manage competition' });
-
-    // wire events
-    document.getElementById('manageClose').onclick = () => closeModal();
-    const editBtn = document.getElementById('manageEditNameBtn');
-    const nameRow = document.getElementById('manageNameRow');
-    const manageNameInput = document.getElementById('manageNameInput');
-    const manageSaveName = document.getElementById('manageSaveName');
-    const manageCancelName = document.getElementById('manageCancelName');
-    const manageToggleActive = document.getElementById('manageToggleActive');
-    const manageStatus = document.getElementById('manageStatus');
-
-    editBtn.onclick = () => {
-      nameRow.style.display = '';
-      manageNameInput.focus();
-    };
-    manageCancelName.onclick = () => { nameRow.style.display = 'none'; manageNameInput.value = currentCompetition.name || ''; };
-    manageSaveName.onclick = async () => {
-      const newName = (manageNameInput.value||'').trim();
-      if(!newName) return toast('Enter name');
-      try {
-        await updateDoc(doc(db,'competitions', currentCompetition.id), { name: newName, updatedAt: serverTimestamp() });
-        currentCompetition.name = newName;
-        renderCompetitionHeader();
-        manageStatus.textContent = currentCompetition.active ? 'Active' : 'Inactive';
-        nameRow.style.display = 'none';
-        toast('Competition name updated');
-      } catch(e){ console.error(e); toast('Save failed'); }
-    };
-
-    manageToggleActive.onclick = async () => {
-      try {
-        const newActive = !Boolean(currentCompetition.active);
-        await updateDoc(doc(db,'competitions', currentCompetition.id), { active: newActive, updatedAt: serverTimestamp() });
-        currentCompetition.active = newActive;
-        renderCompetitionHeader();
-        manageToggleActive.textContent = currentCompetition.active ? 'Deactivate' : 'Activate';
-        manageStatus.textContent = currentCompetition.active ? 'Active' : 'Inactive';
-        toast(currentCompetition.active ? 'Activated' : 'Deactivated');
-      } catch(e){ console.error(e); toast('Toggle failed'); }
-    };
-  };
-}
-
-async function openHistoryModal(studentId){
-  try {
-    const snap = await getDocs(query(collection(db,'pointsHistory'), where('studentId','==', studentId), orderBy('createdAt', 'desc'), limit(50)));
-    const rows = [];
-    snap.forEach(d => {
-      const dd = d.data();
-      rows.push({ id: d.id, delta: dd.delta, reason: dd.reason || '', adminUid: dd.adminUid || '', createdAt: dd.createdAt ? new Date(dd.createdAt.seconds * 1000).toLocaleString() : '' });
-    });
-    let html = `<div style="max-height:60vh;overflow:auto"><h3>Points history — ${escapeHtml(studentId)}</h3><table style="width:100%;border-collapse:collapse"><thead><tr><th>Date</th><th>Delta</th><th>Admin</th><th>Reason</th></tr></thead><tbody>`;
-    if(rows.length === 0){
-      html += `<tr><td colspan="4" class="small-muted">No history found.</td></tr>`;
-    } else {
-      for(const r of rows){
-        html += `<tr><td>${escapeHtml(r.createdAt)}</td><td>${escapeHtml(String(r.delta))}</td><td>${escapeHtml(r.adminUid||'—')}</td><td>${escapeHtml(r.reason||'')}</td></tr>`;
-      }
-    }
-    html += `</tbody></table></div><div style="text-align:right;margin-top:8px"><button id="historyClose" class="btn">Close</button></div>`;
-    showModalInner(html, { title: 'History' });
-    const closeBtn = document.getElementById('historyClose');
-    if(closeBtn) closeBtn.onclick = () => closeModal();
-  } catch(e){
-    console.error('openHistoryModal failed', e);
-    toast('Failed to load history');
-  }
-}
-/* ---------- role detection and persistence ---------- */
-async function resolveRole(){
-  try {
-    // first try users mapping
-    const uDoc = await getDoc(doc(db, 'users', currentUser.uid));
-    if(uDoc.exists()){
-      const u = uDoc.data();
-      currentRole = u.role || currentRole;
-      if(currentRole === 'student') currentStudentId = currentStudentId || u.studentId || null;
-    }
-
-    // admin collection check (if not set)
-    if(!currentRole){
-      const snaps = await getDocs(query(collection(db,'admin'), where('uid','==', currentUser.uid)));
-      if(snaps.size>0){
-        currentRole = 'admin';
-        // persist
-        try { await setDoc(doc(db,'users', currentUser.uid), { role:'admin', adminUid: currentUser.uid, updatedAt: serverTimestamp() }, { merge:true }); } catch(e){ console.warn(e); }
-      }
-    }
-
-    // students with authUid
-    if(!currentRole){
-      const sQuery = query(collection(db,'students'), where('authUid','==', currentUser.uid));
-      const sSnap = await getDocs(sQuery);
-      if(sSnap.size>0){
-        currentRole = 'student';
-        currentStudentId = sSnap.docs[0].id;
-        try { await setDoc(doc(db,'users', currentUser.uid), { role:'student', studentId: currentStudentId, updatedAt: serverTimestamp() }, { merge:true }); } catch(e){ console.warn(e); }
-      }
-    }
-
-    // email fallback
-    if(!currentRole && currentUser.email){
-      const sQuery2 = query(collection(db,'students'), where('email','==', currentUser.email));
-      const sSnap2 = await getDocs(sQuery2);
-      if(sSnap2.size>0){
-        currentRole = 'student';
-        currentStudentId = sSnap2.docs[0].id;
-        try { await setDoc(doc(db,'users', currentUser.uid), { role:'student', studentId: currentStudentId, updatedAt: serverTimestamp() }, { merge:true }); } catch(e){ console.warn(e); }
-      }
-    }
-
-    // fetch student name if we have studentId
-    if(currentRole === 'student' && currentStudentId){
-      try {
-        const s = await getDoc(doc(db,'students', currentStudentId));
-        if(s.exists()){
-          const d = s.data();
-          currentStudentName = d.name || d.studentName || d.fullName || '';
-          if(currentStudentName) studentTag.textContent = `— ${currentStudentName}`;
-          // persist in session if verified previously
-          sessionStorage.setItem('verifiedStudentName', currentStudentName || '');
-        }
-      } catch(e){ console.warn('get student doc failed', e); }
-    } else {
-      studentTag.textContent = '';
-    }
-
-    // show/hide admin controls
-    if(currentRole === 'admin') adminControls.classList.remove('hidden'); else adminControls.classList.add('hidden');
-
-  } catch(err){ console.warn('resolveRole failed', err); }
-}
-/* ---------- verification flows ---------- */
-function applyVerifiedUIState(){
-  const vrole = getVerifiedRole();
-  if(vrole === 'student'){
-    viewAroundBtn.style.display = ''; testYourselfBtn.disabled = false; verifyBtn.style.display = 'none';
-    adminControls.classList.add('hidden');
-    logoutBtn.style.display = ''; // show logout when verified as student
-  } else if(vrole === 'admin'){
-    viewAroundBtn.style.display = ''; testYourselfBtn.disabled = false; verifyBtn.style.display = 'none';
-    adminControls.classList.remove('hidden');
-    logoutBtn.style.display = ''; // show logout for admin
-  } else {
-    verifyBtn.style.display = '';
-    viewAroundBtn.style.display = 'none';
-    testYourselfBtn.disabled = true;
-    adminControls.classList.add('hidden');
-    logoutBtn.style.display = 'none'; // hide logout if not verified
-  }
-}
-// Attempt auto admin verify (called when referrer admin.html)
-async function attemptAdminVerifyAuto(){
-  try {
-    const snaps = await getDocs(query(collection(db,'admin'), where('uid','==', currentUser.uid)));
-    if(snaps.size > 0){
-      sessionStorage.setItem('verifiedRole','admin');
-      sessionStorage.removeItem('verifiedStudentId');
-      applyVerifiedUIState();
-      toast('Verified as admin');
-      // persist users mapping (ensure)
-      try { await setDoc(doc(db,'users', currentUser.uid), { role:'admin', adminUid: currentUser.uid, linkedAt: serverTimestamp() }, { merge:true }); } catch(e){}
-      return;
-    }
-    // not an admin; fall back to regular UI
-    applyVerifiedUIState();
-  } catch(e){ console.error(e); applyVerifiedUIState(); }
-}
-// Show student verify modal (user-entered ID + BIN). If BIN missing, ask to create one.
-// Show student verify modal (user-entered ID + BIN). If BIN missing, ask to create one.
-// Accepts optional prefillId (string).
-function showStudentVerifyModal(prefillId = ''){
-  showModalInner(`<div>
-    <div class="small-muted">Enter your Student ID and 4-digit BIN to verify. If this is your first time, you'll set a 4-digit BIN.</div>
-    <div style="margin-top:10px"><input id="verifyStudentId" class="input-small" placeholder="Student ID (e.g. S11225)" value="${escapeHtml(prefillId)}"></div>
-    <div style="margin-top:8px"><input id="verifyBin" class="input-small" placeholder="4-digit BIN"></div>
-    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
-      <button id="verifyCancel" class="btn">Cancel</button>
-      <button id="verifyDo" class="btn btn-primary">Verify</button>
     </div>
-  </div>`, { title: 'Verify as student' });
-
-  document.getElementById('verifyCancel').onclick = () => { closeModal(); applyVerifiedUIState(); };
-
-  document.getElementById('verifyDo').onclick = async () => {
-    const sid = document.getElementById('verifyStudentId').value.trim();
-    const bin = document.getElementById('verifyBin').value.trim();
-    if(!sid){ alert('Enter Student ID'); return; }
-    if(!/^\d{4}$/.test(bin)){ alert('Enter a 4-digit BIN'); return; }
-
-    try {
-      const sRef = doc(db,'students', sid);
-      const sSnap = await getDoc(sRef);
-      if(!sSnap.exists()){
-        alert('Student ID not found'); return;
-      }
-      const sData = sSnap.data();
-
-      // if blocked, stop
-      if(sData.blocked){
-        alert('Account blocked by admin. Please contact administrator.');
-        return;
-      }
-
-      // if student doc has no bin -> create it (first time)
-      if(!sData.bin || !/^\d{4}$/.test(String(sData.bin))){
-        if(!confirm('No BIN exists for this Student account. Create this BIN now?')) return;
-        // set bin on students doc
-        await updateDoc(sRef, { bin: bin });
-      } else {
-        // verify bin matches
-        if(String(sData.bin) !== bin){
-          alert('BIN does not match.'); return;
-        }
-      }
-
-      // If we have a signed-in user, persist mapping in users/collection
-      if(currentUser){
-        try { await setDoc(doc(db,'users', currentUser.uid), { role:'student', studentId: sid, linkedAt: serverTimestamp() }, { merge:true }); } catch(e){ console.warn('users mapping write failed', e); }
-      } else {
-        // For visitors (not signed-in) we store visitorStudentId so index->leaderboard flows work
-        // store verified info in sessionStorage so logout clears it
-        sessionStorage.setItem('visitorStudentId', sid);
-      }
-
-      // set verification in sessionStorage (used by the page to enable buttons)
-
-      // after successful verification...
-// set verification using localStorage helpers
-setVerifiedRole('student');
-setVerifiedStudentId(sid);
-const name = sData.name || sData.studentName || sData.fullName || '';
-
-if(name){
-  setVerifiedStudentName(name);
-  studentTag.textContent = `— ${name}`;
-}
-currentStudentId = sid; currentStudentName = name; currentRole = 'student';
-
-
-      closeModal();
-      applyVerifiedUIState();
-      toast('Verified as student');
-
-      // reload leaderboard (so appended "your rank" can appear)
-      await loadCompetitionScores();
-    } catch(err){
-      console.error('verify failed', err);
-      alert('Verification failed. Check console.');
-    }
-  };
-}
-// showAdminVerifyModal (robust: tries popup but falls back to login.html)
-function showAdminVerifyModal(){
-  // If no user, offer Google sign-in then verify; if user present, verify directly
-  if(!currentUser){
-    showModalInner(`<div>
-      <div class="small-muted">You must sign in to verify as admin. Use Google sign-in to continue, or sign in on the login page.</div>
-      <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
-        <button id="verifyAdminCancel" class="btn">Cancel</button>
-        <button id="verifyAdminSignIn" class="btn btn-primary">Sign in with Google</button>
-        <button id="verifyAdminViaLogin" class="btn">Open login page</button>
-      </div>
-    </div>`, { title: 'Verify as admin' });
-
-    document.getElementById('verifyAdminCancel').onclick = () => { closeModal(); applyVerifiedUIState(); };
-    document.getElementById('verifyAdminViaLogin').onclick = () => {
-      // redirect to login page; include next param so login can forward back if you want
-      window.location.href = 'login.html?next=leaderboard.html';
-    };
-
-    document.getElementById('verifyAdminSignIn').onclick = async () => {
-      try {
-        const provider = new GoogleAuthProvider();
-        const cred = await signInWithPopup(auth, provider);
-        currentUser = cred.user || auth.currentUser;
-        // Now check admin collection
-        const snaps = await getDocs(query(collection(db,'admin'), where('uid','==', currentUser.uid)));
-        if(snaps.size === 0){
-          // fallback: allow trying login page
-          closeModal();
-          const tryLogin = confirm('No admin record found for this account. Try signing in with a different admin account on the login page?');
-          if(tryLogin) window.location.href = 'login.html?next=leaderboard.html';
-          else applyVerifiedUIState();
-          return;
-        }
-        // mark verified
-        setVerifiedRole('admin');
-        setVerifiedStudentId(null);
-        currentRole = 'admin';
-        try { await setDoc(doc(db,'users', currentUser.uid), { role:'admin', adminUid: currentUser.uid, linkedAt: serverTimestamp() }, { merge:true }); } catch(e){}
-        applyVerifiedUIState();
-        toast('Verified as admin');
-        closeModal();
-      } catch(e){
-        console.warn('Google sign-in failed (popup may be blocked / unauthorized):', e);
-        // Common case: iframe/OAuth domain not authorized. Redirect to login page as fallback.
-        const goLogin = confirm('Popup sign-in failed (maybe OAuth not authorized). Open login page instead?');
-        if(goLogin) window.location.href = 'login.html?next=leaderboard.html';
-        else closeModal();
-      }
-    };
-    return;
-  }
-
-  // User exists -> verify against admin collection
-  showModalInner(`<div>
-    <div class="small-muted">To verify as admin we will check your account against the admin list. Click Verify to continue.</div>
-    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
-      <button id="verifyAdminCancel" class="btn">Cancel</button>
-      <button id="verifyAdminDo" class="btn btn-primary">Verify</button>
-    </div>
-  </div>`, { title: 'Verify as admin' });
-
-  document.getElementById('verifyAdminCancel').onclick = () => { closeModal(); applyVerifiedUIState(); };
-  document.getElementById('verifyAdminDo').onclick = async () => {
-    try {
-      const snaps = await getDocs(query(collection(db,'admin'), where('uid','==', currentUser.uid)));
-      if(snaps.size === 0){
-        const trySign = confirm('No admin record found for this account. Would you like to sign in with a different account now?');
-        if(!trySign) { alert('No admin record found. Contact the system administrator.'); return; }
-        // attempt popup sign-in as alternative; if popup blocked we will fall back and let user go to login
-        try {
-          const provider = new GoogleAuthProvider();
-          const cred = await signInWithPopup(auth, provider);
-          currentUser = cred.user || auth.currentUser;
-          const snaps2 = await getDocs(query(collection(db,'admin'), where('uid','==', currentUser.uid)));
-          if(snaps2.size === 0){ alert('Still no admin record for that account. Contact the system administrator.'); return; }
-          // OK admin found
-        } catch(e){
-          console.warn('Popup sign-in failed', e);
-          if(confirm('Popup sign-in failed (maybe OAuth not authorized). Open login.html to sign in with email/password?')) {
-            closeModal();
-            return window.location.href = 'login.html?next=leaderboard.html';
-          }
-          return;
-        }
-      }
-
-      // Persist mapping and mark verified
-      const uidToUse = currentUser && currentUser.uid ? currentUser.uid : (auth && auth.currentUser && auth.currentUser.uid) || null;
-      if(uidToUse){
-        try { await setDoc(doc(db,'users', uidToUse), { role:'admin', adminUid: uidToUse, linkedAt: serverTimestamp() }, { merge:true }); } catch(e){}
-        setVerifiedRole('admin');
-        setVerifiedStudentId(null);
-        currentRole = 'admin';
-        closeModal();
-        applyVerifiedUIState();
-        toast('Verified as admin');
-      } else {
-        alert('Unable to determine signed-in user. Please try signing in.');
-      }
-    } catch(e){ console.error(e); alert('Admin verify failed'); }
-  };
-}
-/* wire verifyBtn */
-verifyBtn.onclick = () => {
-  // if user is recognized admin -> show admin verify modal; otherwise student
-  const ref = (document.referrer || '').toLowerCase();
-  if(ref.includes('admin.html') || currentRole === 'admin') showAdminVerifyModal();
-  else showStudentVerifyModal();
-};
-/* ---------- logout ---------- */
-logoutBtn.onclick = async () => {
-  try {
-    // clear verification/session info for both visitors and signed-in users
-    clearAppStorageForAuth();
-    // sign out if signed-in
-    if(currentUser){
-      await signOut(auth);
-      currentUser = null;
-    }
-    currentRole = null;
-    currentStudentId = null;
-    currentStudentName = '';
-    applyVerifiedUIState();
-    window.location.href = 'index.html';
-  } catch(e){ console.error(e); toast('Logout failed'); }
-};
-/* ---------- competition load + create ---------- */
-function monthKeyForDate(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; }
-async function loadCompetitionAndScores(){
-  try {
-    const now = new Date();
-    const monthKey = monthKeyForDate(now);
-    const compsSnap = await getDocs(query(collection(db,'competitions'), where('monthKey','==', monthKey)));
-    if(compsSnap.size === 0){
-      const startAt = new Date(now.getFullYear(), now.getMonth(), 1);
-      const endAt = new Date(now.getFullYear(), now.getMonth()+1, 0, 23, 59, 59);
-      const newComp = {
-        name: `${startAt.toLocaleString('en', { month: 'long' })} Competition ${startAt.getFullYear()}`,
-        month: startAt.getMonth()+1, year: startAt.getFullYear(), monthKey,
-        active:true, startAt: startAt.toISOString(), endAt: endAt.toISOString(), createdAt: serverTimestamp(), highestStreak: 0
-      };
-      const cRef = await addDoc(collection(db,'competitions'), newComp);
-      currentCompetition = { id: cRef.id, ...newComp };
-    } else {
-      let found = null;
-      compsSnap.forEach(d => { const data = d.data(); if(!found) found = { id: d.id, ...data }; });
-      currentCompetition = found;
-    }
-    renderCompetitionHeader();
-    await loadCompetitionScores();
-  } catch(err){ console.error('loadCompetitionAndScores', err); }
-}
-function renderCompetitionHeader(){
-  if(!currentCompetition) return;
-  compTitleEl.textContent = currentCompetition.name || 'Competition';
-  const startAt = currentCompetition.startAt ? new Date(currentCompetition.startAt) : null;
-  const endAt = currentCompetition.endAt ? new Date(currentCompetition.endAt) : null;
-  compRangeEl.textContent = startAt && endAt ? `${startAt.toLocaleDateString()} — ${endAt.toLocaleDateString()}` : '';
-  const daysLeft = endAt ? daysLeftUntil(endAt) : 0;
-  competitionSub.textContent = `${currentCompetition.active ? 'Active' : 'Inactive'} • ${daysLeft} day(s) remaining`;
-
-
-  // admin controls values
-if (isAdmin()) {
-  if (compNameInput) compNameInput.value = currentCompetition.name || '';
-  if (compToggleActiveBtn) compToggleActiveBtn.textContent = currentCompetition.active ? 'Deactivate' : 'Activate';
-}
-
-
-  // header tag: prefer admin displayName when admin, otherwise verified student name
-  const vrole = getVerifiedRole();
-  if(vrole === 'admin' && currentUser && (currentUser.displayName || currentUser.email)){
-    const disp = currentUser.displayName || currentUser.email;
-    studentTag.textContent = `— Admin: ${disp}`;
-  } else if(vrole === 'student' && getVerifiedStudentName()){
-    studentTag.textContent = `— ${getVerifiedStudentName()}`;
-  } else {
-    studentTag.textContent = '';
-  }
-}
-
-/* ---------- scores loading & rendering (async to enrich student names/class) ---------- */
-async function loadCompetitionScores(){
-  if(!currentCompetition) return;
-  try {
-    const q = query(collection(db,'competitionScores'), where('competitionId','==', currentCompetition.id));
-    const snap = await getDocs(q);
-    const arr = [];
-    snap.forEach(d => arr.push({ id:d.id, ...d.data() }));
-    // enrich missing names/class by batch reading students docs
-    const missingStudentIds = new Set();
-    arr.forEach(r => { if(!r.studentName || !r.className) missingStudentIds.add(r.studentId); });
-    const studentMap = {};
-    if(missingStudentIds.size > 0){
-      // fetch in parallel (could optimize)
-      await Promise.all(Array.from(missingStudentIds).map(async sid => {
-        try {
-          const sSnap = await getDoc(doc(db,'students', sid));
-          if(sSnap.exists()) studentMap[sid] = sSnap.data();
-        } catch(e){}
-      }));
-      // merge into arr
-      arr.forEach(r => {
-        if(studentMap[r.studentId]){
-          const d = studentMap[r.studentId];
-          // name fallback to several fields
-          if(!r.studentName) r.studentName = d.name || d.studentName || d.fullName || r.studentName || '';
-          // class fallback: className or class or classId or section
-          if(!r.className) r.className = d.className || d.class || d.classId || d.section || r.className || '';
-        }
-      });
-      
-    }
-
-    arr.sort((a,b) => (b.points || 0) - (a.points || 0));
-    scoresCache = arr;
-    await renderLeaderboard();
-  } catch(err){ console.error('loadCompetitionScores', err); }
-}
-/* ---------- ranking helpers ---------- */
-function buildRankedList(arr){
-  const ranked = [];
-  let currentRank = 0;
-  let lastPoints = null;
-  let idx = 0;
-  for(const item of arr){
-    idx++;
-    if(lastPoints === null || item.points < lastPoints){
-      currentRank = idx;
-      lastPoints = item.points;
-    }
-    ranked.push({ ...item, rank: currentRank });
-  }
-  const topRanks = [];
-  const rankSet = new Set();
-  for(const r of ranked){
-    if(rankSet.size < 10) { rankSet.add(r.rank); topRanks.push(r); }
-    else if(rankSet.has(r.rank)) { topRanks.push(r); }
-    else break;
-  }
-  return { ranked, topRanks };
-}
-// helper: short display (first N chars + ' *' if truncated)
-function shortDisplay(str, len = 5) {
-  if (!str && str !== '') return '—';
-  const s = String(str).trim();
-  if (s.length <= len) return s;
-  return s.slice(0, len) + ' *';
-}
-
-// Delegated click handler: expand / collapse student name or class
-// helper already in your file:
-// function shortDisplay(str, len = 5) { ... }  // keeps 5-char + ' *'
-(function attachToggleHandler() {
-  const tbody = document.getElementById('leaderTbody');
-  if (!tbody) return;
-  if (tbody._hasToggleHandler) return;
-  tbody._hasToggleHandler = true;
-
-  tbody.addEventListener('click', (ev) => {
-    const anchor = ev.target.closest('.student-toggle, .class-toggle');
-    if (!anchor) return;
-    ev.preventDefault();
-    const full = anchor.dataset.full || '';
-    const strongEl = anchor.querySelector('strong');
-
-    // if expanded -> collapse
-    if (anchor.dataset.expanded === '1' || anchor.classList.contains('expanded')) {
-      anchor.dataset.expanded = '0';
-      anchor.classList.remove('expanded');
-      if (strongEl) strongEl.textContent = shortDisplay(full, 5);
-      else anchor.textContent = shortDisplay(full, 5);
-      return;
-    }
-
-    // collapse any other expanded cell (optional single-expand behavior)
-    const other = tbody.querySelector('[data-expanded="1"], .expanded');
-    if (other && other !== anchor) {
-      other.dataset.expanded = '0';
-      other.classList.remove('expanded');
-      const otherFull = other.dataset.full || '';
-      const oStrong = other.querySelector('strong');
-      if (oStrong) oStrong.textContent = shortDisplay(otherFull, 5);
-    }
-
-    // expand clicked one
-    anchor.dataset.expanded = '1';
-    anchor.classList.add('expanded');
-    if (strongEl) strongEl.textContent = full;
-    else anchor.textContent = full;
-
-    // ensure row visible
-    const tr = anchor.closest('tr');
-    if (tr) tr.scrollIntoView({ behavior:'smooth', block:'center' });
-  });
-})();
-
-
-/* ---------- render leaderboard (async) ---------- */
-/* ---------- render leaderboard (async) ---------- */
-async function renderLeaderboard(){
-  leaderTbody.innerHTML = '';
-  if(!scoresCache || scoresCache.length === 0){
-    leaderTbody.innerHTML = `<tr><td colspan="6" class="small-muted">No scores yet. Be the first —</td></tr>`;
-    return;
-  }
-
-  const { ranked, topRanks } = buildRankedList(scoresCache);
-  const vrole = getVerifiedRole();
-  const admin = isAdmin();
-
-  const primaryRows = admin ? (adminShowAll ? ranked : topRanks) : topRanks;
-
-  for(const r of primaryRows){
-    const tr = document.createElement('tr');
-
-    // rank badge HTML
-    const rankCell = `<div class="rank-badge" style="background:${r.rank===1? '#FFD700': r.rank===2? '#C0C0C0' : r.rank===3? '#CD7F32': '#eef6ff'}">${r.rank}</div>`;
-
-    // Name: show first 5 chars + " *" by default, clickable to expand
-    const fullName = r.studentName || '—';
-    const shortName = shortDisplay(fullName, 5);
-    const nameHtml = `<a href="#" class="student-toggle" data-full="${escapeHtml(fullName)}" data-expanded="0"><strong>${escapeHtml(shortName)}</strong></a>`;
-
-    // Class: same behaviour as name
-    const fullClass = r.className || '—';
-    const shortClass = shortDisplay(fullClass, 5);
-    const classHtml = `<a href="#" class="class-toggle" data-full="${escapeHtml(fullClass)}" data-expanded="0"><strong>${escapeHtml(shortClass)}</strong></a>`;
-
-    // compute id mask, points and action BEFORE updating innerHTML
-    const idMasked = maskId(r.studentId || r.id || '');
-    const points = escapeHtml(String(r.points || 0));
-
-    let actionHtml = `<button class="btn" data-view="${escapeHtml(r.id)}">View</button>`;
-    if(admin){
-      actionHtml += ` <button class="btn settingsBtn" data-student="${escapeHtml(r.studentId)}" data-scoredoc="${escapeHtml(r.id)}">⚙</button>`;
-    } else {
-      if(getVerifiedRole() === 'student' && getVerifiedStudentId() === r.studentId){
-        actionHtml += ` <button class="btn" id="clearMyPointsBtn">Clear my points</button>`;
-      }
-    }
-
-    // single, final innerHTML assignment for the row
-    tr.innerHTML = `<td>${rankCell}</td>
-                    <td class="name-cell">${nameHtml}</td>
-                    <td class="class-cell">${classHtml}</td>
-                    <td class="id-mask">${idMasked}</td>
-                    <td><strong>${points}</strong></td>
-                    <td>${actionHtml}</td>`;
-
-    leaderTbody.appendChild(tr);
-  }
-
-  // rest of your original logic for adminShowAll section and wiring remains unchanged
-  // (I assume you keep the existing block that appends remaining rows, wires buttons, highlight, etc.)
-  // If needed paste the remaining code below this point (unchanged from your previous file).
-
-  // --- wiring (same as before) ---
-  // wire view buttons
-  leaderTbody.querySelectorAll('button[data-view]').forEach(b => {
-    b.onclick = async () => {
-      const id = b.getAttribute('data-view');
-      const item = scoresCache.find(s => s.id === id);
-      if(!item) return toast('Not found');
-
-      const canAdmin = isAdmin();
-      // now include history button only if admin
-      const html = `<div>
-        <h3 style="margin-top:0">${escapeHtml(item.studentName || '—')}</h3>
-        <div class="small-muted">Class: <strong>${escapeHtml(item.className || item.class || item.classId || '—')}</strong></div>
-        <div style="margin-top:8px">Points: <strong>${escapeHtml(String(item.points || 0))}</strong></div>
-        <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
-          ${canAdmin ? `<button id="modalHistoryBtn" class="btn">View history</button>` : ''}
-          ${canAdmin ? `<button id="modalAdminSettingsBtn" class="btn">Settings</button>` : ''}
-          <button id="modalCloseLocal" class="btn">Close</button>
-        </div>
-      </div>`;
-
-      showModalInner(html, { title: 'Student' });
-
-      const histBtn = document.getElementById('modalHistoryBtn');
-      if(histBtn){
-        histBtn.onclick = async () => { closeModal(); await openHistoryModal(item.studentId); };
-      }
-      const adminBtn = document.getElementById('modalAdminSettingsBtn');
-      if(adminBtn){
-        adminBtn.onclick = () => {
-          if(!isAdmin()){ toast('Only admin'); return; }
-          closeModal();
-          openStudentSettingsModal(item.studentId, item.id);
-        };
-      }
-      const closeLocal = document.getElementById('modalCloseLocal');
-      if(closeLocal) closeLocal.onclick = () => closeModal();
-    };
-  });
-
-  // wire clear my points if present
-  const clearBtn = document.getElementById('clearMyPointsBtn');
-  if(clearBtn){
-    clearBtn.onclick = async () => {
-      if(!confirm('Clear your points for this competition? This action cannot be undone.')) return;
-      try {
-        const docId = `${currentCompetition.id}_${getVerifiedStudentId()}`;
-        await setDoc(doc(db,'competitionScores', docId), { competitionId: currentCompetition.id, studentId: getVerifiedStudentId(), points: 0, updatedAt: serverTimestamp() }, { merge:true });
-        toast('Your points cleared.');
-        await loadCompetitionScores();
-      } catch(err){ console.error(err); toast('Failed to clear points'); }
-    };
-  }
-
-  // wire settings gear for admin
-  leaderTbody.querySelectorAll('.settingsBtn').forEach(b => {
-    b.onclick = async () => {
-      const studentId = b.dataset.student;
-      const scoreDocId = b.dataset.scoredoc;
-      if(!isAdmin()) return toast('Only admin may access settings');
-      openStudentSettingsModal(studentId, scoreDocId);
-    };
-  });
-
-  // show verified student's own row if not already present
-  const verifiedSid = getVerifiedStudentId();
-  if(verifiedSid){
-    const { ranked } = buildRankedList(scoresCache);
-    const me = ranked.find(r => r.studentId === verifiedSid);
-    const topShown = admin ? ranked : buildRankedList(scoresCache).topRanks;
-    const isDisplayed = topShown.some(r => r.studentId === verifiedSid);
-    if(!isDisplayed && me){
-      appendOrShowMyRow(me, false);
-    } else if(!isDisplayed && !me){
-      appendOrShowMyRow({ rank: '—', studentName: getVerifiedStudentName() || verifiedSid, className: '—', studentId: verifiedSid, points: 0 }, true);
-    }
-  }
-}
-
-
-/* ---------- admin student settings modal ---------- */
-function openStudentSettingsModal(studentId, scoreDocId){
-  // admin-only guard
-  if(!isAdmin()) { toast('Only admin may access settings'); return; }
-
-  showModalInner(`<div>
-    <div style="display:flex;justify-content:space-between;align-items:center">
-      <div><strong>Student: ${escapeHtml(studentId)}</strong><div id="settingsStudentName" class="small-muted"></div></div>
-      <div id="settingsCurrentPoints" class="small-muted" style="text-align:right">Points: —</div>
-    </div>
-
-    <hr style="margin:8px 0"/>
-
-    <!-- Points adjust area -->
-    <div id="pointsAdjustArea">
-      <label style="font-weight:700">Adjust points</label>
-      <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
-        <button id="ptsDec" class="btn">−</button>
-        <input id="ptsValue" type="number" value="0" class="input-small" style="width:100px;text-align:center"/>
-        <button id="ptsInc" class="btn">+</button>
-        <input id="ptsReason" placeholder="Reason (optional)" style="flex:1;border:1px solid #e6eefc;padding:6px;border-radius:6px" />
-        <button id="applyPoints" class="btn btn-primary">Apply</button>
-      </div>
-      <div class="small-muted" style="margin-top:6px">Use + / − to increment, then Apply to save (writes history).</div>
-    </div>
-
-    <hr style="margin:8px 0"/>
-
-    <!-- Reset BIN area (hidden until clicked) -->
-    <div id="resetBinArea">
-      <label style="font-weight:700">Reset BIN</label>
-      <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
-        <button id="revealResetBin" class="btn">Reset</button>
-        <div id="resetBinInputs" style="display:none;width:100%;margin-left:8px">
-          <input id="resetBinValue" class="input-small" placeholder="1234" style="width:120px"/>
-          <button id="doResetBin" class="btn btn-primary">Save BIN</button>
-        </div>
-      </div>
-      <div class="small-muted" style="margin-top:6px">Click Reset to reveal BIN field and save.</div>
-    </div>
-
-    <hr style="margin:8px 0"/>
-
-    <!-- Block/Unblock and Save -->
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px">
-      <div>
-        <button id="settingsToggleBlock" class="btn">...</button>
-        <span class="small-muted" id="blockedNote" style="margin-left:8px"></span>
-      </div>
-      <div style="display:flex;gap:8px">
-        <button id="settingsCancel" class="btn">Cancel</button>
-        <button id="settingsSave" class="btn btn-primary">Save</button>
-      </div>
-    </div>
-  </div>`, { title: 'Student settings' });
-
-  const sRef = doc(db,'students', studentId);
-
-  // Populate existing state
-  (async ()=>{
-    try {
-      const sSnap = await getDoc(sRef);
-      const toggle = document.getElementById('settingsToggleBlock');
-      const nameEl = document.getElementById('settingsStudentName');
-      const ptsEl = document.getElementById('settingsCurrentPoints');
-      if(sSnap.exists()){
-        const d = sSnap.data();
-        nameEl.textContent = d.name || d.studentName || '';
-        const desiredBlocked = !!d.blocked;
-        toggle.dataset.desired = desiredBlocked ? 'true' : 'false';
-        toggle.textContent = desiredBlocked ? 'Unblock' : 'Block';
-        document.getElementById('blockedNote').textContent = desiredBlocked ? 'Currently blocked' : '';
-      } else {
-        nameEl.textContent = '';
-        toggle.dataset.desired = 'false';
-        toggle.textContent = 'Block';
-      }
-
-      // try to fetch current competitionPoints doc if present
-      if(scoreDocId){
-        const scoreSnap = await getDoc(doc(db,'competitionScores', scoreDocId));
-        if(scoreSnap.exists()){
-          const pts = scoreSnap.data().points || 0;
-          document.getElementById('settingsCurrentPoints').textContent = `Points: ${pts}`;
-        } else {
-          document.getElementById('settingsCurrentPoints').textContent = `Points: 0`;
-        }
-      } else {
-        document.getElementById('settingsCurrentPoints').textContent = `Points: —`;
-      }
-    } catch(e){ console.warn(e); }
-  })();
-
-  // Toggle block button flips local desired state
-  document.getElementById('settingsToggleBlock').onclick = () => {
-    const btn = document.getElementById('settingsToggleBlock');
-    btn.dataset.desired = (btn.dataset.desired === 'true') ? 'false' : 'true';
-    btn.textContent = (btn.dataset.desired === 'true') ? 'Unblock' : 'Block';
-    document.getElementById('blockedNote').textContent = btn.dataset.desired === 'true' ? '' : '';
-  };
-
-  // Points increment/decrement wiring
-  const ptsInc = document.getElementById('ptsInc');
-  const ptsDec = document.getElementById('ptsDec');
-  const ptsValue = document.getElementById('ptsValue');
-  const applyPoints = document.getElementById('applyPoints');
-  ptsInc.onclick = () => { ptsValue.value = Number(ptsValue.value||0) + 1; };
-  ptsDec.onclick = () => { ptsValue.value = Number(ptsValue.value||0) - 1; };
-
-  applyPoints.onclick = async () => {
-    const deltaRaw = Number(document.getElementById('ptsValue').value || 0);
-    const reason = document.getElementById('ptsReason').value.trim() || '';
-    if(!scoreDocId){ alert('score document id missing'); return; }
-    try {
-      await runTransaction(db, async (t) => {
-        const ref = doc(db,'competitionScores', scoreDocId);
-        const snap = await t.get(ref);
-        let currentPoints = 0;
-        if(snap.exists()) currentPoints = snap.data().points || 0;
-        const newPoints = Math.max(0, currentPoints + deltaRaw);
-        t.set(ref, { competitionId: currentCompetition.id, studentId, points: newPoints, updatedAt: serverTimestamp() }, { merge:true });
-        const logRef = doc(collection(db,'pointsHistory'));
-        const adminUid = (currentUser && currentUser.uid) || (auth && auth.currentUser && auth.currentUser.uid) || 'unknown';
-        t.set(logRef, { competitionId: currentCompetition.id, studentId, delta: deltaRaw, reason, adminUid, createdAt: serverTimestamp() });
-      });
-      toast('Points updated');
-      closeModal();
-      await loadCompetitionScores();
-    } catch(err){ console.error(err); alert('Update failed'); }
-  };
-
-  // Reveal Reset BIN inputs
-  document.getElementById('revealResetBin').onclick = () => {
-    document.getElementById('resetBinInputs').style.display = '';
-    document.getElementById('resetBinValue').focus();
-  };
-  document.getElementById('doResetBin').onclick = async () => {
-    const val = (document.getElementById('resetBinValue').value||'').trim();
-    if(!/^\d{4}$/.test(val)){ alert('BIN must be 4 digits'); return; }
-    try {
-      await updateDoc(sRef, { bin: val });
-      toast('BIN saved');
-      closeModal();
-      await loadCompetitionScores();
-    } catch(e){ console.error(e); toast('Failed to save BIN'); }
-  };
-
-  // Save button (block/unblock + optional other fields)
-  document.getElementById('settingsSave').onclick = async () => {
-    try {
-      if(!isAdmin()) { toast('Only admins'); return; }
-      const toggle = document.getElementById('settingsToggleBlock');
-      if(toggle){
-        const sSnap2 = await getDoc(sRef);
-        const cur = sSnap2.exists() ? sSnap2.data() : {};
-        const curBlocked = !!cur.blocked;
-        const desiredBlocked = toggle.dataset.desired === 'true';
-        if(curBlocked !== desiredBlocked){
-          const adminUid = (currentUser && currentUser.uid) || (auth && auth.currentUser && auth.currentUser.uid) || 'unknown';
-          await updateDoc(sRef, { blocked: desiredBlocked, blockMessage: desiredBlocked ? 'Blocked by admin' : '', blockedBy: desiredBlocked ? adminUid : null, blockedAt: desiredBlocked ? serverTimestamp() : null });
-        }
-      }
-      closeModal();
-      toast('Saved');
-      await loadCompetitionScores();
-    } catch(e){ console.error(e); alert('Save failed'); }
-  };
-
-  document.getElementById('settingsCancel').onclick = () => closeModal();
-}
-
-// ---------- admin competition controls (wire buttons) ----------
-// if (compSaveBtn) {
-//   compSaveBtn.onclick = async () => {
-//     // admin-only
-//     if (sessionStorage.getItem('verifiedRole') !== 'admin' && currentRole !== 'admin') {
-//       return toast('Only admins may perform this action');
-//     }
-//     if (!currentCompetition || !currentCompetition.id) return toast('No competition loaded');
-//     const newName = (compNameInput.value || '').trim();
-//     if (!newName) return toast('Enter a competition name');
-//     try {
-//       await updateDoc(doc(db, 'competitions', currentCompetition.id), { name: newName, updatedAt: serverTimestamp() });
-//       currentCompetition.name = newName;
-//       renderCompetitionHeader();
-//       toast('Competition name updated');
-//     } catch (e) {
-//       console.error('Failed to update competition name', e);
-//       toast('Failed to save competition name');
-//     }
-//   };
-// }
-// if (compToggleActiveBtn) {
-//   compToggleActiveBtn.onclick = async () => {
-//     if (sessionStorage.getItem('verifiedRole') !== 'admin' && currentRole !== 'admin') {
-//       return toast('Only admins may perform this action');
-//     }
-//     if (!currentCompetition || !currentCompetition.id) return toast('No competition loaded');
-//     try {
-//       const newActive = !Boolean(currentCompetition.active);
-//       await updateDoc(doc(db, 'competitions', currentCompetition.id), { active: newActive, updatedAt: serverTimestamp() });
-//       currentCompetition.active = newActive;
-//       renderCompetitionHeader();
-//       toast(newActive ? 'Competition activated' : 'Competition deactivated');
-//     } catch (e) {
-//       console.error('Failed to toggle competition active', e);
-//       toast('Failed to update competition status');
-//     }
-//   };
-// }
-/* ---------- View around me / show your rank inline ---------- */
-viewAroundBtn.onclick = async () => {
-  const verifiedRole = sessionStorage.getItem('verifiedRole');
-  if(verifiedRole !== 'student'){
-    // If not student, prompt verify modal (pre-fill with visitorStudentId if present)
-    const pre = sessionStorage.getItem('visitorStudentId') || '';
-    showStudentVerifyModal(pre);
-    return;
-  }
-
-  const sid = sessionStorage.getItem('verifiedStudentId');
-  if(!sid) return toast('No student linked');
-
-  // build ranked list and find student
-  const { ranked } = buildRankedList(scoresCache);
-  const me = ranked.find(r => r.studentId === sid);
-  if(!me){
-    // student has no score yet: show small message and scroll to bottom
-    appendOrShowMyRow({ rank: '—', studentName: sessionStorage.getItem('verifiedStudentName') || sid, className: '—', studentId: sid, points: 0 }, true);
-    return;
-  }
-
-  // if student is already in the displayed rows, show alert instead
-  const topShown = (sessionStorage.getItem('verifiedRole') === 'admin' || currentRole === 'admin') ? ranked : buildRankedList(scoresCache).topRanks;
-  const isShown = topShown.some(r => r.studentId === sid);
-  if(isShown){
-    // they are already in top list -> show concise message
-    toast(`You are already ranked #${me.rank} — see table above.`);
-    // highlight row in table (if visible)
-    highlightRowForStudent(sid);
-    return;
-  }
-
-  // otherwise append an explicit "Your rank" row at the bottom and scroll
-  appendOrShowMyRow(me, false);
-};
-// helper: highlight row for studentId in current table (if present)
-function highlightRowForStudent(studentId){
-  // remove previous highlights
-  leaderTbody.querySelectorAll('tr').forEach(tr => tr.style.boxShadow = '');
-  const rows = Array.from(leaderTbody.querySelectorAll('tr'));
-  for(const tr of rows){
-    if(tr.innerHTML.includes(escapeHtml(maskId(studentId)))){ // crude but effective matching for masked id column
-      tr.style.boxShadow = '0 6px 20px rgba(37,99,235,0.08)';
-      tr.scrollIntoView({ behavior:'smooth', block:'center' });
-      return;
-    }
-  }
-}
-// helper: append or update a "Your rank" row at the bottom of the table
-function appendOrShowMyRow(me, isEmpty){
-  // remove existing my-rank row
-  const old = document.getElementById('myRankRow');
-  if(old) old.remove();
-
-  const tr = document.createElement('tr');
-  tr.id = 'myRankRow';
-  tr.style.background = '#f7fbff';
-  const rankCell = `<div class="rank-badge">${escapeHtml(String(me.rank || '—'))}</div>`;
-  const name = `<strong>${escapeHtml(me.studentName || sessionStorage.getItem('verifiedStudentName') || '—')}</strong>`;
-  const className = escapeHtml(me.className || '—');
-  const idMasked = maskId(me.studentId || '');
-  const points = escapeHtml(String(me.points || 0));
-  tr.innerHTML = `<td>${rankCell}</td><td>${name}</td><td>${className}</td><td>${idMasked}</td><td><strong>${points}</strong></td><td class="small-muted">Your rank</td>`;
-  leaderTbody.appendChild(tr);
-  tr.scrollIntoView({ behavior:'smooth', block:'center' });
-}
-/* ---------- Test-yourself (kept disabled until verified student) ---------- */
-/* The test flow you already have is preserved; we hook testYourselfBtn to check verification first */
-toggleBgBtn.onclick = () => { const on = !SoundManager.bgEnabled; SoundManager.setBgEnabled(on); toggleBgBtn.textContent = `BG Sound: ${on? 'ON':'OFF'}`; };
-toggleFxBtn.onclick = () => { const on = !SoundManager.effectsEnabled; SoundManager.setEffectsEnabled(on); toggleFxBtn.textContent = `FX Sound: ${on? 'ON':'OFF'}`; };
-///dheeri
-// try local JSON first then Firestore
-async function loadLocalTestSets() {
-  const paths = ['./math_questions_100.json', '/math_questions_100.json', './data/math_questions_100.json', '/data/math_questions_100.json'];
-  for (const p of paths) {
-    try {
-      const res = await fetch(p, { cache: "no-store" });
-      if (!res.ok) continue;
-      const json = await res.json();
-      if (json && Array.isArray(json.sets) && json.sets.length) {
-        return json.sets.map(s => ({ id: s.id || (s.title? s.title.replace(/\s+/g,'_').toLowerCase():undefined), ...s }));
-      }
-    } catch (err) { /* try next */ }
-  }
-  return null;
-}
-async function loadRemoteTestSets(){
-  try {
-    const snap = await getDocs(collection(db,'testSets'));
-    if(snap.size === 0) return [];
-    return snap.docs.map(d => ({ id:d.id, ...d.data() }));
-  } catch(e){ console.warn('loadRemoteTestSets failed', e); return []; }
-}
-async function loadAvailableSets(){
-  const local = await loadLocalTestSets();
-  if(local && local.length) return local;
-  const remote = await loadRemoteTestSets();
-  return remote;
-}
-function showSetsSelectionModal(sets){
-  // build list with checkbox per set
-  const html = ['<div style="max-height:60vh;overflow:auto;padding-top:6px">'];
-  html.push('<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px"><label><input type="checkbox" id="selectAllSets" /> Select all</label><label style="margin-left:8px"><input type="checkbox" id="randomizeSets" checked /> Randomize questions</label></div>');
-  sets.forEach((s, idx) => {
-    const cnt = Array.isArray(s.questions) ? s.questions.length : (s.count||0);
-    html.push(`<div style="margin-bottom:6px"><label><input type="checkbox" class="setCheckbox" data-idx="${idx}" ${idx===0? 'checked':''}/> <strong>${escapeHtml(s.title||s.id||'Set')}</strong> — <span class="small-muted">${cnt} questions</span></label></div>`);
-  });
-  html.push('</div>');
-  html.push('<div style="text-align:right;margin-top:12px"><button id="cancelSets" class="btn">Cancel</button> <button id="startSets" class="btn btn-primary">Start test</button></div>');
-  showModalInner(html.join(''), { title: 'Choose tests' });
-
-  document.getElementById('selectAllSets').onchange = (e) => {
-    document.querySelectorAll('.setCheckbox').forEach(cb => cb.checked = e.target.checked);
-  };
-  document.getElementById('cancelSets').onclick = () => closeModal();
-  document.getElementById('startSets').onclick = () => {
-    const chosenIdx = Array.from(document.querySelectorAll('.setCheckbox')).filter(cb => cb.checked).map(cb => Number(cb.dataset.idx));
-    if(chosenIdx.length === 0) return alert('Select at least one set');
-    const randomize = document.getElementById('randomizeSets').checked;
-    const chosenSets = chosenIdx.map(i => sets[i]);
-    closeModal();
-    // prepare questions: shuffle each set, then interleave round-robin
-    const pool = chosenSets.map(s => {
-      const qarr = (s.questions || []).map(q => ({ ...q, _setTitle: s.title || s.id }));
-      if(randomize) shuffleArray(qarr);
-      return qarr;
-    });
-    const interleaved = [];
-    let taken = true;
-    let cursor = 0;
-    while(taken){
-      taken = false;
-      for(let i=0;i<pool.length;i++){
-        if(pool[i].length > 0){
-          interleaved.push(pool[i].shift());
-          taken = true;
-        }
-      }
-    }
-    // attach a title for the combined set
-    const combinedTitle = chosenSets.map(s => s.title || s.id).join(' + ');
-    openTestModal({ id: 'combined_'+Date.now(), title: combinedTitle, questions: interleaved });
-  };
-}
-
-testYourselfBtn.onclick = async () => {
-  const vrole = getVerifiedRole();
-  // admin cannot take tests
-  if(isAdmin()){
-    showModalInner(`<div><div class="small-muted">You are verified as an admin and cannot take tests. If you want to test, create/verify a student account first.</div><div style="text-align:right;margin-top:12px"><button id="adminTestClose" class="btn btn-primary">Close</button></div></div>`, { title: 'Admin — cannot test' });
-    document.getElementById('adminTestClose').onclick = () => closeModal();
-    return;
-  }
-  if(vrole !== 'student'){
-    // clearer message + show verify modal
-    toast('You are not verified — please verify as a student to take tests.');
-    showStudentVerifyModal();
-    return;
-  }
-
-  // verified student -> load tests
-  try {
-    const sets = await loadAvailableSets();
-    if(!sets || sets.length === 0) return toast('No test sets available.');
-    return showSetsSelectionModal(sets);
-  } catch(err){ console.error(err); toast('Failed to load tests'); }
-};
-
-/* ---------- admin save/toggle competition ---------- */
-// compSaveBtn.onclick = async () => {
-//   // if(sessionStorage.getItem('verifiedRole') !== 'admin') return toast('Admin only');
-
-//   if(!isAdmin()) return toast('Admin only');
-
-//   if(!currentCompetition) return;
-//   const name = compNameInput.value.trim();
-//   if(!name) return alert('Enter name');
-//   try {
-//     await updateDoc(doc(db,'competitions', currentCompetition.id), { name, updatedAt: serverTimestamp() });
-//     currentCompetition.name = name;
-//     renderCompetitionHeader();
-//     toast('Saved');
-//   } catch(err){ console.error(err); toast('Save failed'); }
-// };
-// compToggleActiveBtn.onclick = async () => {
-//   if(!isAdmin()) return toast('Admin only');
-//   if(!currentCompetition) return;
-//   const newActive = !currentCompetition.active;
-//   try {
-//     await updateDoc(doc(db,'competitions', currentCompetition.id), { active: newActive, updatedAt: serverTimestamp() });
-//     currentCompetition.active = newActive;
-//     renderCompetitionHeader();
-//     toast(newActive ? 'Activated' : 'Deactivated');
-//   } catch(err){ console.error(err); toast('Failed'); }
-// };
-
-// Toggle "show all scorers" inline under the top list
-if (viewAllBtn) {
-  viewAllBtn.onclick = () => {
-    if(!isAdmin()) return toast('Admin only');
-    adminShowAll = !adminShowAll;
-    viewAllBtn.textContent = adminShowAll ? 'Hide extra scorers' : 'View all scorers';
-    renderLeaderboard();
-  };
-}
-
-/* ---------- openTestModal (improved) ---------- */
-function openTestModal(set){
-  const questions = (set.questions || []).map((q, idx) => {
-    const choices = Array.isArray(q.choices) ? q.choices.map(c => ({ text: typeof c === 'string' ? c : (c.text||String(c)) })) : [];
-    const correct = q.correct;
-    return { ...q, choices, correct, _idx: idx };
-  });
-  shuffleArray(questions);
-
-  const state = {
-    setId: set.id, setTitle: set.title || 'Test', questions,
-    index: 0, answers: Array(questions.length).fill(null),
-    correctCount: 0, skipped: 0, incorrect: 0,
-    currentStreak: 0, runHighest: 0, timeoutId: null, timerSec: 20,
-    highestHolder: null
-  };
-
-  const html = [
-    `<div style="padding:6px 0">
-       <div id="testHeader" style="display:flex;justify-content:space-between;align-items:center">
-         <div><strong>${escapeHtml(state.setTitle)}</strong><div class="small-muted" id="testSub">Questions: ${state.questions.length}</div></div>
-         <div class="small-muted" id="testRight">Highest: —</div>
-       </div>
-     </div>`
-  ];
-  html.push(`<div id="testContainer"></div>`);
-  html.push(`<div class="test-footer" style="display:flex;justify-content:space-between;align-items:center;gap:12px">
-  <div style="display:flex;gap:8px;align-items:center">
-    <button id="toggleModalBgBtn" class="btn">BG: OFF</button>
-    <button id="toggleModalFxBtn" class="btn">FX: ON</button>
-  </div>
-  <div style="display:flex;flex-direction:column;align-items:flex-end">
-    <div class="stats-line"><span id="qProgress"></span> <span id="streakInfo"></span></div>
-    <div style="margin-top:6px"><button id="testPrev" class="btn">← Prev</button> <button id="testNext" class="btn">Next →</button> <button id="testFinish" class="btn btn-primary">Finish</button> <button id="testCancel" class="btn">Cancel</button></div>
-  </div>
-</div>
-`);
-
-  // Insert modal first (DOM elements will exist after this)
-  showModalInner(html.join(''), { title: 'Test' });
-
-    // ----------------------------
-  // SOUND TOGGLE BUTTONS (modal-level)
-  // ----------------------------
-  (function wireModalSoundToggles(){
-    // The SoundManager must be imported/available in this file scope.
-    const bgBtn = document.getElementById('toggleModalBgBtn');
-    const fxBtn = document.getElementById('toggleModalFxBtn');
-    if(!bgBtn || !fxBtn) return;
-
-    // initialize labels from current manager state
-    bgBtn.textContent = `BG: ${SoundManager.bgEnabled ? 'ON' : 'OFF'}`;
-    fxBtn.textContent = `FX: ${SoundManager.effectsEnabled ? 'ON' : 'OFF'}`;
-
-    bgBtn.onclick = () => {
-      const newOn = !SoundManager.bgEnabled;
-      SoundManager.setBgEnabled(newOn);
-      bgBtn.textContent = `BG: ${newOn ? 'ON' : 'OFF'}`;
-    };
-
-    fxBtn.onclick = () => {
-      const newOn = !SoundManager.effectsEnabled;
-      SoundManager.setEffectsEnabled(newOn);
-      fxBtn.textContent = `FX: ${newOn ? 'ON' : 'OFF'}`;
-    };
-
-    // if bg is enabled we start it (safe; may be blocked until user interacts)
-    if(SoundManager.bgEnabled) SoundManager.setBgEnabled(true);
-  })();
-
-
-  // now it's safe to fetch async data and then render
-  getHighestStreakHolder().then(h => {
-    state.highestHolder = h;
-    // only call renderQuestion AFTER the modal DOM is present
-    renderQuestion();
-  }).catch(()=>{ /* ignore errors */ });
-
-  const testContainer = document.getElementById('testContainer');
-
-  function renderQuestion(){
-    const headerRight = document.getElementById('testRight');
-    try {
-      if(headerRight) {
-        if(state.highestHolder){
-          headerRight.textContent = `Highest: ${state.highestHolder.runHighest} • ${state.highestHolder.studentName || state.highestHolder.studentId || '—'}`;
-        } else {
-          headerRight.textContent = `Highest: ${currentCompetition?.highestStreak || 0}`;
-        }
-      }
-    } catch(e){ /* ignore DOM write errors */ }
     
 
-    const q = state.questions[state.index];
-    if(!q){ testContainer.innerHTML = '<div class="small-muted">No question</div>'; return; }
-    const qNum = state.index + 1;
-    const total = state.questions.length;
-    const timeLimit = q.timeLimit || 20;
-    state.timerSec = timeLimit;
+    <div id="leaderContainer" class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <strong id="compTitle">—</strong>
+          <div class="small-muted" id="compRange"></div>
+        </div>
+        <!-- <div class="small-muted">Top ranks (ties allowed) — showing rank, student, class, id (last 4 digits), points</div> -->
+      </div>
 
-    const choicesHtml = q.choices.map((c, i) => {
-      // when answered show selected stylings
-      const answered = state.answers[state.index];
-      const isSelected = answered && Array.isArray(answered.selected) && answered.selected.includes(i);
-      const correctArr = Array.isArray(q.correct) ? q.correct.map(Number) : [Number(q.correct)];
-      const isCorrectChoice = correctArr.includes(i);
-      let cls = '';
-      let meta = '';
-      if(answered){
-        if(isCorrectChoice && isSelected){ cls = 'choice-correct choice-selected'; meta = '<span class="choice-meta">✓</span>'; }
-        else if(isCorrectChoice && !isSelected){ cls = 'choice-correct'; meta = '<span class="choice-meta">✓</span>'; }
-        else if(!isCorrectChoice && isSelected){ cls = 'choice-wrong choice-selected'; meta = '<span class="choice-meta">✖</span>'; }
-      }
-      return `<label class="${cls}" data-choice-index="${i}" id="label_${state.index}_${i}">${escapeHtml(c.text||'')}${meta}</label>`;
-    }).join('');
+     <!-- put this inside #leaderContainer where your table currently is -->
+<div class="table-wrap">
+  <table class="leader" id="leaderTable">
+    <colgroup>
+      <col class="col-rank">
+      <col class="col-name">
+      <col class="col-class">
+      <col class="col-id">
+      <col class="col-points">
+      <col class="col-action">
+    </colgroup>
+    <thead>
+      <tr>
+        <th class="col-rank">Rank</th>
+        <th class="col-name">Name</th>
+        <th class="col-class">Class</th>
+        <th class="col-id">ID</th>
+        <th class="col-points">Points</th>
+        <th class="col-action">Action</th>
+      </tr>
+    </thead>
+    <tbody id="leaderTbody">
+      <tr><td colspan="6" class="small-muted">Loading…</td></tr>
+    </tbody>
+  </table>
+</div>
 
-    testContainer.innerHTML = `<div style="margin-bottom:8px"><div style="font-size:1.05rem;margin-bottom:8px">${escapeHtml(q.text)}</div>
-      <div class="choices">${choicesHtml}</div>
-      <div style="margin-top:8px" class="small-muted">Time left: <span id="timeLeft">${state.timerSec}</span>s</div>
-      <div style="margin-top:8px" id="explanationArea"></div></div>`;
+    </div>
 
-    // wire new labels to inputs (we implement click-on-label to submit)
-    testContainer.querySelectorAll('.choices label').forEach(lbl => {
-      lbl.onclick = () => {
-        // ignore if already answered
-        if(state.answers[state.index] !== null) return;
-        const idx = Number(lbl.dataset.choiceIndex || lbl.getAttribute('data-choice-index') || lbl.id.split('_').pop());
-        // determine if multiple-answer (checkbox) — if q.correct is array length > 1 treat as multi; here we treat as single by default
-        const isMulti = Array.isArray(q.correct) && q.correct.length > 1;
-        const selected = isMulti ? [idx] : [idx]; // we only allow single selection via click
-        submitAnswer(state.index, selected);
-      };
-    });
+    <div id="moreArea"></div>
+  </div>
 
-    // update progress + streak
-    const qProgress = document.getElementById('qProgress');
-    if(qProgress) qProgress.textContent = `Question ${qNum} / ${total}`;
-    const streakInfo = document.getElementById('streakInfo');
-    if(streakInfo) streakInfo.textContent = `Current streak: x${state.currentStreak} • This run highest: ${state.runHighest}`;
+  <!-- modal container -->
+  <div id="modalRoot" class="hidden"></div>
 
-    // timer
-    if(state.timeoutId) clearInterval(state.timeoutId);
-    state.timeoutId = setInterval(() => {
-      state.timerSec--;
-      const timeLeft = document.getElementById('timeLeft');
-     if(timeLeft) timeLeft.textContent = state.timerSec;
-
-
-      if(state.timerSec <= 0){
-        clearInterval(state.timeoutId);
-        state.timeoutId = null;
-        if(state.answers[state.index] === null) submitAnswer(state.index, []); // empty
-        // auto move
-        setTimeout(()=> goNext(), 350);
-      }
-    }, 1000);
-  }
-
-// change: make submitAnswer async
-async function submitAnswer(qIndex, selectedIndexes){
-  const q = state.questions[qIndex];
-  const correctArr = Array.isArray(q.correct) ? q.correct.map(Number) : [Number(q.correct)];
-  const isCorrect = arraysEqualNoOrder(correctArr.map(String), selectedIndexes.map(String));
-  state.answers[qIndex] = { selected: selectedIndexes, correct: isCorrect, timeLeft: state.timerSec };
-
-  if(isCorrect){
-    state.correctCount++;
-    state.currentStreak++;
-    state.runHighest = Math.max(state.runHighest, state.currentStreak);
-    // play sound but make sure errors are swallowed
-    try { await Promise.resolve(SoundManager.playCorrect && SoundManager.playCorrect()); } catch(e) { /* ignore */ }
-
-    if([10,20,30,40,50,60,70,80,90,100].includes(state.currentStreak)){
-      try { await Promise.resolve(SoundManager.playStreak && SoundManager.playStreak(state.currentStreak)); } catch(e) {}
-    }
-  } else {
-    if(selectedIndexes.length === 0) state.skipped++; else state.incorrect++;
-    state.currentStreak = 0;
-    try { await Promise.resolve(SoundManager.playIncorrect && SoundManager.playIncorrect()); } catch(e) { /* ignore */ }
-  }
-
-  // rest of your existing UI update code unchanged...
-  const correctText = correctArr.map(i => escapeHtml(q.choices[i]?.text || q.choices[i] || '')).join(', ');
-  const explanationArea = document.getElementById('explanationArea');
-  if(explanationArea){
-    if(isCorrect){
-      explanationArea.innerHTML = `<div style="color:green;font-weight:700">✓ Correct</div><div class="small-muted">${escapeHtml(q.explanation || '')}</div>`;
-    } else {
-      explanationArea.innerHTML = `<div style="color:#d43f3f;font-weight:700">✖ Incorrect</div><div class="small-muted">Correct answer: ${correctText}</div><div class="small-muted" style="margin-top:6px">${escapeHtml(q.explanation || '')}</div>`;
-    }
-  }
-  
-  // update labels (your existing code)...
-  state.questions[qIndex].choices.forEach((c,i) => {
-    const lbl = document.getElementById(`label_${qIndex}_${i}`);
-    if(!lbl) return;
-    const isSelected = state.answers[qIndex].selected.includes(i);
-    if(correctArr.includes(i)){
-      lbl.classList.add('choice-correct'); lbl.classList.remove('choice-wrong'); lbl.innerHTML = `${escapeHtml(c.text||'')}<span class="choice-meta">✓</span>`;
-    } else if(isSelected){
-      lbl.classList.add('choice-wrong'); lbl.classList.remove('choice-correct'); lbl.innerHTML = `${escapeHtml(c.text||'')}<span class="choice-meta">✖</span>`;
-    } else {
-      lbl.innerHTML = `${escapeHtml(c.text||'')}`;
-    }
-    if(isSelected) lbl.classList.add('choice-selected');
-  });
-
-  if(state.timeoutId){ clearInterval(state.timeoutId); state.timeoutId = null; }
-
-  const streakInfo = document.getElementById('streakInfo');
-  if(streakInfo) streakInfo.textContent = `Current streak: x${state.currentStreak} • This run highest: ${state.runHighest}`;
-}
-
-
-
-  function goPrev(){ if(state.index <= 0) return; state.index--; renderQuestion(); }
-  function goNext(){ if(state.index >= state.questions.length - 1) return; state.index++; renderQuestion(); }
-
-  document.getElementById('testPrev').onclick = goPrev;
-  document.getElementById('testNext').onclick = goNext;
-  document.getElementById('testCancel').onclick = () => { if(confirm('Cancel test? Progress will be lost.')) closeModal(); };
-  document.getElementById('testFinish').onclick = async () => {
-    if(state.timeoutId){ clearInterval(state.timeoutId); state.timeoutId = null; }
-    const correct = state.correctCount;
-    const incorrect = state.incorrect;
-    const skipped = state.skipped + state.questions.filter((_,i)=> state.answers[i] === null).length;
-    const total = state.questions.length;
-    const scoreDelta = correct * 3; // 3 points per correct (user request)
-
-    // const studentUidForPayload = (currentUser && currentUser.uid) || (auth && auth.currentUser && auth.currentUser.uid) || null;
-
-    const studentUidForPayload =
-  currentUser?.uid ||
-  auth?.currentUser?.uid ||
-  null;
-
-const resultPayload = {
-  setId: state.setId, setTitle: state.setTitle, studentUid: studentUidForPayload, studentId: currentStudentId,
-      studentName: currentStudentName || '', correct, incorrect, skipped, total, scoreDelta, runHighest: state.runHighest, currentStreak: state.currentStreak,
-      createdAt: serverTimestamp()
-    };
-    try {
-      await addDoc(collection(db,'testResults'), resultPayload);
-      if(currentCompetition && currentStudentId){
-        const scoreDocId = `${currentCompetition.id}_${currentStudentId}`;
-        await runTransaction(db, async (t) => {
-          const ref = doc(db,'competitionScores', scoreDocId);
-          const snap = await t.get(ref);
-          const prevPoints = snap.exists() ? (snap.data().points || 0) : 0;
-          const newPoints = prevPoints + scoreDelta;
-          t.set(ref, { competitionId: currentCompetition.id, studentId: currentStudentId, studentName: currentStudentName || '', points: newPoints, updatedAt: serverTimestamp() }, { merge:true });
-        });
-      }
-      // update competition highest streak if applicable
-      if(currentCompetition && state.runHighest > (currentCompetition.highestStreak || 0)){
-        await updateDoc(doc(db,'competitions', currentCompetition.id), { highestStreak: state.runHighest, highestStreakHolder: currentStudentId || '', highestStreakHolderName: currentStudentName || '', updatedAt: serverTimestamp() });
-        currentCompetition.highestStreak = state.runHighest;
-      }
-      // fetch latest highest holder for display
-      const holder = await getHighestStreakHolder();
-      await loadCompetitionScores();
-      // show summary modal (centered, clean)
-      const holderText = holder ? `${holder.runHighest} — ${escapeHtml(holder.studentName || holder.studentId || '')}` : '—';
-      showModalInner(`<div><h3>Test complete</h3>
-        <div style="margin-top:6px">Correct: <strong>${correct}</strong></div>
-        <div>Incorrect: <strong>${incorrect}</strong></div>
-        <div>Skipped: <strong>${skipped}</strong></div>
-        <div style="margin-top:8px">Points gained: <strong>${scoreDelta}</strong></div>
-        <div style="margin-top:10px" class="small-muted">Highest streak this server: <strong>${holderText}</strong></div>
-        <div style="text-align:right;margin-top:12px"><button id="summaryClose" class="btn btn-primary">Close</button></div></div>`, { title: 'Summary' });
-      document.getElementById('summaryClose').onclick = () => { closeModal(); };
-    } catch(err){ console.error(err); toast('Saving result failed'); }
-  };
-
-  // keyboard nav
-  window.addEventListener('keydown', keyHandler);
-  function keyHandler(e){ if(e.key === 'ArrowLeft') goPrev(); if(e.key === 'ArrowRight') goNext(); }
-
-  // render first
-  renderQuestion();
-
-  // ensure to cleanup handler on modal close
-  const origClose = closeModal;
-  const newClose = () => { window.removeEventListener('keydown', keyHandler); origClose(); };
-  document.getElementById('modalCloseBtn').onclick = newClose;
-}
-///dhamaad
-
-/* ---------- view all scorers (admin) ---------- */
-// viewAllBtn.onclick = async () => {
-//   if(!isAdmin()) return toast('Admin only');
-//   try {
-//     const snap = await getDocs(query(collection(db,'competitionScores'), where('competitionId','==', currentCompetition.id)));
-//     const html = ['<h3>All scorers</h3><div style="max-height:60vh;overflow:auto"><table style="width:100%"><thead><tr><th>Rank</th><th>Name</th><th>Class</th><th>ID</th><th>Points</th></tr></thead><tbody>'];
-//     const arr = [];
-//     snap.forEach(d => arr.push({ id:d.id, ...d.data() }));
-//     arr.sort((a,b) => (b.points||0) - (a.points||0));
-//     let lastPoints = null, rank = 0, idx = 0;
-//     for(const item of arr){
-//       idx++;
-//       if(lastPoints === null || item.points < lastPoints){ rank = idx; lastPoints = item.points; }
-//       html.push(`<tr><td>${rank}</td><td>${escapeHtml(item.studentName||'—')}</td><td>${escapeHtml(item.className||'—')}</td><td>${maskId(item.studentId||'')}</td><td>${item.points||0}</td></tr>`);
-//     }
-//     html.push('</tbody></table></div>');
-//     showModalInner(html.join(''), { title: 'All scorers' });
-//   } catch(err){ console.error(err); toast('Failed to load all scorers'); }
-// };
-
-
-
-/* ---------- admin adjust points modal (existing logic) ---------- */
-async function openAdjustPointsModal(scoreDocId, studentId){
-  if(getVerifiedRole() !== 'admin'){ toast('Only admin can adjust points'); return; }
-  // ... existing content follows
-
-  showModalInner(`<div><h3>Adjust points</h3>
-    <div style="margin-top:6px">Student ID: <strong>${escapeHtml(studentId)}</strong></div>
-    <div style="margin-top:12px"><input id="pointsDelta" class="input-small" placeholder="+5 or -3" /></div>
-    <div style="margin-top:12px"><textarea id="pointsReason" rows="3" style="width:100%;border:1px solid #e6eefc;padding:8px" placeholder="Reason (optional)"></textarea></div>
-    <div style="text-align:right;margin-top:8px"><button id="applyPointsBtn" class="btn btn-primary">Apply</button></div></div>`, { title: 'Adjust Points' });
-  document.getElementById('applyPointsBtn').onclick = async () => {
-    const deltaRaw = document.getElementById('pointsDelta').value.trim();
-    const reason = document.getElementById('pointsReason').value.trim();
-    const delta = Number(deltaRaw);
-    if(!deltaRaw || isNaN(delta)){ alert('Enter numeric delta (positive or negative)'); return; }
-    try {
-      await runTransaction(db, async (t) => {
-        const ref = doc(db,'competitionScores', scoreDocId);
-        const snap = await t.get(ref);
-        let currentPoints = 0;
-        if(snap.exists()) currentPoints = snap.data().points || 0;
-        const newPoints = Math.max(0, currentPoints + delta);
-        t.set(ref, { competitionId: currentCompetition.id, studentId, points: newPoints, updatedAt: serverTimestamp() }, { merge:true });
-        const logRef = doc(collection(db,'pointsHistory'));
-        const adminUid = (currentUser && currentUser.uid) || (auth && auth.currentUser && auth.currentUser.uid) || 'unknown';
-        t.set(logRef, { competitionId: currentCompetition.id, studentId, delta, reason, adminUid, createdAt: serverTimestamp() });
-
-      });
-      toast('Points updated');
-      closeModal();
-      await loadCompetitionScores();
-    } catch(err){ console.error(err); toast('Update failed'); }
-  };
-}
-/* ---------- keyboard/back button ---------- */
-backBtn.onclick = () => {
-  if(currentRole === 'admin') window.location.href = 'admin.html';
-  else window.location.href = 'index.html';
-};
-/* ---------- small: get highest streak holder (used in test modal) ---------- */
-async function getHighestStreakHolder(){
-  try {
-    const snap = await getDocs(query(collection(db,'testResults'), orderBy('runHighest','desc'), limit(1)));
-    if(snap.size === 0) return null;
-    const d = snap.docs[0].data();
-    return { studentId: d.studentId, studentUid: d.studentUid, runHighest: d.runHighest, studentName: d.studentName || d.student || '' };
-  } catch(e){ console.warn('getHighestStreakHolder failed', e); return null; }
-}
-/* ---------- export minor helpers if you reuse in other files ---------- */
-export { renderCompetitionHeader, loadCompetitionScores, loadCompetitionAndScores, getHighestStreakHolder };
-
-
-
+  <!-- scripts -->
+  <script type="module" src="firebase-config.js"></script>
+  <script type="module" src="leaderboard.js"></script>
+</body>
+</html>
