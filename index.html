@@ -3,362 +3,243 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Leaderboard — AL-FATXI</title>
+  <title>Alfatxi School — Results</title>
+  <style>
+    :root{
+      --bg:#fbfdff; --text:#0f172a; --muted:#6b7280; --card-shadow:0 6px 18px rgba(15,23,42,0.04);
+      --primary:#0b74ff; --btn-font:15px; --tiny-size:9px;
+    }
+    html,body{height:100%;margin:0}
+    body{font-family:Inter,system-ui,Arial,sans-serif;background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased}
+    .container { max-width:900px; margin:16px auto; padding:12px; box-sizing:border-box; }
 
-  <!-- Optional external stylesheet -->
-  <link rel="stylesheet" href="style.css">
+    h1{font-size:1.12rem;margin:0 0 6px 0}
+    p.lead{margin:0 0 10px 0;color:var(--muted);font-size:0.95rem}
 
-<style>
-  :root{
-    --card-bg: #fff;
-    --muted: #6b7280;
-    --primary: #2563eb;
-    --surface: #f8fafc;
-    --shadow: 0 6px 22px rgba(14,30,63,0.06);
-    --radius: 12px;
-    --gap: 12px;
-  }
+    .card { background:#fff;border-radius:12px;padding:12px;box-shadow:var(--card-shadow);margin-bottom:12px;box-sizing:border-box }
+    .small-card{padding:10px}
+    .btn { display:inline-flex; align-items:center; gap:8px; border-radius:10px; padding:8px 12px; font-weight:700; border:1px solid rgba(11,116,255,0.12); background:#fff; cursor:pointer; font-size:var(--btn-font) }
+    .btn-primary{background:var(--primary);color:#fff;border-color:var(--primary)}
+    .btn-ghost{background:#fff;color:var(--text);border-color:#e6eefc}
+    .icon { width:18px; height:18px; display:inline-block; vertical-align:middle }
 
-  /* page base */
-  html,body{ height:100%; }
-  body{
-    background:var(--surface);
-    color:#0f172a;
-    font-family:Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
-    margin:0;
-    padding:18px;
-    -webkit-font-smoothing:antialiased;
-    -moz-osx-font-smoothing:grayscale;
-    line-height:1.3;
-    box-sizing:border-box;
-  }
-  *,*::before,*::after{ box-sizing:inherit; }
+    .input-row { display:flex; gap:8px; align-items:center }
+    input#studentId { flex:1; padding:10px; border-radius:8px; border:1px solid #e6eefc; font-size:1rem; box-sizing:border-box }
 
-  .container {
-    max-width:1100px;
-    margin:18px auto;
-    padding:0 12px;
-  }
+    .result-school { font-weight:900; font-size:1rem; margin-bottom:6px }
+    .result-header { display:flex; flex-direction:column; gap:6px; }
+    .student-line { display:block }
+    .student-name { font-size:1.18rem; font-weight:900; font-style:italic; transform:skewX(-2deg); display:inline-block; padding:6px 12px; border-radius:10px; background:linear-gradient(90deg, rgba(11,116,255,0.06), rgba(11,116,255,0.02)); color:var(--text) }
 
-  /* header */
-  header {
-    display:flex;
-    justify-content:space-between;
-    align-items:center;
-    gap:12px;
-    margin-bottom:16px;
-    flex-wrap:wrap;
-  }
-  header .comp-info { min-width:0; flex:1 1 auto; display:flex; flex-direction:column; gap:6px; }
-  header h1{ margin:0; font-size:20px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .comp-actions {
-    display:flex;
-    gap:8px;
-    align-items:center;
-    flex:0 0 auto;
-    flex-wrap:wrap;
-  }
-  .comp-actions .btn{ white-space:nowrap; }
+    .id-class-line, .exam-line, .mother-line, .published-line, .source-line { font-weight:700; color:var(--muted); font-size:0.95rem }
+    .id-class-line strong, .exam-line strong { color:var(--text); font-weight:900 }
 
-  /* cards and UI */
-  .card {
-    background:var(--card-bg);
-    border-radius:var(--radius);
-    padding:14px;
-    box-shadow:var(--shadow);
-    margin-bottom:12px;
-  }
-  .small-muted { color:var(--muted); font-size:0.92rem; }
-  .btn {
-    padding:8px 12px;
-    border-radius:8px;
-    cursor:pointer;
-    border:0;
-    background:transparent;
-    font-size:0.95rem;
-    min-height:38px;
-  }
-  .btn:active{ transform:translateY(1px); }
-  .btn-primary { background:var(--primary); color:#fff; border:0; }
-  .btn-ghost { background:transparent; border:1px solid #e6eefc; }
-  .settings-gear { font-size:16px; padding:6px; }
+    /* Table */
+    #resultArea table { width:100%; border-collapse:collapse; font-family:inherit; }
+    #resultArea thead tr { background:#f8fafc }
+    #resultArea th { font-weight:800; text-align:center; white-space:normal; font-size:12px; padding:8px 10px; border-bottom:1px solid #f1f5f9 }
+    #resultArea th:first-child { font-size:13px; text-align:left; padding-left:12px; }
+    #resultArea td { font-weight:700; text-align:center; font-size:13px; padding:8px 10px; border-bottom:1px solid #fbfdff }
+    #resultArea td:first-child { text-align:left; font-weight:800; font-size:13px; padding-left:12px; }
 
-  .input-small {
-    padding:8px;
-    border-radius:6px;
-    border:1px solid #e2e8f0;
-    min-width:120px;
-    font-size:0.95rem;
-  }
+    .small { display:none; font-size:11px; color:var(--muted); line-height:1.05 }
 
-  /* table area: make responsive by wrapping (horizontal scroll) and mobile stacked cards */
-  .table-wrap {
-    width:100%;
-    overflow:auto;
-    -webkit-overflow-scrolling:touch;
-    border-radius:10px;
-    background:linear-gradient(180deg, #fff, #fbfdff);
-    padding:8px;
-  }
-  table.leader {
-    width:100%;
-    border-collapse:collapse;
-    margin-top:6px;
-    min-width:700px; /* allows horizontal scroll on small screens */
-  }
-  table.leader th, table.leader td {
-    padding:10px 8px;
-    text-align:left;
-    border-bottom:1px solid #eef2f6;
-    vertical-align:middle;
-    font-size:0.95rem;
-  }
-  table.leader thead th { color:var(--muted); font-weight:700; font-size:0.92rem; }
-  table.leader tbody tr:hover { background: #fbfdff; }
+    #resultArea td:not(:first-child), #resultArea th:not(:first-child) { white-space:nowrap; min-width:36px; padding:6px 8px; }
 
-  .rank-badge {
-    font-weight:900;
-    display:inline-block;
-    min-width:48px;
-    text-align:center;
-    padding:6px 8px;
-    border-radius:8px;
-    font-size:0.95rem;
-  }
+    .totals-card { margin-top:12px; padding:12px; border-radius:10px; }
+    .totals-block { display:flex; flex-direction:column; gap:8px; font-weight:800; }
+    .tot-line { display:flex; gap:18px; align-items:center; flex-wrap:wrap; justify-content:flex-start; }
 
-  /* modal */
-  .modal {
-    position:fixed;
-    inset:0;
-    display:flex;
-    align-items:center;
-    justify-content:center;
-    z-index:1200;
-    background:rgba(2,6,23,0.45);
-    padding:18px;
-  }
-  .modal-card{
-    width:820px;
-    max-width:100%;
-    max-height:86vh;
-    overflow:auto;
-    border-radius:12px;
-    padding:18px;
-    background:linear-gradient(180deg,#fff,#fbfdff);
-    box-shadow:0 18px 48px rgba(2,6,23,0.28);
-    transform:translateY(0);
-  }
-  .modal-head{ display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px; }
-  .modal-title{ font-weight:800; font-size:18px; margin:0; }
-  .modal-sub{ color:var(--muted); font-size:0.95rem; }
+    .grade-badge { padding:6px 10px; border-radius:8px; color:#fff; font-weight:900; display:inline-block }
 
-  .modal-body{ font-size:0.98rem; color:#0b1220; }
+    .actions-group { margin-top:8px; display:flex; gap:8px; align-items:center; flex-wrap:wrap }
 
-  /* choices */
-  .choices label{
-    display:block;
-    margin-bottom:8px;
-    padding:10px;
-    border-radius:8px;
-    background:#fbfdff;
-    cursor:pointer;
-    border:1px solid #eef2f6;
-    user-select:none;
-  }
-  .choice-correct{ background:#ecfdf5; border-color:#bbf7d0; color:#064e3b; font-weight:700; }
-  .choice-wrong{ background:#fff1f2; border-color:#fecaca; color:#7f1d1d; font-weight:700; }
-  .choice-selected{ box-shadow:0 6px 20px rgba(37,99,235,0.08); }
-  .choice-meta{ float:right; font-weight:900; }
+    /* loader */
+    #loaderOverlay{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(8,12,20,0.2);z-index:1100}
+    .loader-card{background:#fff;padding:14px 16px;border-radius:12px;box-shadow:0 12px 30px rgba(2,6,23,0.18);text-align:center}
+    .dots{display:inline-flex;gap:8px;align-items:flex-end;margin-bottom:8px}
+    .dots .d{width:8px;height:8px;background:var(--primary);border-radius:50%;animation:jump .9s infinite}
+    .dots .d:nth-child(2){animation-delay:.12s}.dots .d:nth-child(3){animation-delay:.24s}
+    @keyframes jump{0%{transform:translateY(0)}25%{transform:translateY(-6px)}50%{transform:translateY(0)}}
 
-  .test-footer { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:12px; flex-wrap:wrap; }
-  .stats-line { display:flex; gap:12px; align-items:center; color:var(--muted); font-size:0.95rem; }
+    /* Celebration overlay + falling emojis */
+    .celebration-overlay{
+      position:fixed; inset:0; display:none; align-items:flex-start; justify-content:center; z-index:1300;
+      padding-top:5vh; /* keep modal near top */
+    }
+    .celebration-overlay.active{display:flex}
+    .celebration-backdrop{
+      position:absolute; inset:0; background:linear-gradient(180deg, rgba(2,6,23,0.45), rgba(2,6,23,0.28)); backdrop-filter:blur(3px);
+    }
+    .celebration-fall {
+      position:absolute; inset:0; pointer-events:none; overflow:hidden; z-index:1295;
+    }
+    .fall-emoji {
+      position:absolute; top:-6%; font-size:18px; will-change: transform, opacity; display:inline-block;
+      animation-name: fallSpin; animation-iteration-count: 1; animation-timing-function: linear;
+      opacity:0.95;
+      text-shadow:0 6px 18px rgba(0,0,0,0.08);
+      transform-origin:center center;
+    }
+    @keyframes fallSpin { to { transform: translate3d(var(--tx,0), 120vh, 0) rotate(var(--rot,0)); opacity: 0.95; } }
 
-  /* your small utility */
-  .hidden{ display:none !important; }
+    .celebration-modal{
+      position:relative; z-index:1310; width:min(640px, 94%); max-width:720px;
+      background:linear-gradient(180deg,#fffefecb,#29f4eab3); border-radius:14px; padding:18px; box-shadow:0 30px 80px rgba(233, 163, 191, 0.544);
+      text-align:center; font-weight:800; transform-origin:top center; opacity:0;
+    }
+    .celebration-modal.pop { animation: modalPop .36s cubic-bezier(.2,.9,.3,1) forwards; }
+    @keyframes modalPop { from { transform: translateY(-8px) scale(.98); opacity:0 } to { transform: translateY(0) scale(1); opacity:1 } }
 
-  /* mobile / small screens */
-  @media (max-width: 940px) {
-    body{ padding:12px; }
-    .container{ padding:0 10px; }
-    header { gap:10px; }
-    .modal-card{ padding:14px; }
-    .btn{ padding:8px 10px; font-size:0.93rem; min-height:36px; }
-  }
+    .modal-logo{ width:64px;height:64px; object-fit:contain; border-radius:8px; display:block; margin:0 auto 8px auto; }
+    .modal-badge{ width:88px; height:88px; border-radius:999px; display:inline-grid; place-items:center; font-size:28px; font-weight:900; color:#0f172a; margin:6px auto 12px auto; box-shadow:0 12px 40px rgba(59,130,246,0.15); background:linear-gradient(135deg,#fff176,#ffd54f); border:6px solid rgba(255,255,255,0.85); }
+    .modal-badge.glow{ box-shadow:0 18px 48px rgba(59,130,246,0.18), 0 6px 20px rgba(0,0,0,0.06); }
+    .modal-title{ font-size:1.28rem; margin:6px 0 6px 0; letter-spacing:0.2px }
+    .modal-sub{ font-size:0.95rem; color:var(--muted); margin-bottom:8px }
+    .modal-msg{ font-size:0.98rem; color:var(--muted); font-weight:700; margin:6px 0 6px 0; line-height:1.35 }
+    .modal-school{ font-size:0.9rem; color:#0f172a; margin-top:10px; font-weight:800 }
+    .modal-close{ position:absolute; right:12px; top:12px; background:transparent;border:0;font-size:18px;font-weight:900;color:var(--muted); cursor:pointer }
+    .celebration-actions{ margin-top:10px; display:flex; gap:8px; justify-content:center; flex-wrap:wrap }
 
-  @media (max-width: 720px) {
-    header { align-items:flex-start; }
-    header .comp-info { order:1; width:100%; }
-    .comp-actions { order:2; width:100%; justify-content:flex-start; gap:6px; padding-top:8px; border-top:1px dashed rgba(0,0,0,0.04); }
-    .comp-actions .btn{ flex:0 0 auto; padding:8px 10px; font-size:0.92rem; min-height:36px; }
-    .card{ padding:12px; border-radius:10px; }
+    /* modal structured info styling */
+    .modal-info { margin-top:8px; font-weight:900; display:flex; flex-direction:column; gap:8px; align-items:center }
+    .modal-info .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap }
+    .modal-info .label { color:var(--muted); font-weight:800; margin-right:6px }
 
-    /* make modal full-width-ish and centered vertically when small */
-    .modal-card{
-      width:100%;
-      max-width:640px;
-      border-radius:10px;
-      max-height:92vh;
+    /* small responsive tweaks */
+    @media (max-width:760px){
+      .container{padding:10px}
+      .student-name{font-size:1.02rem}
+      #resultArea th{font-size:11px}
+      #resultArea td{font-size:12px}
+      .grade-badge{font-size:0.9rem;padding:5px 8px}
+      .btn{font-size:14px;padding:8px 10px;border-radius:9px}
+      #resultArea td:not(:first-child){min-width:40px}
+      .small { display:block; }
+      .modal-badge{width:72px;height:72px;font-size:22px}
     }
 
-    /* Table -> allow horizontal scroll, but also provide stacked card appearance for rows */
-    .table-wrap{ padding:6px; }
-    table.leader{ min-width:640px; }
+    @media (min-width:761px){
+      .small { display:none; }
+    }
 
-    /* smaller text in table */
-    table.leader th, table.leader td { padding:10px 6px; font-size:0.92rem; }
+    @media (max-width:420px){
+      #resultArea th{font-size:10px}
+      #resultArea td{font-size:11px}
+      .id-class-line, .exam-line, .published-line { font-size:0.95rem }
+    }
 
-    /* if screen is very narrow, present rows as stacked cards (more readable) */
-  
-  }
+    /* ===== Highlighted result labels (user requested) ===== */
+    .label-strong { font-weight: 900; }
+    .rank-text { font-size: 1.15rem; font-weight: 900; text-transform: capitalize }
 
-  /* small visual polish */
-  .small-muted a{ color:var(--primary); text-decoration:none; }
-  /* ensure focus states */
-  .btn:focus, .input-small:focus, .choices label:focus { outline:2px solid rgba(37,99,235,0.12); outline-offset:2px; }
+    .total-blue { color: #2563eb; font-weight: 900; }
+    .total-green { color: #10b981; font-weight: 900; }
+    .total-red { color: #dc2626; font-weight: 900; }
 
-   /* ---------- improved row styles ---------- */
-.rank-badge {
-  font-weight:900;
-  display:inline-flex;
-  align-items:center;
-  justify-content:center;
-  min-width:46px;
-  height:46px;
-  border-radius:10px;
-  padding:6px 8px;
-  font-size:1rem;
-  color:#07122b;
-  background:#fff9e6;
-  box-shadow:0 6px 18px rgba(2,6,23,0.06);
-}
+    .avg-green { color: #16a34a; font-weight: 900; }
+    .avg-red { color: #dc2626; font-weight: 900; }
 
-/* distinct top-3 colors */
-.rank-badge.first { background:#FFD700; color:#111; }
-.rank-badge.second { background:#c0c0c0; color:#111; }
-.rank-badge.third { background:#cd7f32; color:#111; }
+    .grade-badge { font-weight: 900; padding: 6px 10px; border-radius: 8px; color: #fff; }
 
-/* standardized cell content */
-.cell {
-  display:flex;
-  flex-direction:column;
-  gap:6px;
-}
-.student-name { font-size:0.99rem; line-height:1.2; word-break:break-word; }
-.student-name strong { display:block; font-weight:700; }
-.cell-muted { color:var(--muted); font-size:0.88rem; }
+    .status-pass { background: #16a34a; color: #fff; font-weight: 900; padding: 6px 10px; border-radius: 8px; }
+    .status-fail { background: #dc2626; color: #fff; font-weight: 900; padding: 6px 10px; border-radius: 8px; }
 
-/* ID masking */
-.id-mask { font-family:monospace; letter-spacing:0.6px; }
-
-/* Points presentation */
-.points-badge {
-  display:inline-block;
-  font-weight:800;
-  padding:6px 10px;
-  border-radius:8px;
-  background:linear-gradient(180deg,#f3f9ff,#eef6ff);
-  min-width:64px;
-  text-align:center;
-  font-size:0.98rem;
-}
-
-/* action buttons layout */
-.actions-wrap { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-.actions-wrap .btn { padding:6px 10px; min-height:34px; font-size:0.92rem; }
-
-/* Improve spacing on table cells so text doesn't overlap the card edges */
-table.leader td { vertical-align:middle; }
-
-/* very small screens: stack actions under the row */
-@media (max-width:420px) {
-  .actions-wrap { width:100%; justify-content:flex-end; gap:6px; }
-  .rank-badge { width:38px; height:38px; min-width:38px; font-size:0.95rem; }
-  .points-badge { min-width:56px; font-size:0.95rem; padding:6px 8px; }
-}
-
-</style>
+  </style>
 </head>
 <body>
   <div class="container">
-    <header>
-      <div class="comp-info">
-        <div style="display:flex;gap:8px;align-items:center">
-          <h1>Leaderboard</h1>
-          <div id="studentTag" class="small-muted" style="font-weight:700"></div>
-        </div>
-        <div class="small-muted" id="competitionSub">Loading competition…</div>
-      </div>
+    <h1>Soo dhawoow, arday!</h1>
+    <p class="lead">Fadlan geli aqoonsigaaga (ID) si aad u aragto natiijooyinka.</p>
 
-      <div class="comp-actions">
-        <button id="backBtn" class="btn">Back</button>
-        <button id="verifyBtn" class="btn">Verify</button>
-        <button id="viewAroundBtn" class="btn">View around me</button>
-        <button id="toggleBgBtn" class="btn">BG Sound: OFF</button>
-        <button id="toggleFxBtn" class="btn">FX Sound: ON</button>
-        <button id="testYourselfBtn" class="btn btn-primary">Test Yourself</button>
-        <button id="logoutBtn" class="btn">Logout</button>
-      </div>
-    </header>
+    <div class="card small-card">
+      <label for="studentId">Geli ID-gaaga halkan</label>
+      <div class="input-row" style="margin-top:6px">
+        <input id="studentId" placeholder="STD042687284" />
+        <button id="toggleIdInputBtn" class="btn" title="Toggle ID input visibility" aria-label="Toggle ID input"
+        style="color:var(--primary); padding:6px 8px; background:transparent; border:1px solid rgba(11,116,255,0.06)">
+  <!-- eye (open) - shown by default -->
+  <svg id="toggleOpen" class="icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:inline-block;stroke:currentColor">
+    <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z" stroke="currentColor" stroke-width="1.2" fill="none"/>
+    <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.2" fill="none"/>
+  </svg>
 
-    <div id="adminControls" class="card hidden">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
-        <div>
-          <label style="font-weight:700">Manage competition</label>
-          <div class="small-muted">Manage competition settings and view all scorers.</div>
-        </div>
-        <div style="display:flex;gap:8px;align-items:center">
-          <button id="manageCompBtn" class="btn" style="display:none">Manage</button>
-          <button id="viewAllBtn" class="btn" style="display:none">View all scorers</button>
-        </div>
+  <!-- eye (closed) - hidden by default -->
+  <svg id="toggleClosed" class="icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:none;stroke:currentColor">
+    <path d="M3 3l18 18" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z" stroke="currentColor" stroke-width="1.2" fill="none"/>
+  </svg>
+</button>
+          
+        </button>
       </div>
+   <!-- BEFORE: input + search area -->
+<div style="margin-top:10px;display:flex;gap:10px;align-items:center">
+  <select id="resultModeSelect" aria-label="Result or Test">
+    <option value="exam">Exam (default)</option>
+    <option value="test">Testing (Leaderboards)</option>
+  </select>
+
+  <button id="searchBtn" class="btn btn-primary">Raadi</button>
+  <button id="audioToggleBtn" class="btn" title="Toggle audio (default OFF)">🔈 Audio: OFF</button>
+  <div id="message" style="color:#c00;font-weight:700"></div>
+</div>
     </div>
 
-    <div id="leaderContainer" class="card">
-      <div style="display:flex;justify-content:space-between;align-items:center">
-        <div>
-          <strong id="compTitle">—</strong>
-          <div class="small-muted" id="compRange"></div>
-        </div>
-        <div class="small-muted">Top ranks (ties allowed) — showing rank, student, class, id (last 4 digits), points</div>
-      </div>
-
-      <div class="table-wrap" role="region" aria-label="Leaderboard">
-        <table class="leader" id="leaderTable">
-          <thead>
-            <tr>
-              <th style="width:100px">Rank</th>
-              <th>Name</th>
-              <th>Class</th>
-              <th>ID</th>
-              <th style="width:120px">Points</th>
-              <th style="width:160px">Action</th>
-            </tr>
-          </thead>
-          <tbody id="leaderTbody">
-            <tr><td colspan="6" class="small-muted">Loading…</td></tr>
-          </tbody>
-        </table>
-      </div>
-      </div>
-    </div>
-
-    <div id="moreArea"></div>
+    <div id="resultArea" style="display:none"></div>
   </div>
 
-  <!-- modal root -->
-  <div id="modalRoot" class="hidden" aria-hidden="true"></div>
+  <div id="loaderOverlay"><div class="loader-card"><div class="dots"><span class="d"></span><span class="d"></span><span class="d"></span></div><div id="loaderMessage" style="color:var(--muted)">Fadlan sug...</div></div></div>
 
-  <!-- Scripts: important — load firebase-config first, then leaderboard.js -->
-  <!--
-    NOTE:
-    - leaderboard.js uses document.getElementById(...) at top-level.
-    - To ensure those get real elements, we load scripts AFTER the HTML.
-    - Keep your existing leaderboard.js and firebase-config.js filenames.
-  -->
-  <script type="module" src="firebase-config.js"></script>
-  <script type="module" src="leaderboard.js"></script>
+  <!-- celebration overlay (same as you had) -->
+  <div id="celebrationOverlay" class="celebration-overlay" aria-hidden="true">
+    <div class="celebration-backdrop"></div>
+    <div id="celebrationFall" class="celebration-fall" aria-hidden="true"></div>
+
+    <div id="celebrationModal" class="celebration-modal" role="dialog" aria-modal="true" style="display:none">
+      <button id="celebrationClose" class="modal-close" aria-label="Close">✕</button>
+      <img src="assets/logo.png" alt="AL-FATXI logo" class="modal-logo" onerror="this.style.display='none'"/>
+      <div id="modalBadge" class="modal-badge">1</div>
+      <div id="modalTitle" class="modal-title">Waxaad gashay kaalinta 1aad!</div>
+      <div id="modalMsg" class="modal-sub">AL-FATXI — Ugu imow waxbarasho tayo leh</div>
+
+      <div class="modal-info" aria-live="polite">
+        <!-- <div class="row"><span class="label-strong">Magaca:</span> <span id="modalStudentName" class="rank-text">Sufyaan Geedi</span></div> -->
+        <div class="row"><span class="label-strong">Magaca:</span> <span id="modalStudentName" class="rank-text"></span></div>
+        <div class="row"><span class="label-strong">Class:</span> <span id="modalClassName" class="rank-text" style="color:#2563eb"></span></div>
+
+        <div class="row"><span class="label-strong">Total:</span> <span id="modalTotalGot" class="total-blue">537</span> <span>/</span> <span id="modalTotalMax" class="total-green">600</span></div>
+        <div class="row"><span class="label-strong">Average:</span> <span id="modalAverage" class="avg-green">89.50%</span></div>
+        <div class="row"><span class="label-strong">Grade:</span> <span id="modalGrade" class="grade-badge" style="background:#3b82f6">A</span></div>
+        <div class="row"><span class="label-strong">Status:</span> <span id="modalStatus" class="status-pass">Gudbay</span></div>
+      </div>
+
+      <div class="modal-school">AL-FATXI PRIMARY AND SECONDARY SCHOOL — Ugu imow waxbarasho tayo leh</div>
+
+      <div class="celebration-actions">
+        <button id="toggleEmojisBtn" class="btn" title="Show / Hide emojis" aria-pressed="true" style="min-width:48px">
+          <span id="toggleEmojisIcon">🎊</span>
+        </button>
+        <button id="celebrationCloseBtn" class="btn btn-ghost">Xir</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- **Important**: single clean audio element. Make sure the real file is named exactly one of these. -->
+  <audio id="clapAudio" preload="auto" style="display:none" aria-hidden="true">
+    <!-- Primary: MP3 -->
+    <source src="assets/clap.mp3" type="audio/mpeg">
+    <!-- Fallback: WAV -->
+    <source src="assets/clap.wav" type="audio/wav">
+    Your browser does not support the audio element.
+  </audio>
+
+  <!-- libs -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js"></script>
+
+  <!-- your module script -->
+  <script type="module" src="main.js"></script>
 </body>
 </html>
-
-
-
