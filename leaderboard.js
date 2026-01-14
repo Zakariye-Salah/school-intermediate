@@ -54,18 +54,85 @@ let adminShowAll = false; // when true, admin sees full list under top ranks
 /* ---------- init ---------- */
 SoundManager.preloadAll();
 /* ---------- modal helpers ---------- */
-// function showModalInner(html, opts = {}) {
-//   modalRoot.innerHTML = `<div class="modal" id="theModal"><div class="modal-card">
-//     <div class="modal-head"><div><h3 class="modal-title">${opts.title || ''}</h3><div class="modal-sub">${opts.sub || ''}</div></div><div><button id="modalCloseBtn" class="btn">✕</button></div></div>
-//     <div class="modal-body">${html}</div>
-//   </div></div>`;
-//   modalRoot.classList.remove('hidden');
-//   document.getElementById('modalCloseBtn').onclick = () => {
-//     closeModal();
-//     if(typeof opts.onClose === 'function') opts.onClose();
-//   };
-// }
-function closeModal(){ modalRoot.innerHTML = ''; modalRoot.classList.add('hidden'); }
+/* ---------- modal helpers (replacement) ---------- */
+
+/**
+ * showModalInner(html, opts)
+ * opts: { title, sub, actions (HTML string), onClose (fn) }
+ */
+function showModalInner(html, opts = {}) {
+  if (!modalRoot) {
+    console.warn('modalRoot not found');
+    return;
+  }
+
+  // Build modal markup
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" data-role="backdrop"></div>
+    <div class="modal" role="dialog" aria-modal="true" aria-label="${escapeHtml(opts.title || 'Modal')}">
+      <div class="modal-head">
+        <div>
+          <h3 class="modal-title">${escapeHtml(opts.title || '')}</h3>
+          <div class="modal-sub">${escapeHtml(opts.sub || '')}</div>
+        </div>
+        <div>
+          <button id="modalCloseBtn" class="btn" aria-label="Close modal">✕</button>
+        </div>
+      </div>
+      <div class="modal-body">${html || ''}</div>
+      <div class="modal-actions">${opts.actions || ''}</div>
+    </div>
+  `;
+
+  // Show modal (match CSS .visible / .hidden patterns)
+  modalRoot.classList.remove('hidden');
+  modalRoot.classList.add('visible');
+
+  // Lock body scroll
+  document.body.classList.add('modal-open');
+
+  // Wire close button
+  const closeBtn = document.getElementById('modalCloseBtn');
+  if (closeBtn) closeBtn.onclick = () => closeModal(opts.onClose);
+
+  // Backdrop click closes modal
+  const backdrop = modalRoot.querySelector('[data-role="backdrop"]');
+  if (backdrop) backdrop.onclick = () => closeModal(opts.onClose);
+
+  // Escape key closes modal (store handler so we can remove it)
+  const escHandler = (e) => { if (e.key === 'Escape') closeModal(opts.onClose); };
+  // remove any previous handler first (safety)
+  if (modalRoot._escHandler) document.removeEventListener('keydown', modalRoot._escHandler);
+  modalRoot._escHandler = escHandler;
+  document.addEventListener('keydown', escHandler);
+}
+
+/**
+ * closeModal(optionalCallback)
+ */
+function closeModal(cb) {
+  if (!modalRoot) return;
+  // hide & clear content
+  modalRoot.classList.add('hidden');
+  modalRoot.classList.remove('visible');
+  modalRoot.innerHTML = '';
+
+  // unlock body scroll
+  document.body.classList.remove('modal-open');
+
+  // remove escape handler
+  if (modalRoot._escHandler) {
+    document.removeEventListener('keydown', modalRoot._escHandler);
+    modalRoot._escHandler = null;
+  }
+
+  // call optional onClose callback
+  if (typeof cb === 'function') {
+    try { cb(); } catch (e) { console.error('modal onClose error', e); }
+  }
+}
+
+// function closeModal(){ modalRoot.innerHTML = ''; modalRoot.classList.add('hidden'); }
 function toast(msg, t=2500){ const el = document.createElement('div'); el.className='card'; el.style.position='fixed'; el.style.right='18px'; el.style.bottom='18px'; el.style.zIndex=80; el.textContent = msg; document.body.appendChild(el); setTimeout(()=>el.remove(), t); }
 /* ---------- helpers ---------- */
 function isAdmin(){
@@ -1304,33 +1371,6 @@ testYourselfBtn.onclick = async () => {
   } catch(err){ console.error(err); toast('Failed to load tests'); }
 };
 
-/* ---------- admin save/toggle competition ---------- */
-// compSaveBtn.onclick = async () => {
-//   // if(sessionStorage.getItem('verifiedRole') !== 'admin') return toast('Admin only');
-
-//   if(!isAdmin()) return toast('Admin only');
-
-//   if(!currentCompetition) return;
-//   const name = compNameInput.value.trim();
-//   if(!name) return alert('Enter name');
-//   try {
-//     await updateDoc(doc(db,'competitions', currentCompetition.id), { name, updatedAt: serverTimestamp() });
-//     currentCompetition.name = name;
-//     renderCompetitionHeader();
-//     toast('Saved');
-//   } catch(err){ console.error(err); toast('Save failed'); }
-// };
-// compToggleActiveBtn.onclick = async () => {
-//   if(!isAdmin()) return toast('Admin only');
-//   if(!currentCompetition) return;
-//   const newActive = !currentCompetition.active;
-//   try {
-//     await updateDoc(doc(db,'competitions', currentCompetition.id), { active: newActive, updatedAt: serverTimestamp() });
-//     currentCompetition.active = newActive;
-//     renderCompetitionHeader();
-//     toast(newActive ? 'Activated' : 'Deactivated');
-//   } catch(err){ console.error(err); toast('Failed'); }
-// };
 
 // Toggle "show all scorers" inline under the top list
 if (viewAllBtn) {
