@@ -315,6 +315,7 @@ async function initPage(){
 
   // render header mini-profile (uses currentStudentProfile)
   renderHeaderMiniProfile();
+  subscribeNotificationsForCurrentStudent()
 
   // inject header buttons (leaderboard/games/gear) if page has appropriate container
   injectHeaderButtons();
@@ -348,6 +349,54 @@ async function initPage(){
   filterStudentsBtn.classList.add('btn-ghost');
 }
 
+
+// --- notifications subscription for current student (creators get notified) ---
+let notificationsUnsub = null;
+function subscribeNotificationsForCurrentStudent() {
+  if(notificationsUnsub) { notificationsUnsub(); notificationsUnsub = null; }
+  const to = getVerifiedStudentId();
+  if(!to) return;
+  try {
+    const q = query(collection(db,'notifications'), where('to','==', to), orderBy('createdAt','desc'), limit(20));
+    notificationsUnsub = onSnapshot(q, snap => {
+      snap.docChanges().forEach(ch => {
+        if(ch.type === 'added') {
+          const n = ch.doc.data();
+          if(!n.seen) {
+            // very simple UX: toast + small modal if join_attempt
+            if(n.type === 'join_attempt') {
+              toast(`Someone tried to join your game "${n.gameName}"`);
+              // option: open modal with accept/join link
+              showModal(`<div>
+                 <div><strong>Player ${escapeHtml(n.fromName||n.from)}</strong> tried to join your game <strong>${escapeHtml(n.gameName)}</strong>.</div>
+                 <div style="margin-top:10px"><button id="notifJoin" class="btn btn-primary">Open game</button> <button id="notifClose" class="btn">Close</button></div>
+               </div>`, { title: 'Join attempt' });
+              document.getElementById('notifClose').onclick = () => { closeModal(); };
+              document.getElementById('notifJoin').onclick = async () => {
+                closeModal();
+                // open game to view/join
+                const gSnap = await getDoc(doc(db,'games', n.gameId));
+                if(gSnap.exists()) {
+                  const g = { id: gSnap.id, ...gSnap.data() };
+                  openMatchOverlay(g.id).catch(()=>{ showModal(`<div>Open game page: <a href="games.html?game=${g.id}">Open</a></div>`,{title:'Open'}); });
+                } else {
+                  toast('Game no longer available');
+                }
+              };
+            } else {
+              toast(n.message || 'Notification');
+            }
+            // mark as seen (best-effort)
+            try { updateDoc(doc(db,'notifications', ch.doc.id), { seen: true, seenAt: serverTimestamp() }); } catch(e){ /* ignore */ }
+          }
+        }
+      });
+    }, err => console.warn('notif onSnapshot err', err));
+  } catch(e){ console.warn('subscribeNotifications failed', e); }
+}
+subscribeNotificationsForCurrentStudent();
+// update subscription on storage change (verified user switch)
+window.addEventListener('storage', subscribeNotificationsForCurrentStudent);
 
 /* ---------- load games ---------- */
 async function loadGames(){
@@ -411,8 +460,28 @@ function appendGameCard(g){
   const status = document.createElement('div'); status.className='small-muted'; status.textContent = g.status || 'waiting';
   const playBtn = document.createElement('button'); playBtn.className='btn btn-primary'; playBtn.textContent = '▶ Play'; playBtn.onclick = () => onPlayClick(g);
   const infoBtn = document.createElement('button'); infoBtn.className='btn'; infoBtn.textContent='ℹ'; infoBtn.onclick = () => showGameOverview(g);
-  const moreBtn = document.createElement('button'); moreBtn.className='btn'; moreBtn.textContent='⋯'; moreBtn.onclick = () => openGameMoreMenu(g);
-  right.appendChild(tag); right.appendChild(status); right.appendChild(playBtn); right.appendChild(infoBtn); right.appendChild(moreBtn);
+
+  right.appendChild(tag); right.appendChild(status); right.appendChild(playBtn); right.appendChild(infoBtn);
+
+  // show creator-only controls & code
+  const me = getVerifiedStudentId();
+  if(String(me) === String(g.creatorId)){
+    // show code and actions for creator
+    const codeDiv = document.createElement('div'); codeDiv.className='small-muted'; codeDiv.style.marginTop='6px';
+    codeDiv.textContent = g.isPublic ? `Public` : `Code: ${g.code || '—'}`;
+    const editBtn = document.createElement('button'); editBtn.className='btn'; editBtn.textContent='Edit'; editBtn.onclick = () => openEditGameModal(g);
+    const delBtn = document.createElement('button'); delBtn.className='btn'; delBtn.textContent='Delete'; delBtn.onclick = () => deleteGameConfirm(g);
+    right.appendChild(codeDiv);
+    right.appendChild(editBtn);
+    right.appendChild(delBtn);
+  } else {
+    // others: if private, show masked code length notice
+    if(!g.isPublic) {
+      const locked = document.createElement('div'); locked.className='small-muted'; locked.style.marginTop='6px';
+      locked.textContent = 'Private game — code required';
+      right.appendChild(locked);
+    }
+  }
 
   card.appendChild(left); card.appendChild(right); gamesList.appendChild(card);
 }
@@ -522,7 +591,7 @@ async function createQuickBotGame(botId, titles = null){
   const newGame = {
     name: `Quick vs ${botId}`,
     titles: titlesToUse,
-    isPublic: false,
+    isPublic: true,
     stake,
     secondsPerQuestion: 15,
     wrongPenalty: 'none',
@@ -543,13 +612,32 @@ async function createQuickBotGame(botId, titles = null){
 
   // create game doc
   const ref = await addDoc(collection(db,'games'), newGame);
-  // auto-join creator (transaction enforces points)
+  newGame.id = ref.id;
+  
+  // optimistic update so creator immediately sees themselves in UI
+  try {
+    // push local view so loadGames shows it immediately
+    newGame.players = newGame.players || [];
+    newGame.players.push({
+      playerId: vId,
+      joinedAt: nowSeconds(),
+      playerName: prof.name || '',
+      avatarFrame: prof.avatarFrame || null,
+      className: prof.className || ''
+    });
+    gamesCache.unshift(newGame); // add to cache front for immediate visibility
+    renderGames('bots');
+  } catch(e){ /* ignore optimistic UI errors */ }
+  
+  // now try to join for real (transaction)
   const joined = await joinGameById(ref.id, vId);
   if(!joined){
-    // joining failed (race or transaction error) -> clean up the game doc
+    // joining failed (race or transaction error) -> mark expired
     try { await updateDoc(doc(db,'games', ref.id), { status:'expired', updatedAt: serverTimestamp() }); } catch(e){}
     throw new Error('join_failed');
   }
+    // auto-join creator (transaction enforces points)
+  
   // start match
   await startMatchForGame(ref.id);
   return ref.id;
@@ -870,12 +958,31 @@ async function onPlayClick(game){
   const vrole = getVerifiedRole(), vId = getVerifiedStudentId();
   if(vrole !== 'student' || !vId) { toast('Verify as student to play'); return; }
 
-  if(game.isPublic === false){
-    // prompt code
-    const code = prompt('Enter private code:');
-    if(!code) return;
-    if(String(code).trim().toUpperCase() !== String(game.code || '').toUpperCase()) { alert('Invalid code'); return; }
+// if private, ask for code (keep your prompt)
+if(game.isPublic === false){
+  const code = prompt('Enter private code:');
+  if(!code) return;
+  if(String(code).trim().toUpperCase() !== String(game.code || '').toUpperCase()) { alert('Invalid code'); return; }
+}
+
+// Create a "join attempt" notification for the creator (do not spam if user is the creator)
+try {
+  const vId = getVerifiedStudentId();
+  if(vId && String(vId) !== String(game.creatorId)) {
+    await addDoc(collection(db,'notifications'), {
+      to: game.creatorId || null,
+      type: 'join_attempt',
+      gameId: game.id,
+      gameName: game.name || '',
+      from: vId,
+      fromName: currentStudentProfile?.name || getVerifiedStudentName() || '',
+      createdAt: serverTimestamp(),
+      seen: false,
+      message: `${currentStudentProfile?.name || getVerifiedStudentName() || vId} tried to join "${game.name || 'your game'}".`
+    });
   }
+} catch(e){ console.warn('notify creator failed', e); }
+
 
   // check sufficient points
   const studentDoc = await getDoc(doc(db,'students', vId));
@@ -917,17 +1024,22 @@ async function onPlayClick(game){
 
 // open overview modal
 function showGameOverview(game){
+  const codeLine = (String(getVerifiedStudentId()) === String(game.creatorId) && !game.isPublic) ? `<div style="margin-top:8px">Code: <strong>${escapeHtml(game.code||'—')}</strong></div>` : '';
   const html = `<div>
     <div><strong>${escapeHtml(game.name)}</strong></div>
     <div class="small-muted">Creator: ${escapeHtml(game.creatorName||game.creatorId||'—')} • Class: ${escapeHtml(game.creatorClass||'—')}</div>
     <div style="margin-top:8px">Titles: ${escapeHtml((game.titles||[]).join(', '))}</div>
     <div style="margin-top:6px">Stakes: <strong>${game.stake}</strong> • Seconds: <strong>${game.secondsPerQuestion}</strong></div>
+    ${codeLine}
     <div style="margin-top:8px" class="small-muted">Wrong penalty: ${escapeHtml(game.wrongPenalty||'none')}</div>
     <div style="text-align:right;margin-top:10px"><button id="closeInfoBtn" class="btn btn-primary">Close</button></div>
   </div>`;
+  
   showModal(html, { title:'Game overview' });
   document.getElementById('closeInfoBtn').onclick = closeModal;
 }
+
+
 
 function openGameMoreMenu(game){
   const html = `<div style="display:flex;flex-direction:column;gap:8px">
@@ -963,6 +1075,45 @@ function openGameMoreMenu(game){
     openMatchOverlayForSpectate(game.id);
   };
 }
+async function openEditGameModal(game) {
+  // only allow the creator
+  const me = getVerifiedStudentId();
+  if(String(me) !== String(game.creatorId)) return toast('Only creator may edit');
+  const titles = await loadAvailableTitles();
+  const titlesHtml = (titles||[]).map(t => `<label style="display:block"><input type="checkbox" class="editTitle" value="${escapeHtml(t)}" ${ (game.titles||[]).includes(t) ? 'checked' : '' } /> ${escapeHtml(t)}</label>`).join('');
+  const html = `<div style="display:flex;flex-direction:column;gap:8px">
+    <label>Game name</label><input id="editGameName" class="input-small" value="${escapeHtml(game.name||'')}">
+    <label>Titles</label><div style="max-height:160px;overflow:auto;border:1px solid #eef;padding:8px">${titlesHtml || '<div class="small-muted">No titles</div>'}</div>
+    <label>Stake</label><input id="editStake" type="number" value="${Number(game.stake||50)}">
+    <div style="text-align:right;margin-top:10px"><button id="cancelEditGame" class="btn">Cancel</button> <button id="saveEditGame" class="btn btn-primary">Save</button></div>
+  </div>`;
+  showModal(html, { title:'Edit game' });
+  document.getElementById('cancelEditGame').onclick = closeModal;
+  document.getElementById('saveEditGame').onclick = async () => {
+    const name = document.getElementById('editGameName').value.trim();
+    const chosen = Array.from(document.querySelectorAll('.editTitle')).filter(i=>i.checked).map(i=>i.value);
+    const stake = Number(document.getElementById('editStake').value || 50);
+    try {
+      await updateDoc(doc(db,'games', game.id), { name, titles: chosen, stake, updatedAt: serverTimestamp() });
+      toast('Game updated');
+      closeModal();
+      await loadGames();
+    } catch(e){ console.error('saveEdit failed', e); alert('Save failed'); }
+  };
+}
+
+async function deleteGameConfirm(game){
+  const me = getVerifiedStudentId();
+  if(String(me) !== String(game.creatorId)) return toast('Only creator may delete');
+  if(!confirm('Delete this game? This cannot be undone')) return;
+  try {
+    await updateDoc(doc(db,'games', game.id), { status:'deleted', deletedAt: serverTimestamp() });
+    // optionally remove doc: await deleteDoc(doc(db,'games',game.id));
+    toast('Game removed');
+    await loadGames();
+  } catch(e){ console.error('delete failed', e); alert('Delete failed'); }
+}
+
 
 // ---------- join & reserve ----------
 async function joinGameById(gameId, studentId){
@@ -1217,15 +1368,9 @@ function renderMatchUI(match, matchRef){
 
           // update logs
           const logs = m.logs || [];
-          logs.push({
-            type:'answer',
-            playerId: pid,
-            choice: choiceIdx,
-            correct: isCorrect,
-            delta,
-            at: nowMillis()
-          });
-        
+       
+          logs.push({ type:'answer', playerId: pid, choice: choiceIdx, correct: isCorrect, delta, at: nowMillis() });
+          
           
 
           // update question answered map to prevent double answer
@@ -1455,6 +1600,7 @@ async function simulateBotForMatch(match, matchRef){
         const logs = m.logs || [];
         logs.push({ type:'answer', playerId: bot.id, choice: chosen, correct, at: nowMillis() });
         t.update(matchRef, { players, logs, currentIndex: (m.currentIndex || 0) + 1, updatedAt: serverTimestamp() });
+
       });
     } catch(e){ console.warn('bot answer failed', e); }
   }, delay);
