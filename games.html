@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="so">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Game Play — AL-FATXI</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="games.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div style="display:flex;flex-direction:column;min-width:0">
+        <div style="display:flex;align-items:center;gap:0.6rem">
+          <div class="title">Game Play</div>
+          <div id="miniProfileTag" class="small-muted" style="font-weight:700"></div>
+        </div>
+        <div class="small-muted" id="topSub">Play short head-to-head quizzes — earn points & level up</div>
+      </div>
+
+      <div class="actions-row">
+        <div class="search" role="search">
+          <input id="enterCodeInput" placeholder="Enter Code (private)" />
+          <button id="codeSearchBtn" class="btn">Search</button>
+        </div>
+        <div style="display:flex;gap:0.4rem;align-items:center">
+          <button id="filterStudentsBtn" class="btn btn-ghost" data-mode="students">Students</button>
+          <button id="filterBotsBtn" class="btn" data-mode="bots">Bots</button>
+        </div>
+        <button id="settingsBtn" class="btn">⚙</button>
+        <button id="newGameBtn" class="btn btn-primary">New Game</button>
+      </div>
+    </header>
+
+    <div class="stats-row" id="quickStats">
+      <div class="stat">Active games: <span id="statActive">–</span></div>
+      <div class="stat">My invites: <span id="statInvites">–</span></div>
+      <div class="stat">Bots available: <span id="statBots">–</span></div>
+    </div>
+
+    <div class="list" id="gamesList">
+      <!-- game cards injected here -->
+    </div>
+  </div>
+
+  <!-- modal root -->
+  <div id="modalRoot" class="hidden" aria-hidden="true"></div>
+
+  <!-- match overlay -->
+  <div id="matchRoot" class="hidden" aria-hidden="true"></div>
+
+  <!-- scripts -->
+  <script type="module" src="firebase-config.js"></script>
+  <script type="module" src="games.js"></script>
+</body>
+</html>
