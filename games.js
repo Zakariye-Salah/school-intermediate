@@ -671,16 +671,60 @@ function shuffleArray(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math
 
 /* ---------- rendering header mini-profile (unchanged) ---------- */
 function renderHeaderMiniProfile(){
+  // show only for verified student
   if(currentRole === 'student' && currentStudentProfile){
-    const name = currentStudentProfile.name || '';
+    const name = currentStudentProfile.name || getVerifiedStudentName() || '';
     const cls = currentStudentProfile.className || '';
-    const id4 = maskId(currentStudentProfile.studentId || '');
+    // prefer explicit studentId field, fallback to verified id
+    const docId = currentStudentProfile.studentId || currentStudentProfile.id || getVerifiedStudentId() || '';
+    const isOwner = String(docId) && String(docId) === String(getVerifiedStudentId());
+    const idDisplay = isOwner ? escapeHtml(docId) : maskId(docId);
     const level = currentStudentProfile.level || 1;
-    miniProfileTag.innerHTML = `<div class="mini-profile"><div class="avatar ${currentStudentProfile.avatarFrame?('frame-'+currentStudentProfile.avatarFrame):''}">${(name||'').slice(0,2)}</div><div class="profile-txt"><div class="name">${escapeHtml(name)}</div><div class="meta">${escapeHtml(cls)} • ${escapeHtml(id4)} • Lv ${level}</div></div></div>`;
+    const points = Number(currentStudentProfile.totalPoints || 0);
+
+    miniProfileTag.innerHTML = `
+      <div class="mini-profile" style="display:flex;align-items:center;gap:10px">
+        <div class="avatar ${currentStudentProfile.avatarFrame?('frame-'+currentStudentProfile.avatarFrame):''}">
+          ${escapeHtml((name||'').slice(0,2))}
+        </div>
+        <div class="profile-txt" style="min-width:0">
+          <div class="name" style="font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+            ${escapeHtml(name)}
+          </div>
+          <div class="meta small-muted" style="font-size:.85rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+            ID: <span class="id">${idDisplay}</span> • Lv ${level} • ${points} pts
+          </div>
+        </div>
+      </div>
+    `;
   } else {
     miniProfileTag.innerHTML = '';
   }
 }
+
+
+  // --- put this after renderHeaderMiniProfile(); and after injectHeaderButtons(); in initPage() ---
+
+  // wire existing settings button in your HTML (id="settingsBtn")
+  const settingsBtnEl = document.getElementById('settingsBtn');
+  if(settingsBtnEl){
+    settingsBtnEl.onclick = () => {
+      const vrole = getVerifiedRole();
+      if(vrole !== 'student') { toast('Verify as a student to edit profile'); return; }
+      openEditProfileModal();
+    };
+    // show/hide settings based on verification (only students)
+    settingsBtnEl.style.display = (currentRole === 'student') ? '' : 'none';
+  }
+
+  // make New Game visible only to verified students
+  if(newGameBtn){
+    newGameBtn.style.display = (currentRole === 'student') ? '' : 'none';
+  }
+
+  // ensure mini-profile reflects freshest data (if profile was updated above)
+  renderHeaderMiniProfile();
+
 
 /* ---------- subscribeStats (unchanged) ---------- */
 function subscribeStats(){
