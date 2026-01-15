@@ -252,66 +252,90 @@ function injectHeaderButtons(){
 }
 
 
-// ---------- Helpers: pick questions, sounds, match chat ----------
 
-// Pick questions: try Firestore questions collection matching titles, fallback to localQuestionsIndex
-// async function pickQuestionsForTitles(titles = [], count = 10){
-//   try {
-//     // try Firestore where title in titles (if titles length > 0)
-//     let candidates = [];
-//     if(Array.isArray(titles) && titles.length){
-//       // Firestore 'in' supports up to 10 items — slice safely
-//       const batch = titles.slice(0, 10);
-//       const q = query(collection(db, 'questions'), where('title', 'in', batch), limit(200));
-//       const snaps = await getDocs(q);
-//       snaps.forEach(s => {
-//         const d = s.data();
-//         candidates.push({ id: s.id, text: d.text || d.question || '', choices: d.choices || [], correct: d.correct, title: d.title || titles[0] });
-//       });
-//     }
-//     // fallback to local sets if not enough
-//     if(candidates.length < count && typeof localQuestionsIndex === 'object'){
-//       for(const t of titles){
-//         const arr = localQuestionsIndex[t] || [];
-//         for(const qObj of arr) candidates.push(qObj);
-//         if(candidates.length >= count) break;
-//       }
-//     }
-//     // final fallback: gather all local questions
-//     if(candidates.length < count && localQuestionsIndex){
-//       for(const k of Object.keys(localQuestionsIndex || {})){
-//         for(const qObj of localQuestionsIndex[k]) candidates.push(qObj);
-//         if(candidates.length >= count) break;
-//       }
-//     }
-//     // dedupe by text and pick random 'count'
-//     const uniq = [];
-//     const seen = new Set();
-//     for(const c of candidates){
-//       const key = (c.id || c.text || '').toString();
-//       if(!seen.has(key)){ seen.add(key); uniq.push(c); }
-//     }
-//     // shuffle
-//     for(let i = uniq.length - 1; i > 0; i--){
-//       const j = Math.floor(Math.random() * (i + 1));
-//       [uniq[i], uniq[j]] = [uniq[j], uniq[i]];
-//     }
-//     const picked = uniq.slice(0, count).map((q, idx) => ({
-//       id: q.id || `local_${idx}`,
-//       text: q.text || q.question || '',
-//       choices: q.choices || [],
-//       correct: q.correct !== undefined ? q.correct : 0,
-//       title: q.title || (titles && titles[0]) || '',
-//       assignedTo: null // will be set by caller
-//     }));
-//     return picked;
-//   } catch(e){
-//     console.warn('pickQuestionsForTitles failed', e);
-//     return [];
-//   }
-// }
 
-// Simple sound FX using WebAudio (no external files)
+// ---------- QUESTION TIMER, FEEDBACK, SOUND + PLAYER NAME fetch helpers ----------
+
+// store per-match timers on DOM root
+function clearMatchTimers() {
+  if (matchRoot.__questionTimer) { clearTimeout(matchRoot.__questionTimer); matchRoot.__questionTimer = null; }
+  if (matchRoot.__questionInterval) { clearInterval(matchRoot.__questionInterval); matchRoot.__questionInterval = null; }
+}
+
+// start/refresh a question countdown shown in the UI and auto-advance when time expires
+function startQuestionTimer(matchRef, matchData) {
+  try {
+    clearMatchTimers();
+    const secondsPerQ = Number(matchData.secondsPerQuestion || 15);
+    const currentIdx = Number(matchData.currentIndex || 0);
+    const startEpoch = (matchData.questionStartEpoch && Number(matchData.questionStartEpoch)) || Date.now();
+    // compute elapsed from server epoch guess
+    const elapsed = Math.floor((Date.now() - startEpoch) / 1000);
+    let remaining = Math.max(0, secondsPerQ - elapsed);
+
+    const timerEl = matchRoot.querySelector('#matchTimer');
+    if (timerEl) timerEl.textContent = `${remaining}s`;
+
+    // update every second for UI
+    matchRoot.__questionInterval = setInterval(() => {
+      remaining = Math.max(0, remaining - 1);
+      if (timerEl) timerEl.textContent = `${remaining}s`;
+    }, 1000);
+
+    // schedule auto-advance when time runs out
+    matchRoot.__questionTimer = setTimeout(async () => {
+      clearMatchTimers();
+      try {
+        // mark assigned player as missed (no points) and advance question
+        await runTransaction(db, async (t) => {
+          const snap = await t.get(matchRef);
+          if (!snap.exists()) return;
+          const m = snap.data();
+          if ((m.currentIndex || 0) !== currentIdx) return; // someone advanced already
+          const q = (m.questions || [])[currentIdx];
+          // mark missed entry for assigned
+          const answered = m.answered || {};
+          if (q && q.assignedTo) {
+            // record a missed answer (no score change)
+            answered[`${currentIdx}_${q.assignedTo}`] = { selected: null, correct: false, missed: true, at: nowMillis(), playerId: q.assignedTo };
+          }
+          // advance index
+          t.update(doc(db, 'matches', matchRef.id), { answered, currentIndex: (currentIdx + 1), questionStartEpoch: Date.now(), updatedAt: serverTimestamp() });
+        });
+      } catch (e) { console.warn('auto-advance failed', e); }
+    }, remaining * 1000);
+  } catch (e) { console.warn('startQuestionTimer failed', e); }
+}
+
+// improved sound player that prefers audio asset files (you said correct1-12 / wrong1-22 exist)
+function playMatchSoundAsset(type) {
+  try {
+    if (localStorage.getItem('gameSound') === 'off') return;
+    // choose a random file index from available range you mentioned
+    if (type === 'correct') {
+      const idx = Math.floor(Math.random() * 12) + 1; // 1..12
+      const url = `assets/correct${idx}.mp3`; // if your files are .mp3 change accordingly
+      const a = new Audio(url);
+      a.volume = 0.9;
+      a.play().catch(() => {});
+    } else if (type === 'wrong') {
+      const idx = Math.floor(Math.random() * 22) + 1;
+      const url = `assets/wrong${idx}.mp3`;
+      const a = new Audio(url);
+      a.volume = 0.9;
+      a.play().catch(() => {});
+    } else {
+      // generic ping
+      const a = new Audio('assets/notify.mp3');
+      a.play().catch(()=>{});
+    }
+  } catch (e) {
+    // fallback to WebAudio beep
+    try { playMatchSound(type); } catch(e2) {}
+  }
+}
+
+// lightweight fallback WebAudio (kept for fallback)
 function playMatchSound(type){
   try {
     if(localStorage.getItem('gameSound') === 'off') return;
@@ -328,6 +352,32 @@ function playMatchSound(type){
     setTimeout(()=>{ try { o.stop(); ctx.close(); } catch(e){} }, 400);
   } catch(e){}
 }
+
+// helper: if a player object lacks playerName, fetch it and update DOM (does not modify DB)
+async function fillMissingPlayerNames(match) {
+  try {
+    const players = match.players || [];
+    for (const p of players) {
+      if (!p.playerName && p.playerId) {
+        try {
+          const sSnap = await getDoc(doc(db,'students', p.playerId));
+          if (sSnap.exists()) {
+            const s = sSnap.data();
+            // update DOM elements if present
+            const nameEl = matchRoot.querySelector(`[data-playerid="${p.playerId}"] .player-name`);
+            if (nameEl) nameEl.textContent = s.name || s.displayName || `**${String(p.playerId).slice(-4)}`;
+            // avatar
+            const imgEl = matchRoot.querySelector(`[data-playerid="${p.playerId}"] .player-avatar img`);
+            if (imgEl && s.avatar) imgEl.src = s.avatar;
+          }
+        } catch(e){/* ignore per-player fetch errors */ }
+      }
+    }
+  } catch(e){ console.warn('fillMissingPlayerNames failed', e); }
+}
+
+// ---------- Helpers: pick questions, sounds, match chat ----------
+
 
 // Match chat: send message
 async function sendMatchChatMessage(matchId, text){
@@ -1915,8 +1965,6 @@ async function onCodeSearch(){
   } catch(e){ console.error(e); toast('Search failed'); }
 }
 
-/* ---------- End of updated games.js (paste remainder of your original file after pickQuestionsForTitles) ---------- */
-
 
 // ---------- play / join ----------
 async function onPlayClick(game){
@@ -2522,7 +2570,62 @@ async function openMatchById(matchId){
     </div>
   </div>`;
   matchRoot.classList.remove('hidden'); matchRoot.removeAttribute('aria-hidden');
-  document.getElementById('closeMatchBtn').onclick = () => { closeMatchOverlay(); };
+// CLOSE button: if match in progress -> confirm forfeit (for current user)
+document.getElementById('closeMatchBtn').onclick = async () => {
+  try {
+    // read latest match state synchronously if available
+    const snap = await getDoc(matchRef);
+    const m = snap.exists() ? snap.data() : null;
+    if (m && m.status === 'inprogress') {
+      if (!confirm('Match is still in progress. Closing will forfeit the match and give the other player the win. Continue?')) return;
+      // mark current user as surrendered -> other player wins
+      const me = getVerifiedStudentId();
+      const other = (m.players || []).find(p => String(p.playerId) !== String(me));
+      await updateDoc(matchRef, { status:'finished', winner: other ? other.playerId : null, finishedAt: serverTimestamp(), updatedAt: serverTimestamp() });
+      // then close UI
+      clearMatchTimers();
+      closeMatchOverlay();
+    } else {
+      clearMatchTimers();
+      closeMatchOverlay();
+    }
+  } catch(e){ console.warn('close-match forfeit failed', e); closeMatchOverlay(); }
+};
+
+// chat open/close wiring + emoji quick buttons
+document.getElementById('openMatchChatBtn').onclick = () => {
+  const wrap = document.getElementById('matchChatWrap');
+  if(!wrap) return;
+  wrap.style.display = wrap.style.display === 'none' ? '' : 'none';
+  // ensure focus
+  const input = document.getElementById('matchChatInput');
+  if(input && wrap.style.display !== 'none') input.focus();
+};
+
+// send handler + emoji buttons
+document.getElementById('matchChatSend').onclick = async () => {
+  const input = document.getElementById('matchChatInput');
+  if(!input) return;
+  const text = input.value.trim();
+  if(!text) return;
+  input.value = '';
+  await sendMatchChatMessage(matchId, text);
+};
+// add emoji quick list to chat UI (small)
+const chatWrap = document.getElementById('matchChatWrap');
+if (chatWrap && !chatWrap.querySelector('.emoji-row')) {
+  const emojiRow = document.createElement('div');
+  emojiRow.className = 'emoji-row';
+  emojiRow.style.marginBottom = '6px';
+  emojiRow.innerHTML = ['😀','😂','👍','🎉','😮','😢','💯','🔥'].map(e => `<button class="btn small emoji-btn" data-emoji="${e}" style="padding:4px 6px">${e}</button>`).join(' ');
+  chatWrap.insertBefore(emojiRow, chatWrap.firstChild);
+  chatWrap.querySelectorAll('.emoji-btn').forEach(b => {
+    b.onclick = async () => {
+      const em = b.getAttribute('data-emoji');
+      await sendMatchChatMessage(matchId, em);
+    };
+  });
+}
 
   // sound toggle
   document.getElementById('matchSoundToggle').onclick = () => {
@@ -2572,11 +2675,12 @@ async function openMatchById(matchId){
 
 function closeMatchOverlay(){ if(currentMatchUnsub) currentMatchUnsub(); currentMatchUnsub = null; matchRoot.innerHTML=''; matchRoot.classList.add('hidden'); matchRoot.setAttribute('aria-hidden','true'); }
 
-// render match UI and wire answer submission
-// render match UI and wire answer submission
 function renderMatchUI(match, matchRef){
   const body = matchRoot.querySelector('.match-body');
   if(!body) return;
+
+  // clear any old timers before rerendering
+  clearMatchTimers();
 
   // meta
   const currentIndex = Number(match.currentIndex || 0);
@@ -2585,7 +2689,7 @@ function renderMatchUI(match, matchRef){
   const secondsPerQ = Number(match.secondsPerQuestion || 15);
   const answeredMap = match.answered || {}; // keys like "0_studentId"
 
-  // players UI
+  // players UI (attach data-playerid attr so we can update name later)
   const leftPlayers = (match.players || []);
   let playerHtml = leftPlayers.map(p => {
     const frame = p.avatarFrame ? `frame-${p.avatarFrame}` : '';
@@ -2593,10 +2697,11 @@ function renderMatchUI(match, matchRef){
                                 : `<div class="avatar ${frame}">${escapeHtml((p.playerName||p.playerId||'P').slice(0,2))}</div>`;
     const displayName = escapeHtml(p.playerName || `**${String(p.playerId||'').slice(-4)}`);
     const readyFlag = p.ready ? ' ✓' : '';
-    return `<div style="display:flex;align-items:center;gap:8px;min-width:160px">
-      <div style="width:40px;height:40px">${avatarPart}</div>
+    // include wrapper with data-playerid for name updates and avatar click
+    return `<div data-playerid="${escapeHtml(p.playerId||'')}" style="display:flex;align-items:center;gap:8px;min-width:160px">
+      <div class="player-avatar" style="width:40px;height:40px">${avatarPart}</div>
       <div style="display:flex;flex-direction:column">
-        <div style="font-weight:700">${displayName}${readyFlag}</div>
+        <div class="player-name" style="font-weight:700">${displayName}${readyFlag}</div>
         <div class="small-muted">Lvl ${p.level||'-'} • ${p.score||0} pts</div>
       </div>
     </div>`;
@@ -2609,26 +2714,37 @@ function renderMatchUI(match, matchRef){
   const qTitle = q && (q.title || match.gameName || '') ? escapeHtml(q.title || match.gameName || '') : '';
   const qText = q ? escapeHtml(q.text || '') : '';
   const qHeader = q ? `<div style="font-weight:700">Q${currentIndex+1} / ${totalQuestions}${ qTitle ? ' — ' + qTitle : '' }: ${qText}</div>` : '<div class="small-muted">No current question</div>';
-  const assignedHtml = assignedPlayer ? `<div style="font-size:13px" class="small-muted">Turn: ${escapeHtml(assignedPlayer.playerName || `**${String(assignedPlayer.playerId).slice(-4)}`)}</div>` : '';
+  const assignedHtml = assignedPlayer ? `<div style="font-size:13px" class="small-muted">Turn: <strong>${escapeHtml(assignedPlayer.playerName || `**${String(assignedPlayer.playerId).slice(-4)}`)}</strong></div>` : '';
 
-  // choices + coloring based on answeredMap & logs
+  // choices + coloring rules:
+  // - if someone answered correct -> show green for that choice (and play correct)
+  // - if someone answered wrong -> mark their chosen option red but DO NOT reveal the correct option (so others can still answer)
   const choices = (q && q.choices && Array.isArray(q.choices)) ? q.choices : [];
   let choiceHtml = '';
+  // gather answers for this question
+  const answersForThis = Object.entries(answeredMap)
+    .filter(([k,v]) => k.startsWith(`${currentIndex}_`))
+    .map(([k,v]) => v);
+  const anyCorrect = answersForThis.some(a => a.correct === true);
   choices.forEach((c, idx) => {
-    // determine if someone answered this choice for current question
-    const answeredByKeys = Object.keys(answeredMap).filter(k => k.startsWith(`${currentIndex}_`));
-    const someoneAnswer = answeredByKeys.length ? answeredMap[answeredByKeys[0]] : null; // first answer
-    const isCorrect = q && q.correct !== undefined ? (Array.isArray(q.correct) ? q.correct.map(Number).includes(idx) : Number(q.correct) === idx) : false;
     let style = 'padding:8px;border-radius:6px;margin-bottom:6px;border:1px solid #e6eef8;cursor:pointer';
-    if(someoneAnswer){
-      // color choices: correct green, chosen wrong red, others muted
-      if(isCorrect) style += ';background:#e6ffe9;border-color:#2fa84f';
-      else if(someoneAnswer.selected === idx) style += ';background:#ffecec;border-color:#e04a4a';
-      else style += ';opacity:0.6';
+    // if there are answers:
+    if (answersForThis.length) {
+      // if someone answered correct, reveal that choice green only
+      if (anyCorrect) {
+        const chosenCorrect = answersForThis.find(a => a.correct === true && a.selected === idx);
+        if (chosenCorrect) style += ';background:#e6ffe9;border-color:#2fa84f';
+        else style += ';opacity:0.6';
+      } else {
+        // no correct yet: if someone selected this (and it was wrong), show red for their chosen option only
+        const wrongChosens = answersForThis.filter(a => a.selected === idx && a.correct === false);
+        if (wrongChosens.length) style += ';background:#ffecec;border-color:#e04a4a';
+      }
     }
     choiceHtml += `<div class="choice" data-choice="${idx}" id="choice_${idx}" style="${style}">${escapeHtml(c)}</div>`;
   });
 
+  // feedback area under choices
   body.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
       <div style="display:flex;gap:12px;align-items:center">${playerHtml}</div>
@@ -2640,28 +2756,40 @@ function renderMatchUI(match, matchRef){
     </div>
     <div style="margin-top:8px">${qHeader}</div>
     <div style="margin-top:8px" id="choicesWrap">${choiceHtml}</div>
+    <div id="matchFeedback" style="margin-top:10px;min-height:28px"></div>
   `;
 
-  // show per-question timer countdown using Date.now() and match.questionStartEpoch if present
-  const timerEl = document.getElementById('matchTimer');
-  if(timerEl){
-    // compute remaining seconds: if match.questionStartEpoch provided and currentIndexEpoch stored? we approximate
-    let remaining = secondsPerQ;
-    // optional: if match.questionStartEpoch exist and match.questionIndexEpoch map exists, compute accurate remaining — skip advanced here
-    timerEl.textContent = `${remaining}s`;
-  }
+  // after DOM injection: allow avatar click to open profile
+  body.querySelectorAll('[data-playerid]').forEach(el => {
+    const pid = el.getAttribute('data-playerid');
+    const avatarContainer = el.querySelector('.player-avatar');
+    if(avatarContainer){
+      avatarContainer.style.cursor = 'pointer';
+      avatarContainer.onclick = () => { if(pid) openPlayerProfileModal(pid); };
+    }
+  });
 
-  // wire choices: only assigned player may answer first
+  // try to fill missing player names in background
+  fillMissingPlayerNames(match).catch(()=>{});
+
+  // start per-question timer
+  startQuestionTimer(doc(db,'matches', matchRef.id), match);
+
+  // wire choices:
   body.querySelectorAll('.choice').forEach(ch => {
     ch.onclick = async () => {
       const choiceIdx = Number(ch.getAttribute('data-choice'));
       const pid = getVerifiedStudentId();
       if(!pid) { toast('Verify as student to play'); return; }
-      if(assignedTo && String(pid) !== String(assignedTo)){
+      // enforce assigned player only (first-answer)
+      if (q && q.assignedTo && String(pid) !== String(q.assignedTo)) {
+        // allow answering if assigned missed but user still can? for now block
         toast('Not your turn to answer');
         return;
       }
       try {
+        // prevent double-click UI while tx runs
+        ch.style.pointerEvents = 'none';
         await runTransaction(db, async (t) => {
           const snap = await t.get(matchRef);
           if(!snap.exists()) throw new Error('match missing');
@@ -2669,59 +2797,73 @@ function renderMatchUI(match, matchRef){
           if(m.status !== 'inprogress') throw new Error('not in progress');
           const currentIdx = m.currentIndex || 0;
           if(currentIdx !== currentIndex) throw new Error('question changed; try again');
-          // prevent double-answer by this player
           const answered = m.answered || {};
           if(answered[`${currentIdx}_${pid}`]) throw new Error('You already answered this question');
-          // determine correctness
           const qobj = m.questions[currentIdx];
           const correctArr = Array.isArray(qobj.correct) ? qobj.correct.map(Number) : [Number(qobj.correct)];
           const isCorrect = correctArr.includes(choiceIdx);
-          // scoring
-          let delta = isCorrect ? 2 : (m.wrongPenalty === 'sub1' ? -1 : 0);
-          // find player index
+          // update score
           const players = m.players || [];
           const pIdx = players.findIndex(p => String(p.playerId) === String(pid));
           if(pIdx === -1) throw new Error('You are not part of this match');
+          const delta = isCorrect ? 2 : (m.wrongPenalty === 'sub1' ? -1 : 0);
           players[pIdx].score = Math.max(0, (players[pIdx].score || 0) + delta);
           // logs + answered map
           const logs = m.logs || [];
           logs.push({ type:'answer', playerId: pid, choice: choiceIdx, correct: isCorrect, delta, at: nowMillis() });
           answered[`${currentIdx}_${pid}`] = { selected: choiceIdx, correct: isCorrect, at: nowMillis(), playerId: pid };
-          // advance only when all players answered (simple)
-          const answeredCount = Object.keys(answered).filter(k => k.startsWith(`${currentIdx}_`)).length;
+          // if correct -> advance immediately; if wrong -> do not advance (others may answer)
           let newIndex = currentIdx;
-          if(answeredCount >= (m.players||[]).length) newIndex = currentIdx + 1;
-          t.update(matchRef, { players, logs, answered, currentIndex: newIndex, updatedAt: serverTimestamp() });
+          if (isCorrect) newIndex = currentIdx + 1;
+          // update questionStartEpoch when we advance (so new clients get fresh timer)
+          t.update(matchRef, { players, logs, answered, currentIndex: newIndex, questionStartEpoch: (newIndex !== currentIdx) ? Date.now() : (m.questionStartEpoch || Date.now()), updatedAt: serverTimestamp() });
         });
-        // play sound
-        playMatchSound('correct'); // note: server validates correct/wrong but we optimistically play correct; you can inspect match to choose sound
+
+        // play sound + show feedback
+        const lastAns = (match.answered ? match.answered : {}); // local best-effort
+        if (/* optimistic check */ true) {
+          // fetch fresh match doc to know whether this choice was correct (the transaction succeeded)
+          const fresh = await getDoc(matchRef);
+          const freshData = fresh.exists() ? fresh.data() : null;
+          const wasCorrect = freshData && freshData.answered && freshData.answered[`${currentIndex}_${getVerifiedStudentId()}`] && freshData.answered[`${currentIndex}_${getVerifiedStudentId()}`].correct;
+          const fb = document.getElementById('matchFeedback');
+          if (wasCorrect) {
+            if (fb) fb.innerHTML = `<div style="color:var(--success,#1f7a3a);font-weight:700">Correct!</div>`;
+            playMatchSoundAsset('correct');
+          } else {
+            if (fb) fb.innerHTML = `<div style="color:var(--danger,#c02e2e);font-weight:700">Incorrect</div>`;
+            playMatchSoundAsset('wrong');
+          }
+        }
       } catch(err){
         console.warn('submit answer failed', err);
-        playMatchSound('wrong');
+        playMatchSoundAsset('wrong');
         toast(err.message || 'Answer failed');
+      } finally {
+        // re-render will be triggered by onSnapshot; ensure timers cleared here
+        clearMatchTimers();
       }
     };
   });
 
-  // wire surrender
+  // wire surrender button (already present in UI outside body)
   const surrenderBtn = document.getElementById('surrenderBtn');
   if(surrenderBtn) surrenderBtn.onclick = async () => {
     if(!confirm('Surrender match? You will lose.')) return;
     try {
-      // compute other player as winner
       const me = getVerifiedStudentId();
       const other = (match.players || []).find(p => String(p.playerId) !== String(me));
       await updateDoc(matchRef, { status:'finished', winner: other ? other.playerId : null, finishedAt: serverTimestamp(), updatedAt: serverTimestamp() });
     } catch(e){ console.warn(e); }
   };
 
-  // detect match end
+  // If match finished -> handle finalize
   if(match.status === 'finished'){
     onMatchFinish(match, matchRef);
     return;
   }
 
-  // bot simulate as before
+  // simulate bot if present
   for(const p of match.players || []){
     if(p.playerId && p.playerId.startsWith && p.playerId.startsWith('bot')){
       simulateBotForMatch(match, matchRef);
