@@ -1420,20 +1420,20 @@ async function createQuickBotGame(botId, titles = null){
   };
 
   // create game doc
+  
   const ref = await addDoc(collection(db,'games'), newGame);
   newGame.id = ref.id;
   
-  // make the creator join the game immediately (reserve stake, appear in players list)
+  // auto-join the creator so they appear in players[] and their stake is reserved
   try {
-    // joinGameById handles the transactional stake deduction and pushes the player into g.players
     await joinGameById(ref.id, currentStudentId);
-  } catch (e) {
+  } catch(e){
     console.warn('creator auto-join failed', e);
-    // but still continue — leaving a creator out would break start logic, so log and surface if needed
+    // optionally notify: toast('Warning: creator auto-join failed');
   }
   
-  // If creator asked to play vs a bot, keep existing behavior to start immediately
-  if (opponentType === 'bot' && botId) {
+  // existing behavior for bot opponent
+  if(opponentType === 'bot' && botId){
     await startMatchForGame(ref.id);
   }
   
@@ -1903,14 +1903,22 @@ function showGameOverview(game){
   async function renderForGameDoc(gDoc){
     const meId = String(getVerifiedStudentId() || '');
     const isCreatorNow = String(meId) === String(gDoc.creatorId);
+    // if current user is the creator, ensure we are monitoring ready flags so auto-start works
+if (isCreatorNow) {
+  try { monitorGameReadyAndAutoStart(gDoc.id); } catch(e){ console.warn('monitor start failed', e); }
+}
+
     const amPlayerNow = Array.isArray(gDoc.players) && gDoc.players.some(p => String(p.playerId) === meId);
     // players display
-    const playersDisplay = (Array.isArray(gDoc.players) && gDoc.players.length) ? gDoc.players.map(p => {
-      const pName = escapeHtml(p.playerName || p.playerId || '—');
-      const pIdMask = p.playerId ? ` **${String(p.playerId).slice(-4)}` : '';
-      const readyFlag = p.ready ? ' (ready)' : '';
-      return `${pName}${pIdMask}${readyFlag}`;
-    }).join(', ') : '—';
+    // players display
+// players display — show only masked last-4 for every player (no full IDs)
+const playersDisplay = (Array.isArray(gDoc.players) && gDoc.players.length) ? gDoc.players.map(p => {
+  // use playerId when available; otherwise fallback to playerName
+  const rawId = p.playerId || p.playerName || '';
+  const masked = rawId ? `**${String(rawId).slice(-4)}` : '—';
+  const readyFlag = p.ready ? ' (ready)' : '';
+  return `${masked}${readyFlag}`;
+}).join(', ') : '—';
     const playersEl = modalRoot.querySelector('#overviewPlayers');
     if(playersEl) playersEl.textContent = playersDisplay;
 
