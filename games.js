@@ -1004,7 +1004,30 @@ async function createQuickBotGame(botId, titles = null){
 
   // create game doc
   const ref = await addDoc(collection(db,'games'), newGame);
-  newGame.id = ref.id;
+newGame.id = ref.id;
+
+// --- OPTIMISTIC UI: make the just-created game visible immediately ---
+try {
+  // use a client-side createdAt for immediate sorting/display
+  newGame.createdAt = Date.now();
+  // ensure status is normalized
+  newGame.status = newGame.status || 'waiting';
+  // push to local cache and re-render students list
+  gamesCache.unshift(newGame);
+  renderGames('students');
+} catch(e){ console.warn('optimistic UI push failed', e); }
+
+// if it's a bot-opponent creation you may auto-join & start (existing logic)
+if(opponentType === 'bot' && botId){
+  await joinGameById(ref.id, currentStudentId);
+  await startMatchForGame(ref.id);
+}
+
+toast('Game created');
+closeModal();
+// still refresh from server to get canonical createdAt/server fields
+loadGames().catch(()=>{});
+
 
   // optimistic UI
   try {
@@ -1425,24 +1448,35 @@ try {
   }
 }
 
-// open overview modal
-// --- showGameOverview (replace your existing showGameOverview) ---
-// Overview shows creator controls (Requests/Edit/Delete/Cancel) and participant Leave button.
-// This keeps the list clean and puts all actions in the modal as you requested.
 function showGameOverview(game) {
   const me = String(getVerifiedStudentId() || '');
   const isCreator = String(me) === String(game.creatorId);
   const amPlayer = Array.isArray(game.players) && game.players.some(p => String(p.playerId) === me);
 
-  // code line only if private (don't duplicate "Public")
-  const codeLine = (!game.isPublic && String(me) === String(game.creatorId)) ?
-    `<div style="margin-top:8px">Code: <strong>${escapeHtml(game.code || '—')}</strong></div>` : '';
+  // mask id for display (format: **1234)
+  const creatorName = game.creatorName || '—';
+  const creatorIdMasked = game.creatorId ? `**${String(game.creatorId).slice(-4)}` : '—';
+  const creatorClass = game.creatorClass || '—';
+
+  // code line only if private and viewer is creator
+  const codeLine = (!game.isPublic && String(me) === String(game.creatorId))
+    ? `<div style="margin-top:8px">Code: <strong>${escapeHtml(game.code || '—')}</strong></div>`
+    : '';
+
+  // players display: show name (and masked id if available)
+  const playersDisplay = Array.isArray(game.players) && game.players.length
+    ? game.players.map(p => {
+        const pName = escapeHtml(p.playerName || p.playerId || '—');
+        const pIdMask = p.playerId ? ` **${String(p.playerId).slice(-4)}` : '';
+        return `${pName}${pIdMask}`;
+      }).join(', ')
+    : '—';
 
   let html = `<div>
     <div style="display:flex;justify-content:space-between;align-items:center">
       <div>
         <div style="font-weight:800">${escapeHtml(game.name)}</div>
-        <div class="small-muted">Creator: ${escapeHtml(game.creatorName||game.creatorId||'—')} • Class: ${escapeHtml(game.creatorClass||'—')}</div>
+        <div class="small-muted">Creator: ${escapeHtml(creatorName)} • ID ${escapeHtml(creatorIdMasked)} • Class: ${escapeHtml(creatorClass)}</div>
       </div>
       <div style="text-align:right">
         <div class="tag ${game.isPublic ? 'public' : 'private'}">${game.isPublic ? 'Public' : 'Private'}</div>
@@ -1454,24 +1488,21 @@ function showGameOverview(game) {
     <div style="margin-top:6px">Stakes: <strong>${escapeHtml(String(game.stake||0))}</strong> • Seconds: <strong>${escapeHtml(String(game.secondsPerQuestion||15))}</strong></div>
     ${codeLine}
     <div style="margin-top:8px" class="small-muted">Wrong penalty: ${escapeHtml(game.wrongPenalty||'none')}</div>
-    <div style="margin-top:12px" class="small-muted">Players: ${Array.isArray(game.players) ? game.players.map(p=>escapeHtml(p.playerName||p.playerId)).join(', ') : '—'}</div>
+    <div style="margin-top:12px" class="small-muted">Players: ${escapeHtml(playersDisplay)}</div>
   `;
 
-  // action buttons region
+  // action buttons region (creator sees management buttons here)
   html += `<div style="text-align:right;margin-top:12px">`;
 
   if (isCreator) {
-    // Creator: Requests, Edit, Cancel/Remove, Close
     html += `<button id="openRequestsBtn" class="btn">Requests</button> `;
     html += `<button id="editGameBtn" class="btn">Edit</button> `;
     html += `<button id="delGameBtn" class="btn">Delete</button> `;
     html += `<button id="cancelGameBtn" class="btn">${game.status === 'waiting' ? 'Cancel' : 'Remove'}</button> `;
     html += `<button id="closeInfoBtn" class="btn btn-primary">Close</button>`;
   } else if (amPlayer) {
-    // Participant (not creator): Leave + Close
     html += `<button id="leaveGameBtn" class="btn">Leave</button> <button id="closeInfoBtn" class="btn btn-primary">Close</button>`;
   } else {
-    // Not a participant: Join/Play + Close
     html += `<button id="joinGameBtn" class="btn btn-primary">Join / Play</button> <button id="closeInfoBtn" class="btn">Close</button>`;
   }
 
@@ -1479,6 +1510,7 @@ function showGameOverview(game) {
 
   showModal(html, { title: 'Game overview' });
 
+  // wire actions
   document.getElementById('closeInfoBtn').onclick = closeModal;
 
   if (isCreator) {
@@ -1495,6 +1527,7 @@ function showGameOverview(game) {
       try {
         await leaveGame(game.id, me);
         closeModal();
+        await loadGames();
       } catch(e){ console.warn(e); toast('Leave failed'); }
     };
   } else {
@@ -1504,6 +1537,7 @@ function showGameOverview(game) {
     };
   }
 }
+
 
 
 
