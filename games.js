@@ -274,12 +274,19 @@ function startQuestionTimer(matchRef, matchData) {
     let remaining = Math.max(0, secondsPerQ - elapsed);
 
     const timerEl = matchRoot.querySelector('#matchTimer');
-    if (timerEl) timerEl.textContent = `${remaining}s`;
+    if (timerEl) {
+      timerEl.textContent = `${remaining}s`;
+      timerEl.style.transition = 'color 0.2s';
+      timerEl.style.color = remaining <= 5 ? 'red' : '';
+    }
 
     // update every second for UI
     matchRoot.__questionInterval = setInterval(() => {
       remaining = Math.max(0, remaining - 1);
-      if (timerEl) timerEl.textContent = `${remaining}s`;
+      if (timerEl) {
+        timerEl.textContent = `${remaining}s`;
+        timerEl.style.color = remaining <= 5 ? 'red' : '';
+      }
     }, 1000);
 
     // schedule auto-advance when time runs out
@@ -288,24 +295,23 @@ function startQuestionTimer(matchRef, matchData) {
       try {
         // mark assigned player as missed (no points) and advance question
         await runTransaction(db, async (t) => {
-          const snap = await t.get(matchRef);
-          if (!snap.exists()) return;
-          const m = snap.data();
+          const mSnap = await t.get(matchRef);
+          if (!mSnap.exists()) return;
+          const m = mSnap.data();
           if ((m.currentIndex || 0) !== currentIdx) return; // someone advanced already
           const q = (m.questions || [])[currentIdx];
-          // mark missed entry for assigned
           const answered = m.answered || {};
-          if (q && q.assignedTo) {
+          if (q && q.assignedTo && !answered[`${currentIdx}_${q.assignedTo}`]) {
             // record a missed answer (no score change)
             answered[`${currentIdx}_${q.assignedTo}`] = { selected: null, correct: false, missed: true, at: nowMillis(), playerId: q.assignedTo };
           }
-          // advance index
-          t.update(doc(db, 'matches', matchRef.id), { answered, currentIndex: (currentIdx + 1), questionStartEpoch: Date.now(), updatedAt: serverTimestamp() });
+          t.update(matchRef, { answered, currentIndex: (currentIdx + 1), questionStartEpoch: Date.now(), updatedAt: serverTimestamp() });
         });
       } catch (e) { console.warn('auto-advance failed', e); }
     }, remaining * 1000);
   } catch (e) { console.warn('startQuestionTimer failed', e); }
 }
+
 
 // improved sound player that prefers audio asset files (you said correct1-12 / wrong1-22 exist)
 function playMatchSoundAsset(type) {
@@ -2756,7 +2762,9 @@ function renderMatchUI(match, matchRef){
     </div>
     <div style="margin-top:8px">${qHeader}</div>
     <div style="margin-top:8px" id="choicesWrap">${choiceHtml}</div>
-    <div id="matchFeedback" style="margin-top:10px;min-height:28px"></div>
+        <div id="matchFeedback" style="margin-top:10px;min-height:28px"></div>
+    <div id="matchProgress" style="margin-top:6px" class="small-muted">Q${currentIndex+1}/${totalQuestions}</div>
+
   `;
 
   // after DOM injection: allow avatar click to open profile
@@ -2781,15 +2789,13 @@ function renderMatchUI(match, matchRef){
       const choiceIdx = Number(ch.getAttribute('data-choice'));
       const pid = getVerifiedStudentId();
       if(!pid) { toast('Verify as student to play'); return; }
-      // enforce assigned player only (first-answer)
       if (q && q.assignedTo && String(pid) !== String(q.assignedTo)) {
-        // allow answering if assigned missed but user still can? for now block
         toast('Not your turn to answer');
         return;
       }
       try {
-        // prevent double-click UI while tx runs
         ch.style.pointerEvents = 'none';
+        // run transaction: read -> compute -> write
         await runTransaction(db, async (t) => {
           const snap = await t.get(matchRef);
           if(!snap.exists()) throw new Error('match missing');
@@ -2802,45 +2808,42 @@ function renderMatchUI(match, matchRef){
           const qobj = m.questions[currentIdx];
           const correctArr = Array.isArray(qobj.correct) ? qobj.correct.map(Number) : [Number(qobj.correct)];
           const isCorrect = correctArr.includes(choiceIdx);
-          // update score
           const players = m.players || [];
           const pIdx = players.findIndex(p => String(p.playerId) === String(pid));
           if(pIdx === -1) throw new Error('You are not part of this match');
           const delta = isCorrect ? 2 : (m.wrongPenalty === 'sub1' ? -1 : 0);
           players[pIdx].score = Math.max(0, (players[pIdx].score || 0) + delta);
-          // logs + answered map
           const logs = m.logs || [];
           logs.push({ type:'answer', playerId: pid, choice: choiceIdx, correct: isCorrect, delta, at: nowMillis() });
           answered[`${currentIdx}_${pid}`] = { selected: choiceIdx, correct: isCorrect, at: nowMillis(), playerId: pid };
-          // if correct -> advance immediately; if wrong -> do not advance (others may answer)
           let newIndex = currentIdx;
           if (isCorrect) newIndex = currentIdx + 1;
-          // update questionStartEpoch when we advance (so new clients get fresh timer)
           t.update(matchRef, { players, logs, answered, currentIndex: newIndex, questionStartEpoch: (newIndex !== currentIdx) ? Date.now() : (m.questionStartEpoch || Date.now()), updatedAt: serverTimestamp() });
         });
 
-        // play sound + show feedback
-        const lastAns = (match.answered ? match.answered : {}); // local best-effort
-        if (/* optimistic check */ true) {
-          // fetch fresh match doc to know whether this choice was correct (the transaction succeeded)
-          const fresh = await getDoc(matchRef);
-          const freshData = fresh.exists() ? fresh.data() : null;
-          const wasCorrect = freshData && freshData.answered && freshData.answered[`${currentIndex}_${getVerifiedStudentId()}`] && freshData.answered[`${currentIndex}_${getVerifiedStudentId()}`].correct;
-          const fb = document.getElementById('matchFeedback');
-          if (wasCorrect) {
-            if (fb) fb.innerHTML = `<div style="color:var(--success,#1f7a3a);font-weight:700">Correct!</div>`;
-            playMatchSoundAsset('correct');
-          } else {
-            if (fb) fb.innerHTML = `<div style="color:var(--danger,#c02e2e);font-weight:700">Incorrect</div>`;
-            playMatchSoundAsset('wrong');
-          }
+        // transaction committed — fetch fresh doc so we can update UI immediately
+        const freshSnap = await getDoc(matchRef);
+        if(freshSnap.exists()){
+          const fresh = freshSnap.data();
+          renderMatchUI(fresh, matchRef); // re-render immediately, clears/starts timers
+        }
+
+        // play appropriate sound/feedback (determine correctness from fresh)
+        const freshData = (await getDoc(matchRef)).data();
+        const result = (freshData && freshData.answered && freshData.answered[`${currentIndex}_${pid}`]) || {};
+        const fb = document.getElementById('matchFeedback');
+        if(result.correct){
+          if (fb) fb.innerHTML = `<div style="color:var(--success,#1f7a3a);font-weight:700">Correct!</div>`;
+          playMatchSoundAsset('correct');
+        } else {
+          if (fb) fb.innerHTML = `<div style="color:var(--danger,#c02e2e);font-weight:700">Incorrect</div>`;
+          playMatchSoundAsset('wrong');
         }
       } catch(err){
         console.warn('submit answer failed', err);
         playMatchSoundAsset('wrong');
         toast(err.message || 'Answer failed');
       } finally {
-        // re-render will be triggered by onSnapshot; ensure timers cleared here
         clearMatchTimers();
       }
     };
@@ -2878,60 +2881,94 @@ async function onMatchFinish(match, matchRef){
   try {
     const players = match.players || [];
     if(players.length === 0) return;
-    // if explicit winner provided (e.g. surrender)
-    let winnerId = match.winner || null;
 
-    // if no explicit, compute by score
+    // winner: explicit field or highest score
+    let winnerId = match.winner || null;
     if(!winnerId){
-      players.sort((a,b)=> (b.score||0) - (a.score||0));
-      winnerId = players[0] ? players[0].playerId : null;
+      const sorted = (players || []).slice().sort((a,b)=> (b.score||0) - (a.score||0));
+      winnerId = sorted[0] ? sorted[0].playerId : null;
     }
     const losers = players.filter(p => String(p.playerId) !== String(winnerId)).map(p => p.playerId);
-    // scoring
+
     if(match.scoringModel === 'perQuestion'){
       const finalBonus = Math.floor((match.stake || 0) * 0.5);
+
       await runTransaction(db, async (t) => {
-        // update winner
+        // READ phase: read winner, losers, and game doc first
+        const reads = {};
         if(winnerId){
           const wRef = doc(db,'students', winnerId);
-          const wSnap = await t.get(wRef);
-          const w = wSnap.exists() ? wSnap.data() : {};
-          const before = Number(w.totalPoints || 0);
-          // compute add: winner's match-earned points if in match players
+          reads[winnerId] = await t.get(wRef);
+        }
+        for(const lid of losers){
+          const lRef = doc(db,'students', lid);
+          reads[lid] = await t.get(lRef);
+        }
+        const gameRef = doc(db,'games', match.gameId);
+        const gSnap = await t.get(gameRef);
+        // compute updates
+        // winner update
+        if(winnerId){
+          const wSnap = reads[winnerId];
+          const wData = wSnap.exists() ? wSnap.data() : {};
+          const before = Number(wData.totalPoints || 0);
           const topObj = players.find(p => String(p.playerId) === String(winnerId)) || {};
           const addPoints = Math.max(0, (Number(topObj.score||0) + finalBonus));
           const after = before + addPoints;
-          t.update(wRef, { totalPoints: after, totalWins: (Number(w.totalWins||0)+1), totalGames: (Number(w.totalGames||0)+1), updatedAt: serverTimestamp() });
-          await addDoc(collection(db,'pointsHistory'), { userId: winnerId, type:'game_win', amount: addPoints, before, after, referenceGameId: match.gameId, timestamp: nowMillis() });
+          // write winner update
+          const wRef = doc(db,'students', winnerId);
+          t.update(wRef, { totalPoints: after, totalWins: (Number(wData.totalWins||0)+1), totalGames: (Number(wData.totalGames||0)+1), updatedAt: serverTimestamp() });
+          // create pointsHistory doc inside transaction
+          const phRef = doc(collection(db,'pointsHistory'));
+          t.set(phRef, { userId: winnerId, type:'game_win', amount: addPoints, before, after, referenceGameId: match.gameId, timestamp: nowMillis() });
         }
-        // update losers
+        // losers updates
         for(const lid of losers){
-          const lRef = doc(db,'students', lid);
-          const lSnap = await t.get(lRef);
+          const lSnap = reads[lid];
           const L = lSnap.exists() ? lSnap.data() : {};
+          const lRef = doc(db,'students', lid);
           t.update(lRef, { totalLosses: (Number(L.totalLosses||0)+1), totalGames: (Number(L.totalGames||0)+1), updatedAt: serverTimestamp() });
-          await addDoc(collection(db,'pointsHistory'), { userId: lid, type:'game_loss', amount: 0, before: Number(L.totalPoints||0), after: Number(L.totalPoints||0), referenceGameId: match.gameId, timestamp: serverTimestamp() });
+          // pointsHistory for loser (no change in points)
+          const phRef2 = doc(collection(db,'pointsHistory'));
+          t.set(phRef2, { userId: lid, type:'game_loss', amount: 0, before: Number(L.totalPoints||0), after: Number(L.totalPoints||0), referenceGameId: match.gameId, timestamp: serverTimestamp() });
         }
-        // finalize match and mark game finished
+        // finalize match and game records
         t.update(matchRef, { archivedAt: serverTimestamp(), updatedAt: serverTimestamp() });
-        t.update(doc(db,'games', match.gameId), { status:'finished', updatedAt: serverTimestamp(), finishedAt: serverTimestamp() });
+        t.update(gameRef, { status:'finished', updatedAt: serverTimestamp(), finishedAt: serverTimestamp() });
       });
+
     } else if(match.scoringModel === 'winnerTakes'){
       const pool = (match.stake || 0) * (match.players ? match.players.length : 1);
+
       await runTransaction(db, async (t) => {
+        // READ phase
+        const reads = {};
         if(winnerId){
           const wRef = doc(db,'students', winnerId);
-          const wSnap = await t.get(wRef);
+          reads[winnerId] = await t.get(wRef);
+        }
+        for(const lid of losers){
+          const lRef = doc(db,'students', lid);
+          reads[lid] = await t.get(lRef);
+        }
+        const gameRef = doc(db,'games', match.gameId);
+        await t.get(gameRef);
+
+        // WRITE phase
+        if(winnerId){
+          const wSnap = reads[winnerId];
           const w = wSnap.exists() ? wSnap.data() : {};
           const before = Number(w.totalPoints || 0);
           const after = before + pool;
+          const wRef = doc(db,'students', winnerId);
           t.update(wRef, { totalPoints: after, totalWins: (Number(w.totalWins||0)+1), totalGames: (Number(w.totalGames||0)+1), updatedAt: serverTimestamp() });
-          await addDoc(collection(db,'pointsHistory'), { userId: winnerId, type:'game_win', amount: pool, before, after, referenceGameId: match.gameId, timestamp: nowMillis() });
+          const phRef = doc(collection(db,'pointsHistory'));
+          t.set(phRef, { userId: winnerId, type:'game_win', amount: pool, before, after, referenceGameId: match.gameId, timestamp: nowMillis() });
         }
         for(const lid of losers){
-          const lRef = doc(db,'students', lid);
-          const lSnap = await t.get(lRef);
+          const lSnap = reads[lid];
           const L = lSnap.exists() ? lSnap.data() : {};
+          const lRef = doc(db,'students', lid);
           t.update(lRef, { totalLosses: (Number(L.totalLosses||0)+1), totalGames: (Number(L.totalGames||0)+1), updatedAt: serverTimestamp() });
         }
         t.update(matchRef, { archivedAt: serverTimestamp(), updatedAt: serverTimestamp() });
@@ -2939,10 +2976,10 @@ async function onMatchFinish(match, matchRef){
       });
     }
 
-    // Level progression and notification
+    // level progression (outside the above transaction)
     await applyLevelProgressionForPlayers(match);
 
-    // notify players (best-effort) via notifications collection
+    // notify players
     try {
       await addDoc(collection(db,'notifications'), {
         type: 'match_finished',
@@ -2955,16 +2992,20 @@ async function onMatchFinish(match, matchRef){
       });
     } catch(e){}
 
-    toast('Match finished — results applied');
+    // UI
+    const winnerPlayer = players.find(p=>String(p.playerId) === String(winnerId));
+    toast(`Match finished — winner: ${winnerPlayer ? (winnerPlayer.playerName || `**${String(winnerId).slice(-4)}`) : winnerId}`);
 
-    // clear local active marker
+    // cleanup
     clearLocalActiveGame();
     await loadGames();
+
   } catch(e){
     console.error('onMatchFinish failed', e);
     toast('Match finalize failed');
   }
 }
+
 
 
 // apply level progression for players after a match
@@ -3092,6 +3133,15 @@ async function openPlayerProfileModal(studentId){
       <div style="text-align:right;margin-top:10px"><button id="closeProfile" class="btn btn-primary">Close</button></div>
     </div>`;
     showModal(html, { title:'Player profile' });
+    // ensure modal is above match overlay (matchRoot might exist)
+    try {
+      if (typeof matchRoot !== 'undefined' && matchRoot && matchRoot.style) {
+        const matchZ = parseInt(getComputedStyle(matchRoot).zIndex || '1000', 10) || 1000;
+        modalRoot.style.zIndex = (matchZ + 10).toString();
+      } else {
+        modalRoot.style.zIndex = '99999';
+      }
+    } catch(e){ /* ignore styling failures */ }
     document.getElementById('closeProfile').onclick = closeModal;
   } catch(e){ console.error(e); }
 }
