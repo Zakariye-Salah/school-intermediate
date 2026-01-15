@@ -1922,15 +1922,48 @@ function showGameOverview(game){
   async function renderForGameDoc(gDoc){
     const meId = String(getVerifiedStudentId() || '');
     const isCreatorNow = String(meId) === String(gDoc.creatorId);
-    // if current user is the creator, ensure we are monitoring ready flags so auto-start works
+  
+    // Ensure creator's client watches ready flags so auto-start works
     if (isCreatorNow) {
-      // compute players & allReady at render time
-      const playersArr = Array.isArray(gDoc.players) ? gDoc.players : [];
-      const allReady = playersArr.length >= 2 && playersArr.every(p => Boolean(p.ready) === true);
-      const meId = String(getVerifiedStudentId() || '');
-    
-      // Ready toggle for the creator
+      try { monitorGameReadyAndAutoStart(gDoc.id); } catch(e){ console.warn('monitor start failed', e); }
+    }
+  
+    // players display — show only masked last-4 for every player (no full IDs)
+    const playersDisplay = (Array.isArray(gDoc.players) && gDoc.players.length) ? gDoc.players.map(p => {
+      const rawId = p.playerId || p.playerName || '';
+      const masked = rawId ? `**${String(rawId).slice(-4)}` : '—';
+      const readyFlag = p.ready ? ' (ready)' : '';
+      return `${masked}${readyFlag}`;
+    }).join(', ') : '—';
+    const playersEl = modalRoot.querySelector('#overviewPlayers');
+    if(playersEl) playersEl.textContent = playersDisplay;
+  
+    // status
+    const statusEl = modalRoot.querySelector('#overviewStatus');
+    if(statusEl) statusEl.textContent = gDoc.status || 'waiting';
+  
+    // actions area (grab once)
+    const actionsWrap = modalRoot.querySelector('#overviewActions');
+    if(!actionsWrap) return;
+    actionsWrap.innerHTML = ''; // clear previous controls
+  
+    // view creator always
+    const viewCreatorBtn = document.createElement('button');
+    viewCreatorBtn.className = 'btn';
+    viewCreatorBtn.textContent = 'View creator';
+    viewCreatorBtn.onclick = () => { closeModal(); openCreatorProfileForGame(gDoc); };
+    actionsWrap.appendChild(viewCreatorBtn);
+  
+    // helper values
+    const playersArr = Array.isArray(gDoc.players) ? gDoc.players : [];
+    const allReady = playersArr.length >= 2 && playersArr.every(p => Boolean(p.ready) === true);
+    const amPlayerNow = playersArr.some(p => String(p.playerId) === meId);
+  
+    if (isCreatorNow) {
+      // Creator: add creator-ready toggle, requests, edit, delete, cancel, start
       const creatorPlayer = playersArr.find(p => String(p.playerId) === meId) || {};
+  
+      // Creator Ready / Unready
       const creatorReadyBtn = document.createElement('button');
       creatorReadyBtn.className = 'btn';
       creatorReadyBtn.textContent = (creatorPlayer && creatorPlayer.ready) ? 'Unready' : 'Ready';
@@ -1938,26 +1971,26 @@ function showGameOverview(game){
         try {
           const newReady = !(creatorPlayer && creatorPlayer.ready);
           await setPlayerReady(gDoc.id, meId, newReady);
-          // UI will update because onSnapshot re-renders; no manual DOM update needed
+          // onSnapshot will re-render UI
         } catch (err) {
           console.warn('creator ready toggle failed', err);
           toast('Failed to toggle ready');
         }
       };
       actionsWrap.appendChild(creatorReadyBtn);
-    
+  
       const requestsBtn = document.createElement('button'); requestsBtn.className='btn'; requestsBtn.textContent='Requests';
       requestsBtn.onclick = () => { closeModal(); showJoinRequestsForGame(gDoc.id); };
       actionsWrap.appendChild(requestsBtn);
-    
+  
       const editBtn = document.createElement('button'); editBtn.className='btn'; editBtn.textContent='Edit';
       editBtn.onclick = () => { closeModal(); openEditGameModal(gDoc); };
       actionsWrap.appendChild(editBtn);
-    
+  
       const delBtn = document.createElement('button'); delBtn.className='btn'; delBtn.textContent='Delete';
       delBtn.onclick = () => { closeModal(); deleteGameConfirm(gDoc); };
       actionsWrap.appendChild(delBtn);
-    
+  
       const cancelBtn = document.createElement('button'); cancelBtn.className='btn';
       cancelBtn.textContent = gDoc.status === 'waiting' ? 'Cancel' : 'Remove';
       cancelBtn.onclick = () => {
@@ -1965,8 +1998,8 @@ function showGameOverview(game){
         expireAndRefund(gDoc).then(()=>{ toast('Game cancelled'); closeModal(); loadGames(); }).catch(()=>{ toast('Cancel failed'); });
       };
       actionsWrap.appendChild(cancelBtn);
-    
-      // Start button: require at least 2 players AND everyone ready
+  
+      // Start: require at least 2 players AND all ready
       const startBtn = document.createElement('button');
       startBtn.className = 'btn btn-primary';
       startBtn.textContent = 'Start';
@@ -1981,94 +2014,40 @@ function showGameOverview(game){
         }
       };
       actionsWrap.appendChild(startBtn);
-    }
-    
-
-    const amPlayerNow = Array.isArray(gDoc.players) && gDoc.players.some(p => String(p.playerId) === meId);
-    // players display
-    // players display
-// players display — show only masked last-4 for every player (no full IDs)
-const playersDisplay = (Array.isArray(gDoc.players) && gDoc.players.length) ? gDoc.players.map(p => {
-  // use playerId when available; otherwise fallback to playerName
-  const rawId = p.playerId || p.playerName || '';
-  const masked = rawId ? `**${String(rawId).slice(-4)}` : '—';
-  const readyFlag = p.ready ? ' (ready)' : '';
-  return `${masked}${readyFlag}`;
-}).join(', ') : '—';
-    const playersEl = modalRoot.querySelector('#overviewPlayers');
-    if(playersEl) playersEl.textContent = playersDisplay;
-
-    // status
-    const statusEl = modalRoot.querySelector('#overviewStatus');
-    if(statusEl) statusEl.textContent = gDoc.status || 'waiting';
-
-    // actions area
-    const actionsWrap = modalRoot.querySelector('#overviewActions');
-    if(!actionsWrap) return;
-    // build buttons
-    actionsWrap.innerHTML = '';
-    // view creator always
-    const viewCreatorBtn = document.createElement('button');
-    viewCreatorBtn.className = 'btn';
-    viewCreatorBtn.textContent = 'View creator';
-    viewCreatorBtn.onclick = () => { closeModal(); openCreatorProfileForGame(gDoc); };
-    actionsWrap.appendChild(viewCreatorBtn);
-
-    if(isCreatorNow){
-      const requestsBtn = document.createElement('button'); requestsBtn.className='btn'; requestsBtn.textContent='Requests';
-      requestsBtn.onclick = () => { closeModal(); showJoinRequestsForGame(gDoc.id); };
-      actionsWrap.appendChild(requestsBtn);
-
-      const editBtn = document.createElement('button'); editBtn.className='btn'; editBtn.textContent='Edit';
-      editBtn.onclick = () => { closeModal(); openEditGameModal(gDoc); };
-      actionsWrap.appendChild(editBtn);
-
-      const delBtn = document.createElement('button'); delBtn.className='btn'; delBtn.textContent='Delete';
-      delBtn.onclick = () => { closeModal(); deleteGameConfirm(gDoc); };
-      actionsWrap.appendChild(delBtn);
-
-      const cancelBtn = document.createElement('button'); cancelBtn.className='btn'; cancelBtn.textContent = gDoc.status === 'waiting' ? 'Cancel' : 'Remove';
-      cancelBtn.onclick = () => {
-        if(!confirm('Cancel this game? This will refund reserved points.')) return;
-        expireAndRefund(gDoc).then(()=>{ toast('Game cancelled'); closeModal(); loadGames(); }).catch(()=>{ toast('Cancel failed'); });
-      };
-      actionsWrap.appendChild(cancelBtn);
-
-      const startBtn = document.createElement('button'); startBtn.className='btn btn-primary'; startBtn.textContent='Start';
-      startBtn.disabled = (gDoc.opponentType === 'student' && (!Array.isArray(gDoc.players) || gDoc.players.length < 2));
-      startBtn.onclick = async () => {
-        try { await startMatchForGame(gDoc.id); closeModal(); } catch(e){ console.warn(e); toast('Start failed'); }
-      };
-      actionsWrap.appendChild(startBtn);
-    } else if(amPlayerNow){
+  
+    } else if (amPlayerNow) {
+      // Player view (not creator): ready/leave/close
+      const myP = playersArr.find(p => String(p.playerId) === meId) || {};
       const readyBtn = document.createElement('button'); readyBtn.className='btn';
-      const myP = gDoc.players.find(p => String(p.playerId) === meId) || {};
       readyBtn.textContent = (myP && myP.ready) ? 'Unready' : 'Ready';
       readyBtn.onclick = async () => {
         try { await setPlayerReady(gDoc.id, meId, !(myP && myP.ready)); } catch(e){ console.warn(e); toast('Ready toggle failed'); }
       };
       actionsWrap.appendChild(readyBtn);
-
+  
       const leaveBtn = document.createElement('button'); leaveBtn.className='btn'; leaveBtn.textContent='Leave';
       leaveBtn.onclick = async () => {
         if(!confirm('Leave this game?')) return;
         try { await leaveGame(gDoc.id, meId); closeModal(); await loadGames(); } catch(e){ console.warn(e); toast('Leave failed'); }
       };
       actionsWrap.appendChild(leaveBtn);
-
+  
       const closeBtn = document.createElement('button'); closeBtn.className='btn btn-primary'; closeBtn.textContent='Close';
       closeBtn.onclick = closeModal;
       actionsWrap.appendChild(closeBtn);
+  
     } else {
+      // Not a player: show Request to join / Close
       const joinBtn = document.createElement('button'); joinBtn.className='btn btn-primary'; joinBtn.textContent='Request to join';
       joinBtn.onclick = () => { closeModal(); onPlayClick(gDoc); };
       actionsWrap.appendChild(joinBtn);
-
+  
       const closeBtn = document.createElement('button'); closeBtn.className='btn'; closeBtn.textContent='Close';
       closeBtn.onclick = closeModal;
       actionsWrap.appendChild(closeBtn);
     }
   }
+  
 
   // subscribe the specific game doc for live updates while modal open
   const gRef = doc(db,'games', game.id);
