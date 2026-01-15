@@ -372,6 +372,159 @@ async function initPage(){
   filterStudentsBtn.classList.add('btn-ghost');
 }
 
+async function leaveGame(gameId, studentId){
+  try {
+    await runTransaction(db, async (t) => {
+      const gRef = doc(db,'games', gameId);
+      const sRef = doc(db,'students', studentId);
+      const gSnap = await t.get(gRef);
+      if(!gSnap.exists()) throw new Error('Game missing');
+      const g = gSnap.data();
+      const reserved = g.reservedPoints || {};
+      const players = Array.isArray(g.players) ? g.players.slice() : [];
+      // remove player entry
+      const idx = players.findIndex(p => String(p.playerId) === String(studentId));
+      if(idx !== -1) players.splice(idx, 1);
+
+      // if they had reserved points, refund
+      const refundAmount = Number(reserved[studentId] || 0);
+      if(refundAmount > 0){
+        const sSnap = await t.get(sRef);
+        if(sSnap.exists()){
+          const before = Number((sSnap.data().totalPoints || 0));
+          t.update(sRef, { totalPoints: before + refundAmount, updatedAt: serverTimestamp() });
+          await addDoc(collection(db,'pointsHistory'), { userId: studentId, type:'game_refund_leave', amount: refundAmount, before, after: before + refundAmount, referenceGameId: gameId, timestamp: nowMillis() });
+        }
+        // remove reservation
+        delete reserved[studentId];
+      }
+
+      // if after removal players empty and game was waiting, mark expired
+      let newStatus = g.status;
+      if((players.length === 0) && g.status === 'waiting') newStatus = 'expired';
+
+      t.update(gRef, { players, reservedPoints: reserved, status: newStatus, updatedAt: serverTimestamp() }, { merge:true });
+    });
+
+    // if the leaving user is local user, clear local active marker
+    if(String(getVerifiedStudentId()) === String(studentId)) clearLocalActiveGame();
+    await loadGames();
+    toast('Left game — points refunded if any');
+  } catch(e){
+    console.warn('leaveGame failed', e);
+    throw e;
+  }
+}
+
+
+// show pending join attempts for a game (creator only)
+async function showJoinRequestsForGame(gameId){
+  try {
+    const gSnap = await getDoc(doc(db,'games', gameId));
+    if(!gSnap.exists()) return toast('Game not found');
+    const g = gSnap.data();
+    const me = getVerifiedStudentId();
+    if(String(me) !== String(g.creatorId)) return toast('Only creator may manage requests');
+
+    // query notifications join_attempt to this creator for this game (not seen)
+    const q = query(collection(db,'notifications'), where('to','==', me), where('gameId','==', gameId), where('type','==','join_attempt'), where('seen','==', false), orderBy('createdAt','desc'));
+    const snaps = await getDocs(q);
+    if(snaps.size === 0) return showModal(`<div class="small-muted">No requests</div>`, { title: 'Join requests' });
+
+    let html = '<div style="display:flex;flex-direction:column;gap:8px">';
+    const rows = [];
+    snaps.forEach(docu => {
+      const n = docu.data();
+      const fromId = n.from || '—';
+      const last4 = `**${String(fromId).slice(-4)}`;
+      rows.push({ id: docu.id, fromId, fromName: n.fromName || fromId, createdAt: n.createdAt });
+    });
+
+    for(const r of rows){
+      html += `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+        <div>
+          <div style="font-weight:700">${escapeHtml(r.fromName)}</div>
+          <div class="small-muted">ID ${escapeHtml('**'+String(r.fromId).slice(-4))}</div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button data-from="${escapeHtml(r.fromId)}" class="acceptReq btn btn-primary">Accept</button>
+          <button data-notif="${escapeHtml(r.id)}" class="rejectReq btn">Reject</button>
+        </div>
+      </div>`;
+    }
+    html += '</div>';
+    showModal(html, { title: 'Join requests' });
+
+    // wire actions
+    modalRoot.querySelectorAll('.acceptReq').forEach(b => {
+      b.onclick = async (ev) => {
+        const requester = ev.currentTarget.getAttribute('data-from');
+        closeModal();
+        try {
+          await acceptJoinRequest(gameId, requester);
+          toast('Accepted and joined');
+          await loadGames();
+        } catch(e){ console.warn(e); toast('Accept failed'); }
+      };
+    });
+    modalRoot.querySelectorAll('.rejectReq').forEach(b => {
+      b.onclick = async (ev) => {
+        const notifId = ev.currentTarget.getAttribute('data-notif');
+        try { await updateDoc(doc(db,'notifications', notifId), { seen:true, handled:true, handledAt: serverTimestamp() }); } catch(e){ }
+        toast('Rejected');
+        closeModal();
+      };
+    });
+
+  } catch(e){ console.warn('showJoinRequestsForGame failed', e); toast('Failed to fetch requests'); }
+}
+
+// accept a request: transactionally join the requester (creator -> accept)
+async function acceptJoinRequest(gameId, requesterId){
+  try {
+    await runTransaction(db, async (t) => {
+      const gRef = doc(db,'games', gameId);
+      const sRef = doc(db,'students', requesterId);
+      const gSnap = await t.get(gRef);
+      if(!gSnap.exists()) throw new Error('Game not found');
+      const g = gSnap.data();
+      if(g.status !== 'waiting') throw new Error('Game no longer waiting');
+      const sSnap = await t.get(sRef);
+      if(!sSnap.exists()) throw new Error('Requester not found');
+      const sdata = sSnap.data();
+      const available = Number(sdata.totalPoints || 0);
+      if(available < g.stake) throw new Error('Requester has insufficient points');
+
+      // deduct requester stake and set reserved
+      const newPoints = Math.max(0, available - g.stake);
+      t.update(sRef, { totalPoints: newPoints });
+
+      const reserved = g.reservedPoints || {};
+      reserved[requesterId] = (reserved[requesterId] || 0) + g.stake;
+
+      const players = Array.isArray(g.players) ? g.players.slice() : [];
+      players.push({
+        playerId: requesterId,
+        joinedAt: nowSeconds(),
+        playerName: sdata.name || '',
+        avatarFrame: sdata.avatarFrame || null,
+        className: sdata.className || ''
+      });
+
+      t.update(gRef, { reservedPoints: reserved, players, updatedAt: serverTimestamp() }, { merge:true });
+
+      // mark related notifications seen/handled
+      const notifQ = query(collection(db,'notifications'), where('to','==', g.creatorId), where('from','==', requesterId), where('gameId','==', gameId), where('type','==','join_attempt'));
+      const notifSnaps = await getDocs(notifQ);
+      notifSnaps.forEach(async nDoc => {
+        try { await updateDoc(doc(db,'notifications', nDoc.id), { seen:true, handled:true, handledAt: serverTimestamp() }); } catch(e){}
+      });
+    });
+  } catch(e){
+    console.warn('acceptJoinRequest failed', e);
+    throw e;
+  }
+}
 
 // --- notifications subscription for current student (creators get notified) ---
 let notificationsUnsub = null;
@@ -386,31 +539,35 @@ function subscribeNotificationsForCurrentStudent() {
         if(ch.type === 'added') {
           const n = ch.doc.data();
           if(!n.seen) {
-            // very simple UX: toast + small modal if join_attempt
             if(n.type === 'join_attempt') {
               toast(`Someone tried to join your game "${n.gameName}"`);
-              // option: open modal with accept/join link
-              showModal(`<div>
-                 <div><strong>Player ${escapeHtml(n.fromName||n.from)}</strong> tried to join your game <strong>${escapeHtml(n.gameName)}</strong>.</div>
-                 <div style="margin-top:10px"><button id="notifJoin" class="btn btn-primary">Open game</button> <button id="notifClose" class="btn">Close</button></div>
-               </div>`, { title: 'Join attempt' });
-              document.getElementById('notifClose').onclick = () => { closeModal(); };
-              document.getElementById('notifJoin').onclick = async () => {
+              showModal(`
+                <div>
+                  <div>
+                    <strong>${escapeHtml(n.fromName || n.from)}</strong>
+                    tried to join your game
+                    <strong>${escapeHtml(n.gameName)}</strong>
+                  </div>
+                  <div style="margin-top:10px">
+                    <button id="notifOpenRequests" class="btn btn-primary">View requests</button>
+                    <button id="notifClose" class="btn">Close</button>
+                  </div>
+                </div>
+              `, { title: 'Join attempt' });
+    
+              document.getElementById('notifClose').onclick = closeModal;
+              document.getElementById('notifOpenRequests').onclick = () => {
                 closeModal();
-                // open game to view/join
-                const gSnap = await getDoc(doc(db,'games', n.gameId));
-                if(gSnap.exists()) {
-                  const g = { id: gSnap.id, ...gSnap.data() };
-                  openMatchOverlay(g.id).catch(()=>{ showModal(`<div>Open game page: <a href="games.html?game=${g.id}">Open</a></div>`,{title:'Open'}); });
-                } else {
-                  toast('Game no longer available');
-                }
+                showJoinRequestsForGame(n.gameId); // ✅ CORRECT
               };
             } else {
               toast(n.message || 'Notification');
             }
-            // mark as seen (best-effort)
-            try { updateDoc(doc(db,'notifications', ch.doc.id), { seen: true, seenAt: serverTimestamp() }); } catch(e){ /* ignore */ }
+    
+            updateDoc(doc(db,'notifications', ch.doc.id), {
+              seen: true,
+              seenAt: serverTimestamp()
+            }).catch(()=>{});
           }
         }
       });
@@ -428,8 +585,10 @@ async function expireAndRefund(game){
       const gSnap = await t.get(gRef);
       if(!gSnap.exists()) return;
       const g = gSnap.data();
-      if(g.status === 'expired' || g.status === 'deleted' || g.status === 'finished') return;
+      if(['expired','deleted','finished'].includes(g.status || '')) return;
+
       const reserved = g.reservedPoints || {};
+      // refund each reserved entry
       for(const uid of Object.keys(reserved)){
         const amount = Number(reserved[uid] || 0);
         if(amount <= 0) continue;
@@ -439,12 +598,33 @@ async function expireAndRefund(game){
         const sData = sSnap.data();
         const before = Number(sData.totalPoints || 0);
         t.update(sRef, { totalPoints: before + amount, updatedAt: serverTimestamp() });
-        await addDoc(collection(db,'pointsHistory'), { userId: uid, type:'game_refund_expire', amount, before, after: before + amount, referenceGameId: game.id, timestamp: nowMillis() });
+        // record history (best-effort)
+        await addDoc(collection(db,'pointsHistory'), {
+          userId: uid, type:'game_refund_expire', amount, before, after: before + amount,
+          referenceGameId: game.id, timestamp: nowMillis()
+        });
       }
-      t.update(gRef, { status:'expired', updatedAt: serverTimestamp(), reservedPoints: {} });
+
+      // mark game expired and clear reservedPoints/players so it disappears
+      t.update(gRef, { status:'expired', reservedPoints: {}, players: [], updatedAt: serverTimestamp(), expiredAt: serverTimestamp() });
     });
-  } catch(e){ console.warn('expireAndRefund failed', e); }
+
+    // update local cache/UI
+    gamesCache = gamesCache.filter(g => String(g.id) !== String(game.id));
+    renderGames('students');
+  } catch(e){
+    console.warn('expireAndRefund failed', e);
+  }
 }
+
+if (game.creatorId === getVerifiedStudentId()) {
+  const reqBtn = document.createElement('button');
+  reqBtn.className = 'btn btn-small';
+  reqBtn.textContent = 'Requests';
+  reqBtn.onclick = () => showJoinRequestsForGame(game.id);
+  card.appendChild(reqBtn);
+}
+
 
 async function loadGames(){
   try {
@@ -453,20 +633,33 @@ async function loadGames(){
     gamesCache = [];
     snaps.forEach(d => gamesCache.push({ id:d.id, ...d.data() }));
 
-    // expire sweep (client-side): refund and mark expired for games past expiresAt
     const now = Date.now();
-    const toExpire = gamesCache.filter(g => g.expiresAt && new Date(g.expiresAt).getTime() < now && !['expired','deleted','finished'].includes(g.status || ''));
-    for(const g of toExpire){
-      // best-effort; don't block UI
-      expireAndRefund(g).catch(()=>{});
-    }
 
-    // remove deleted/expired/finished from local view
-    gamesCache = gamesCache.filter(g => !['deleted'].includes(g.status || '') && !(g.expiresAt && new Date(g.expiresAt).getTime() < now));
+    // 1) expire long-dead games (expiresAt in past)
+    const toExpire = gamesCache.filter(g => g.expiresAt && new Date(g.expiresAt).getTime() < now && !['expired','deleted','finished'].includes(g.status || ''));
+    for(const g of toExpire){ expireAndRefund(g).catch(()=>{}); }
+
+    // 2) special waiting-timeout: if a game is 'waiting' and was created >60s ago and still lacks opponents -> expire/refund
+    const waitingTimeoutMs = 60 * 1000;
+    const waitingToCancel = gamesCache.filter(g => {
+      try {
+        const created = g.createdAt ? (typeof g.createdAt === 'number' ? g.createdAt : (new Date(g.createdAt).getTime ? new Date(g.createdAt).getTime() : Date.parse(g.createdAt))) : 0;
+        // some docs use serverTimestamp() -> object; try fallback
+        const createdAtMs = created || (g.createdAt && g.createdAt.toMillis ? g.createdAt.toMillis() : 0);
+        const isOld = createdAtMs && (now - createdAtMs) > waitingTimeoutMs;
+        const playersCount = Array.isArray(g.players) ? g.players.length : 0;
+        return g.status === 'waiting' && isOld && playersCount < 2;
+      } catch(e){ return false; }
+    });
+    for(const g of waitingToCancel){ expireAndRefund(g).catch(()=>{}); }
+
+    // remove deleted/expired/finished from local view and expired by created sweep above
+    gamesCache = gamesCache.filter(g => !['deleted','expired','finished'].includes((g.status||'')) && !(g.expiresAt && new Date(g.expiresAt).getTime() < now));
 
     renderGames('students');
   } catch(e){ console.error('loadGames failed', e); toast('Failed to load games'); }
 }
+
 
 
 /* ---------- render games + bots list ---------- */
@@ -507,53 +700,71 @@ function renderGames(mode='students'){
 function appendGameCard(g){
   const card = document.createElement('div'); card.className = 'game-card';
   const left = document.createElement('div'); left.className='game-left';
-  // Avatar (image if creatorFrame or avatar URL available; fallback to initials)
+
+  // Avatar - prefer explicit avatar URL fields, otherwise initials. Make round.
   const avatar = document.createElement('div'); avatar.className='avatar';
-  const initials = (g.creatorName ? g.creatorName.split(' ').map(x=>x[0]).join('').slice(0,2) : '??');
-  if(g.creatorFrame && typeof g.creatorFrame === 'string' && g.creatorFrame.startsWith('http')) {
-    // if you stored avatar URL in creatorFrame (maybe you use avatar field) — try to use actual avatar first
+  const avatarUrl = g.creatorAvatar || g.creatorAvatarUrl || g.creatorFrame || g.avatar || null;
+  if(avatarUrl && typeof avatarUrl === 'string' && avatarUrl.startsWith('http')){
     const img = document.createElement('img');
-    img.src = g.creatorFrame;
-    img.style.width = '40px'; img.style.height = '40px'; img.style.borderRadius = '8px'; img.style.objectFit = 'cover';
+    img.src = avatarUrl;
+    img.style.width = '48px'; img.style.height = '48px'; img.style.borderRadius = '50%'; img.style.objectFit = 'cover';
     avatar.appendChild(img);
   } else {
-    avatar.textContent = initials;
+    avatar.textContent = (g.creatorName ? g.creatorName.split(' ').map(x=>x[0]).join('').slice(0,2) : '??');
+    avatar.style.width = '48px'; avatar.style.height = '48px'; avatar.style.borderRadius = '50%';
+    avatar.style.display = 'flex'; avatar.style.alignItems = 'center'; avatar.style.justifyContent = 'center';
+    avatar.style.fontWeight = '700';
     if(g.creatorFrame) avatar.classList.add(`frame-${g.creatorFrame}`);
   }
 
   const meta = document.createElement('div'); meta.className='game-meta';
   const title = document.createElement('div'); title.className='game-title'; title.textContent = `${g.name || 'Untitled'} ${g.isPublic? '':'(Private)'}`;
+
+  // single compact sub line (no duplicate status)
   const sub = document.createElement('div'); sub.className='game-sub small-muted';
-  // format creator line per your request: masked id (last digits), full name, stakes, seconds
   sub.innerHTML = formatCreatorLine(g);
+
   meta.appendChild(title); meta.appendChild(sub);
   left.appendChild(avatar); left.appendChild(meta);
 
   const right = document.createElement('div'); right.className='game-right';
   const tag = document.createElement('div'); tag.className = `tag ${g.isPublic? 'public':'private'}`; tag.textContent = g.isPublic? 'Public' : 'Private';
-  const status = document.createElement('div'); status.className='small-muted'; status.textContent = g.status || 'waiting';
+
   const playBtn = document.createElement('button'); playBtn.className='btn btn-primary'; playBtn.textContent = '▶ Play'; playBtn.onclick = () => onPlayClick(g);
   const infoBtn = document.createElement('button'); infoBtn.className='btn'; infoBtn.textContent='ℹ'; infoBtn.onclick = () => showGameOverview(g);
 
-  // view button (always present) -> opens creator+game modal
-  const viewBtn = document.createElement('button'); viewBtn.className='btn'; viewBtn.textContent='View'; viewBtn.onclick = () => openCreatorProfileForGame(g);
+  right.appendChild(tag); right.appendChild(playBtn); right.appendChild(infoBtn);
 
-  right.appendChild(tag); right.appendChild(status); right.appendChild(playBtn); right.appendChild(infoBtn); right.appendChild(viewBtn);
+  const me = String(getVerifiedStudentId());
 
-  // show creator-only controls & code (creator sees code/edit/delete)
-  const me = getVerifiedStudentId();
+  // if current user is a participant (in players) -> show Leave button
+  const amPlayer = Array.isArray(g.players) && g.players.some(p => String(p.playerId) === me);
+  if(amPlayer){
+    const leaveBtn = document.createElement('button'); leaveBtn.className='btn'; leaveBtn.textContent='Leave'; 
+    leaveBtn.onclick = () => {
+      if(!confirm('Leave this game? You will be removed and reserved points returned.')) return;
+      leaveGame(g.id, me).catch(err=>{ console.warn(err); toast('Failed to leave'); });
+    };
+    right.appendChild(leaveBtn);
+  }
+
+  // if current user is the creator -> show code + Cancel (not duplicate edit/delete on list)
   if(String(me) === String(g.creatorId)){
     const codeDiv = document.createElement('div'); codeDiv.className='small-muted'; codeDiv.style.marginTop='6px';
     codeDiv.textContent = g.isPublic ? `Public` : `Code: ${g.code || '—'}`;
-    const editBtn = document.createElement('button'); editBtn.className='btn'; editBtn.textContent='Edit'; editBtn.onclick = () => openEditGameModal(g);
-    const delBtn = document.createElement('button'); delBtn.className='btn'; delBtn.textContent='Delete'; delBtn.onclick = () => deleteGameConfirm(g);
+    const cancelBtn = document.createElement('button'); cancelBtn.className='btn'; cancelBtn.textContent = (g.status === 'waiting') ? 'Cancel' : 'Remove';
+    cancelBtn.onclick = () => {
+      if(!confirm('Cancel this game? This will refund reserved points.')) return;
+      // cancel or delete -> reuse expireAndRefund to refund and mark
+      expireAndRefund(g).then(()=>{ toast('Game cancelled'); }).catch(()=>{ toast('Cancel failed'); });
+    };
     right.appendChild(codeDiv);
-    right.appendChild(editBtn);
-    right.appendChild(delBtn);
+    right.appendChild(cancelBtn);
   }
 
   card.appendChild(left); card.appendChild(right); gamesList.appendChild(card);
 }
+
 
 
 async function openCreatorProfileForGame(game){
@@ -1049,9 +1260,21 @@ function renderHeaderMiniProfile(){
 
 /* ---------- subscribeStats (unchanged) ---------- */
 function subscribeStats(){
-  statActive.textContent = gamesCache.filter(g => g.status !== 'finished' && (!g.expiresAt || new Date(g.expiresAt).getTime() > Date.now())).length;
-  statInvites.textContent = gamesCache.filter(g => g.players && g.players.some(p => p.playerId === currentStudentId) && g.status === 'waiting').length;
+  const now = Date.now();
+  const activeCount = gamesCache.filter(g => g.status !== 'finished' && g.status !== 'deleted' && (!g.expiresAt || new Date(g.expiresAt).getTime() > now)).length;
+  statActive.textContent = activeCount;
+
+  const invitesCount = gamesCache.filter(g => g.players && g.players.some(p => p.playerId === currentStudentId) && g.status === 'waiting').length;
+  statInvites.textContent = invitesCount;
+
+  if(typeof statBots !== 'undefined' && statBots) statBots.textContent = botsCache.length || 0;
+
+  // joined games (playing or waiting) for this student
+  const joined = gamesCache.filter(g => g.players && g.players.some(p => p.playerId === currentStudentId) && (g.status === 'waiting' || g.status === 'playing')).length;
+  const statJoinedEl = document.getElementById('statJoined');
+  if(statJoinedEl) statJoinedEl.textContent = joined;
 }
+
 
 /* ---------- code search (unchanged) ---------- */
 async function onCodeSearch(){
@@ -1199,6 +1422,7 @@ function openGameMoreMenu(game){
     openMatchOverlayForSpectate(game.id);
   };
 }
+
 async function openEditGameModal(game) {
   // only allow the creator
   const me = getVerifiedStudentId();
