@@ -29,6 +29,9 @@ const statActive = document.getElementById('statActive');
 const statInvites = document.getElementById('statInvites');
 const statBots = document.getElementById('statBots');
 
+const autoStartTimers = new Map(); // gameId -> timeoutId
+
+
 let currentUser = null;
 let currentRole = null; // 'student' | 'admin' | null
 let currentStudentId = null;
@@ -290,7 +293,11 @@ function hideRequestSidebar(gameId){
   el.remove();
 }
 
+let activeMatchUnsub = null;
+
 function watchMyActiveMatch() {
+  if (activeMatchUnsub) return;
+
   const me = getVerifiedStudentId();
   if (!me) return;
 
@@ -299,21 +306,23 @@ function watchMyActiveMatch() {
     where('status', '==', 'playing')
   );
 
-  onSnapshot(q, snap => {
-    snap.forEach(docu => {
-      const g = docu.data();
-      const isPlayer = Array.isArray(g.players)
-        && g.players.some(p => String(p.playerId) === String(me));
+  activeMatchUnsub = onSnapshot(q, snap => {
+    snap.forEach(d => {
+      const g = d.data();
+      if (!g || !Array.isArray(g.players)) return;
+
+      const isPlayer = g.players.some(
+        p => String(p.playerId) === String(me)
+      );
 
       if (isPlayer && g.matchId) {
-        console.log('[AUTO-ENTER] Opening match', g.id);
-        toast('Match started — joining 🎮');
-        openMatchOverlay(docu.id);
+        console.log('[RECONNECT] Opening active match', g.matchId);
+        openMatchOverlay(d.id);
       }
     });
-  });
-
+  }, err => console.warn('watchMyActiveMatch error', err));
 }
+
 
 
 /* ---------- Edit profile modal (avatar select & save) ---------- */
@@ -474,6 +483,13 @@ async function setPlayerReady(gameId, studentId, ready){
       const gSnap = await t.get(gRef);
       if(!gSnap.exists()) throw new Error('Game missing');
       const g = gSnap.data();
+      
+      if (g.status !== 'waiting')
+        throw new Error('Game already started');
+      
+      if (g.matchId)
+        throw new Error('Match already created');
+      
       const players = Array.isArray(g.players) ? g.players.slice() : [];
       const idx = players.findIndex(p => String(p.playerId) === String(studentId));
       if(idx === -1) throw new Error('Not a player');
@@ -716,16 +732,38 @@ function monitorGameReadyAndAutoStart(gameId) {
         const players = Array.isArray(g.players) ? g.players : [];
         if (players.length < 2) return;
         const allReady = players.every(p => Boolean(p.ready) === true);
-        if (allReady) {
-          // cleanup before starting to avoid duplicate starts
-          if (gameReadyUnsubs.has(gameId)) { gameReadyUnsubs.get(gameId)(); gameReadyUnsubs.delete(gameId); }
-          try {
-            await startMatchForGame(gameId);
-            toast('All players ready — starting match');
-          } catch (e) {
-            console.warn('auto start failed', e);
-          }
+   
+        if (!allReady && autoStartTimers.has(gameId)) {
+          clearTimeout(autoStartTimers.get(gameId));
+          autoStartTimers.delete(gameId);
+          toast('Auto-start canceled — someone is not ready');
         }
+        
+
+        if (allReady) {
+  if (autoStartTimers.has(gameId)) return;
+
+  toast('All players ready — starting in 5 seconds ⏱');
+
+  const timer = setTimeout(async () => {
+    autoStartTimers.delete(gameId);
+
+    // stop listener before starting
+    if (gameReadyUnsubs.has(gameId)) {
+      gameReadyUnsubs.get(gameId)();
+      gameReadyUnsubs.delete(gameId);
+    }
+
+    try {
+      await startMatchForGame(gameId);
+    } catch (e) {
+      console.warn('auto-start failed', e);
+    }
+  }, 5000);
+
+  autoStartTimers.set(gameId, timer);
+}
+
       } catch (e) {
         console.warn('monitorGameReadyAndAutoStart callback failed', e);
       }
