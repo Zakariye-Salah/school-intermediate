@@ -255,61 +255,61 @@ function injectHeaderButtons(){
 // ---------- Helpers: pick questions, sounds, match chat ----------
 
 // Pick questions: try Firestore questions collection matching titles, fallback to localQuestionsIndex
-async function pickQuestionsForTitles(titles = [], count = 10){
-  try {
-    // try Firestore where title in titles (if titles length > 0)
-    let candidates = [];
-    if(Array.isArray(titles) && titles.length){
-      // Firestore 'in' supports up to 10 items — slice safely
-      const batch = titles.slice(0, 10);
-      const q = query(collection(db, 'questions'), where('title', 'in', batch), limit(200));
-      const snaps = await getDocs(q);
-      snaps.forEach(s => {
-        const d = s.data();
-        candidates.push({ id: s.id, text: d.text || d.question || '', choices: d.choices || [], correct: d.correct, title: d.title || titles[0] });
-      });
-    }
-    // fallback to local sets if not enough
-    if(candidates.length < count && typeof localQuestionsIndex === 'object'){
-      for(const t of titles){
-        const arr = localQuestionsIndex[t] || [];
-        for(const qObj of arr) candidates.push(qObj);
-        if(candidates.length >= count) break;
-      }
-    }
-    // final fallback: gather all local questions
-    if(candidates.length < count && localQuestionsIndex){
-      for(const k of Object.keys(localQuestionsIndex || {})){
-        for(const qObj of localQuestionsIndex[k]) candidates.push(qObj);
-        if(candidates.length >= count) break;
-      }
-    }
-    // dedupe by text and pick random 'count'
-    const uniq = [];
-    const seen = new Set();
-    for(const c of candidates){
-      const key = (c.id || c.text || '').toString();
-      if(!seen.has(key)){ seen.add(key); uniq.push(c); }
-    }
-    // shuffle
-    for(let i = uniq.length - 1; i > 0; i--){
-      const j = Math.floor(Math.random() * (i + 1));
-      [uniq[i], uniq[j]] = [uniq[j], uniq[i]];
-    }
-    const picked = uniq.slice(0, count).map((q, idx) => ({
-      id: q.id || `local_${idx}`,
-      text: q.text || q.question || '',
-      choices: q.choices || [],
-      correct: q.correct !== undefined ? q.correct : 0,
-      title: q.title || (titles && titles[0]) || '',
-      assignedTo: null // will be set by caller
-    }));
-    return picked;
-  } catch(e){
-    console.warn('pickQuestionsForTitles failed', e);
-    return [];
-  }
-}
+// async function pickQuestionsForTitles(titles = [], count = 10){
+//   try {
+//     // try Firestore where title in titles (if titles length > 0)
+//     let candidates = [];
+//     if(Array.isArray(titles) && titles.length){
+//       // Firestore 'in' supports up to 10 items — slice safely
+//       const batch = titles.slice(0, 10);
+//       const q = query(collection(db, 'questions'), where('title', 'in', batch), limit(200));
+//       const snaps = await getDocs(q);
+//       snaps.forEach(s => {
+//         const d = s.data();
+//         candidates.push({ id: s.id, text: d.text || d.question || '', choices: d.choices || [], correct: d.correct, title: d.title || titles[0] });
+//       });
+//     }
+//     // fallback to local sets if not enough
+//     if(candidates.length < count && typeof localQuestionsIndex === 'object'){
+//       for(const t of titles){
+//         const arr = localQuestionsIndex[t] || [];
+//         for(const qObj of arr) candidates.push(qObj);
+//         if(candidates.length >= count) break;
+//       }
+//     }
+//     // final fallback: gather all local questions
+//     if(candidates.length < count && localQuestionsIndex){
+//       for(const k of Object.keys(localQuestionsIndex || {})){
+//         for(const qObj of localQuestionsIndex[k]) candidates.push(qObj);
+//         if(candidates.length >= count) break;
+//       }
+//     }
+//     // dedupe by text and pick random 'count'
+//     const uniq = [];
+//     const seen = new Set();
+//     for(const c of candidates){
+//       const key = (c.id || c.text || '').toString();
+//       if(!seen.has(key)){ seen.add(key); uniq.push(c); }
+//     }
+//     // shuffle
+//     for(let i = uniq.length - 1; i > 0; i--){
+//       const j = Math.floor(Math.random() * (i + 1));
+//       [uniq[i], uniq[j]] = [uniq[j], uniq[i]];
+//     }
+//     const picked = uniq.slice(0, count).map((q, idx) => ({
+//       id: q.id || `local_${idx}`,
+//       text: q.text || q.question || '',
+//       choices: q.choices || [],
+//       correct: q.correct !== undefined ? q.correct : 0,
+//       title: q.title || (titles && titles[0]) || '',
+//       assignedTo: null // will be set by caller
+//     }));
+//     return picked;
+//   } catch(e){
+//     console.warn('pickQuestionsForTitles failed', e);
+//     return [];
+//   }
+// }
 
 // Simple sound FX using WebAudio (no external files)
 function playMatchSound(type){
