@@ -372,6 +372,50 @@ async function initPage(){
   filterStudentsBtn.classList.add('btn-ghost');
 }
 
+async function cancelJoinRequest(gameId){
+  const vId = getVerifiedStudentId();
+  if(!vId) return;
+  try {
+    const q = query(collection(db,'notifications'),
+                    where('from','==', vId),
+                    where('gameId','==', gameId),
+                    where('type','==','join_attempt'),
+                    where('seen','==', false));
+    const snaps = await getDocs(q);
+    if(snaps.size === 0){ toast('No active request found'); return; }
+    const batch = [];
+    snaps.forEach(docu => {
+      // mark handled/seen
+      updateDoc(doc(db,'notifications', docu.id), { seen:true, handled:true, handledAt: serverTimestamp() }).catch(()=>{});
+    });
+    toast('Request canceled');
+    // nothing else to do
+  } catch(e){
+    console.warn('cancelJoinRequest failed', e);
+    toast('Cancel request failed');
+  }
+}
+
+async function setPlayerReady(gameId, studentId, ready){
+  try {
+    await runTransaction(db, async (t) => {
+      const gRef = doc(db,'games', gameId);
+      const gSnap = await t.get(gRef);
+      if(!gSnap.exists()) throw new Error('Game missing');
+      const g = gSnap.data();
+      const players = Array.isArray(g.players) ? g.players.slice() : [];
+      const idx = players.findIndex(p => String(p.playerId) === String(studentId));
+      if(idx === -1) throw new Error('Not a player');
+      players[idx] = { ...players[idx], ready: Boolean(ready) };
+      t.update(gRef, { players, updatedAt: serverTimestamp() }, { merge:true });
+    });
+    toast(ready ? 'Ready' : 'Unready');
+  } catch(e){
+    console.warn('setPlayerReady failed', e);
+    throw e;
+  }
+}
+
 async function leaveGame(gameId, studentId){
   try {
     await runTransaction(db, async (t) => {
@@ -399,11 +443,9 @@ async function leaveGame(gameId, studentId){
         delete reserved[studentId];
       }
 
-      // if after removal players empty and game was waiting, mark expired
-      let newStatus = g.status;
-      if((players.length === 0) && g.status === 'waiting') newStatus = 'expired';
-
-      t.update(gRef, { players, reservedPoints: reserved, status: newStatus, updatedAt: serverTimestamp() }, { merge:true });
+      // Do not auto-expire the game just because players.length === 0.
+      // Expiry should be handled by explicit cancel or by expireAndRefund/timeouts.
+      t.update(gRef, { players, reservedPoints: reserved, updatedAt: serverTimestamp() }, { merge:true });
     });
 
     // if the leaving user is local user, clear local active marker
@@ -415,6 +457,7 @@ async function leaveGame(gameId, studentId){
     throw e;
   }
 }
+
 
 
 // show pending join attempts for a game (creator only)
@@ -482,6 +525,7 @@ async function showJoinRequestsForGame(gameId){
 // accept a request: transactionally join the requester (creator -> accept)
 async function acceptJoinRequest(gameId, requesterId){
   try {
+    // transactionally add requester to players + reserve stake
     await runTransaction(db, async (t) => {
       const gRef = doc(db,'games', gameId);
       const sRef = doc(db,'students', requesterId);
@@ -503,28 +547,53 @@ async function acceptJoinRequest(gameId, requesterId){
       reserved[requesterId] = (reserved[requesterId] || 0) + g.stake;
 
       const players = Array.isArray(g.players) ? g.players.slice() : [];
-      players.push({
-        playerId: requesterId,
-        joinedAt: nowSeconds(),
-        playerName: sdata.name || '',
-        avatarFrame: sdata.avatarFrame || null,
-        className: sdata.className || ''
-      });
+      // ensure we don't duplicate if they somehow already present
+      if(!players.some(p=>String(p.playerId) === String(requesterId))){
+        players.push({
+          playerId: requesterId,
+          joinedAt: nowSeconds(),
+          playerName: sdata.name || '',
+          avatarFrame: sdata.avatarFrame || null,
+          className: sdata.className || '',
+          ready: false
+        });
+      }
 
       t.update(gRef, { reservedPoints: reserved, players, updatedAt: serverTimestamp() }, { merge:true });
 
-      // mark related notifications seen/handled
-      const notifQ = query(collection(db,'notifications'), where('to','==', g.creatorId), where('from','==', requesterId), where('gameId','==', gameId), where('type','==','join_attempt'));
+      // mark related notifications seen/handled (in-transaction read then write is okay)
+      const notifQ = query(collection(db,'notifications'),
+                           where('to','==', g.creatorId),
+                           where('from','==', requesterId),
+                           where('gameId','==', gameId),
+                           where('type','==','join_attempt'));
       const notifSnaps = await getDocs(notifQ);
       notifSnaps.forEach(async nDoc => {
         try { await updateDoc(doc(db,'notifications', nDoc.id), { seen:true, handled:true, handledAt: serverTimestamp() }); } catch(e){}
       });
     });
+
+    // After transaction: send a notification to the requester that they were accepted
+    try {
+      await addDoc(collection(db,'notifications'), {
+        to: requesterId,
+        type: 'join_accepted',
+        gameId,
+        gameName: (await (await getDoc(doc(db,'games',gameId))).data())?.name || '',
+        from: getVerifiedStudentId(),
+        fromName: getVerifiedStudentName() || '',
+        createdAt: serverTimestamp(),
+        seen: false,
+        message: 'Your join request was accepted'
+      });
+    } catch(e){ console.warn('send accept notif failed', e); }
+
   } catch(e){
     console.warn('acceptJoinRequest failed', e);
     throw e;
   }
 }
+
 
 // --- notifications subscription for current student (creators get notified) ---
 let notificationsUnsub = null;
@@ -543,37 +612,63 @@ function subscribeNotificationsForCurrentStudent() {
               toast(`Someone tried to join your game "${n.gameName}"`);
               showModal(`
                 <div>
-                  <div>
-                    <strong>${escapeHtml(n.fromName || n.from)}</strong>
-                    tried to join your game
-                    <strong>${escapeHtml(n.gameName)}</strong>
-                  </div>
+                  <div><strong>${escapeHtml(n.fromName || n.from)}</strong> tried to join your game <strong>${escapeHtml(n.gameName)}</strong>.</div>
                   <div style="margin-top:10px">
                     <button id="notifOpenRequests" class="btn btn-primary">View requests</button>
                     <button id="notifClose" class="btn">Close</button>
                   </div>
                 </div>
               `, { title: 'Join attempt' });
-    
+
               document.getElementById('notifClose').onclick = closeModal;
               document.getElementById('notifOpenRequests').onclick = () => {
                 closeModal();
-                showJoinRequestsForGame(n.gameId); // ✅ CORRECT
+                showJoinRequestsForGame(n.gameId);
+              };
+            } else if(n.type === 'join_accepted') {
+              // requester was accepted: allow them to open the game overview and join/start flow
+              toast(`Your request to join "${n.gameName}" was accepted`);
+              showModal(`
+                <div>
+                  <div><strong>${escapeHtml(n.gameName)}</strong> — your request was accepted.</div>
+                  <div style="margin-top:10px">
+                    <button id="notifOpenGame" class="btn btn-primary">Open game</button>
+                    <button id="notifClose2" class="btn">Close</button>
+                  </div>
+                </div>
+              `, { title: 'Request accepted' });
+              document.getElementById('notifClose2').onclick = closeModal;
+              document.getElementById('notifOpenGame').onclick = async () => {
+                closeModal();
+                try {
+                  const gSnap = await getDoc(doc(db,'games', n.gameId));
+                  if(gSnap.exists()){
+                    const g = { id: gSnap.id, ...gSnap.data() };
+                    showGameOverview(g);
+                    // if game already started, open match overlay
+                    if(g.status === 'playing' && g.matchId) openMatchOverlay(g.id).catch(()=>{});
+                  } else {
+                    toast('Game no longer available');
+                  }
+                } catch(e){ console.warn('open accepted game failed', e); toast('Failed to open game'); }
               };
             } else {
               toast(n.message || 'Notification');
             }
-    
-            updateDoc(doc(db,'notifications', ch.doc.id), {
-              seen: true,
-              seenAt: serverTimestamp()
-            }).catch(()=>{});
+
+            // mark as seen (best-effort)
+            try { updateDoc(doc(db,'notifications', ch.doc.id), { seen: true, seenAt: serverTimestamp() }); } catch(e){ /* ignore */ }
           }
         }
       });
     }, err => console.warn('notif onSnapshot err', err));
   } catch(e){ console.warn('subscribeNotifications failed', e); }
 }
+
+
+
+
+
 subscribeNotificationsForCurrentStudent();
 // update subscription on storage change (verified user switch)
 window.addEventListener('storage', subscribeNotificationsForCurrentStudent);
@@ -1380,21 +1475,40 @@ async function onCodeSearch(){
 
 // ---------- play / join ----------
 async function onPlayClick(game){
-  // if private, ask for code
   const vrole = getVerifiedRole(), vId = getVerifiedStudentId();
   if(vrole !== 'student' || !vId) { toast('Verify as student to play'); return; }
 
-// if private, ask for code (keep your prompt)
-if(game.isPublic === false){
-  const code = prompt('Enter private code:');
-  if(!code) return;
-  if(String(code).trim().toUpperCase() !== String(game.code || '').toUpperCase()) { alert('Invalid code'); return; }
-}
+  // if private, ask for code
+  if(game.isPublic === false){
+    const code = prompt('Enter private code:');
+    if(!code) return;
+    if(String(code).trim().toUpperCase() !== String(game.code || '').toUpperCase()) { alert('Invalid code'); return; }
+  }
 
-// Create a "join attempt" notification for the creator (do not spam if user is the creator)
-try {
-  const vId = getVerifiedStudentId();
-  if(vId && String(vId) !== String(game.creatorId)) {
+  // Bot games: join & start immediately (existing behavior)
+  if(game.opponentType === 'bot'){
+    try {
+      const joined = await joinGameById(game.id, vId);
+      if(joined){
+        await startMatchForGame(game.id);
+      } else {
+        toast('Failed to join bot game');
+      }
+    } catch(e){
+      console.error('bot join/start failed', e);
+      toast('Failed to start bot game');
+    }
+    return;
+  }
+
+  // Student games: create a join_attempt notification and show optimistic "Request sent" modal
+  try {
+    if(vId && String(vId) === String(game.creatorId)){
+      // creator opening own game -> show overview
+      showGameOverview(game);
+      return;
+    }
+
     await addDoc(collection(db,'notifications'), {
       to: game.creatorId || null,
       type: 'join_attempt',
@@ -1406,45 +1520,28 @@ try {
       seen: false,
       message: `${currentStudentProfile?.name || getVerifiedStudentName() || vId} tried to join "${game.name || 'your game'}".`
     });
-  }
-} catch(e){ console.warn('notify creator failed', e); }
 
+    // show modal with cancel button
+    showModal(`<div>
+       <div class="small-muted">Request sent to ${escapeHtml(game.creatorName || 'creator')} — waiting for them to accept.</div>
+       <div style="text-align:right;margin-top:10px">
+         <button id="cancelReqBtn" class="btn">Cancel request</button>
+         <button id="closeReqBtn" class="btn btn-primary">Close</button>
+       </div>
+    </div>`, { title: 'Join request sent' });
 
-  // check sufficient points
-  const studentDoc = await getDoc(doc(db,'students', vId));
-  const studentData = studentDoc.exists() ? studentDoc.data() : {};
-  const points = Number(studentData.totalPoints || 0);
-  if(points < Math.min(MIN_JOIN_POINTS, game.stake)) {
-    showModal(`<div><div class="small-muted">Not enough points to join. Earn points by tests or contact staff.</div><div style="text-align:right;margin-top:10px"><button id="closeNoPts" class="btn btn-primary">Close</button></div></div>`, { title:'Insufficient points' });
-    document.getElementById('closeNoPts').onclick = closeModal;
-    return;
-  }
+    document.getElementById('closeReqBtn').onclick = closeModal;
+    document.getElementById('cancelReqBtn').onclick = async () => {
+      try {
+        await cancelJoinRequest(game.id);
+      } catch(e){ console.warn('cancel request failed', e); }
+      closeModal();
+    };
 
-  // prevent join if already in active game
-  if(await isStudentInActiveGame(vId)){
-    return alert('You are already in an active game. Finish or leave it first.');
-  }
-
-  // join flow
-  if(game.opponentType === 'bot'){
-    // join and start
-    await joinGameById(game.id, vId);
-    await startMatchForGame(game.id);
-    return;
-  } else {
-    // join waiting student game
-    try {
-      const joined = await joinGameById(game.id, vId);
-      if(joined){
-        toast('Joined — waiting for start');
-        await loadGames();
-      } else {
-        toast('Failed to join');
-      }
-    } catch(e){
-      console.error('join failed', e);
-      toast('Failed to join');
-    }
+    toast('Request sent');
+  } catch(e){
+    console.warn('notify creator failed', e);
+    toast('Failed to send request');
   }
 }
 
@@ -1452,23 +1549,25 @@ function showGameOverview(game) {
   const me = String(getVerifiedStudentId() || '');
   const isCreator = String(me) === String(game.creatorId);
   const amPlayer = Array.isArray(game.players) && game.players.some(p => String(p.playerId) === me);
+  const myPlayerObj = (Array.isArray(game.players) && game.players.find(p => String(p.playerId) === me)) || null;
 
   // mask id for display (format: **1234)
   const creatorName = game.creatorName || '—';
   const creatorIdMasked = game.creatorId ? `**${String(game.creatorId).slice(-4)}` : '—';
   const creatorClass = game.creatorClass || '—';
 
-  // code line only if private and viewer is creator
+  // private code only visible to creator
   const codeLine = (!game.isPublic && String(me) === String(game.creatorId))
     ? `<div style="margin-top:8px">Code: <strong>${escapeHtml(game.code || '—')}</strong></div>`
     : '';
 
-  // players display: show name (and masked id if available)
+  // players display
   const playersDisplay = Array.isArray(game.players) && game.players.length
     ? game.players.map(p => {
         const pName = escapeHtml(p.playerName || p.playerId || '—');
         const pIdMask = p.playerId ? ` **${String(p.playerId).slice(-4)}` : '';
-        return `${pName}${pIdMask}`;
+        const readyFlag = p.ready ? ' (ready)' : '';
+        return `${pName}${pIdMask}${readyFlag}`;
       }).join(', ')
     : '—';
 
@@ -1491,19 +1590,29 @@ function showGameOverview(game) {
     <div style="margin-top:12px" class="small-muted">Players: ${escapeHtml(playersDisplay)}</div>
   `;
 
-  // action buttons region (creator sees management buttons here)
+  // actions
   html += `<div style="text-align:right;margin-top:12px">`;
 
+  // Creator actions
   if (isCreator) {
+    html += `<button id="viewCreatorBtn" class="btn">View creator</button> `;
     html += `<button id="openRequestsBtn" class="btn">Requests</button> `;
     html += `<button id="editGameBtn" class="btn">Edit</button> `;
     html += `<button id="delGameBtn" class="btn">Delete</button> `;
     html += `<button id="cancelGameBtn" class="btn">${game.status === 'waiting' ? 'Cancel' : 'Remove'}</button> `;
-    html += `<button id="closeInfoBtn" class="btn btn-primary">Close</button>`;
+    // Start: enabled when at least 2 players (or bot)
+    const startDisabled = (game.opponentType === 'student' && (!Array.isArray(game.players) || game.players.length < 2)) ? 'disabled' : '';
+    html += `<button id="startGameBtn" class="btn btn-primary" ${startDisabled}>Start</button> `;
+    html += `<button id="closeInfoBtn" class="btn">Close</button>`;
   } else if (amPlayer) {
+    // participant
+    html += `<button id="viewCreatorBtn" class="btn">View creator</button> `;
+    html += `<button id="readyBtn" class="btn">${myPlayerObj && myPlayerObj.ready ? 'Unready' : 'Ready'}</button> `;
     html += `<button id="leaveGameBtn" class="btn">Leave</button> <button id="closeInfoBtn" class="btn btn-primary">Close</button>`;
   } else {
-    html += `<button id="joinGameBtn" class="btn btn-primary">Join / Play</button> <button id="closeInfoBtn" class="btn">Close</button>`;
+    // not participant
+    html += `<button id="viewCreatorBtn" class="btn">View creator</button> `;
+    html += `<button id="joinGameBtn" class="btn btn-primary">Request to join</button> <button id="closeInfoBtn" class="btn">Close</button>`;
   }
 
   html += `</div></div>`;
@@ -1513,6 +1622,11 @@ function showGameOverview(game) {
   // wire actions
   document.getElementById('closeInfoBtn').onclick = closeModal;
 
+  document.getElementById('viewCreatorBtn').onclick = async () => {
+    closeModal();
+    openCreatorProfileForGame(game);
+  };
+
   if (isCreator) {
     document.getElementById('openRequestsBtn').onclick = () => { closeModal(); showJoinRequestsForGame(game.id); };
     document.getElementById('editGameBtn').onclick = () => { closeModal(); openEditGameModal(game); };
@@ -1520,6 +1634,12 @@ function showGameOverview(game) {
     document.getElementById('cancelGameBtn').onclick = () => {
       if(!confirm('Cancel this game? This will refund reserved points.')) return;
       expireAndRefund(game).then(()=>{ toast('Game cancelled'); closeModal(); loadGames(); }).catch(()=>{ toast('Cancel failed'); });
+    };
+    document.getElementById('startGameBtn').onclick = async () => {
+      try {
+        await startMatchForGame(game.id);
+        closeModal();
+      } catch(e){ console.warn(e); toast('Start failed'); }
     };
   } else if (amPlayer) {
     document.getElementById('leaveGameBtn').onclick = async () => {
@@ -1529,6 +1649,14 @@ function showGameOverview(game) {
         closeModal();
         await loadGames();
       } catch(e){ console.warn(e); toast('Leave failed'); }
+    };
+    document.getElementById('readyBtn').onclick = async () => {
+      const newReady = !(myPlayerObj && myPlayerObj.ready);
+      try {
+        await setPlayerReady(game.id, me, newReady);
+        closeModal();
+        await loadGames();
+      } catch(e){ console.warn('set ready failed', e); toast('Failed to set ready'); }
     };
   } else {
     document.getElementById('joinGameBtn').onclick = async () => {
