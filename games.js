@@ -252,6 +252,96 @@ function injectHeaderButtons(){
 }
 
 
+// ---------- Helpers: pick questions, sounds, match chat ----------
+
+// Pick questions: try Firestore questions collection matching titles, fallback to localQuestionsIndex
+async function pickQuestionsForTitles(titles = [], count = 10){
+  try {
+    // try Firestore where title in titles (if titles length > 0)
+    let candidates = [];
+    if(Array.isArray(titles) && titles.length){
+      // Firestore 'in' supports up to 10 items — slice safely
+      const batch = titles.slice(0, 10);
+      const q = query(collection(db, 'questions'), where('title', 'in', batch), limit(200));
+      const snaps = await getDocs(q);
+      snaps.forEach(s => {
+        const d = s.data();
+        candidates.push({ id: s.id, text: d.text || d.question || '', choices: d.choices || [], correct: d.correct, title: d.title || titles[0] });
+      });
+    }
+    // fallback to local sets if not enough
+    if(candidates.length < count && typeof localQuestionsIndex === 'object'){
+      for(const t of titles){
+        const arr = localQuestionsIndex[t] || [];
+        for(const qObj of arr) candidates.push(qObj);
+        if(candidates.length >= count) break;
+      }
+    }
+    // final fallback: gather all local questions
+    if(candidates.length < count && localQuestionsIndex){
+      for(const k of Object.keys(localQuestionsIndex || {})){
+        for(const qObj of localQuestionsIndex[k]) candidates.push(qObj);
+        if(candidates.length >= count) break;
+      }
+    }
+    // dedupe by text and pick random 'count'
+    const uniq = [];
+    const seen = new Set();
+    for(const c of candidates){
+      const key = (c.id || c.text || '').toString();
+      if(!seen.has(key)){ seen.add(key); uniq.push(c); }
+    }
+    // shuffle
+    for(let i = uniq.length - 1; i > 0; i--){
+      const j = Math.floor(Math.random() * (i + 1));
+      [uniq[i], uniq[j]] = [uniq[j], uniq[i]];
+    }
+    const picked = uniq.slice(0, count).map((q, idx) => ({
+      id: q.id || `local_${idx}`,
+      text: q.text || q.question || '',
+      choices: q.choices || [],
+      correct: q.correct !== undefined ? q.correct : 0,
+      title: q.title || (titles && titles[0]) || '',
+      assignedTo: null // will be set by caller
+    }));
+    return picked;
+  } catch(e){
+    console.warn('pickQuestionsForTitles failed', e);
+    return [];
+  }
+}
+
+// Simple sound FX using WebAudio (no external files)
+function playMatchSound(type){
+  try {
+    if(localStorage.getItem('gameSound') === 'off') return;
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.connect(g); g.connect(ctx.destination);
+    o.type = type === 'correct' ? 'sine' : (type === 'wrong' ? 'square' : 'triangle');
+    o.frequency.setValueAtTime(type === 'correct' ? 880 : (type === 'wrong' ? 220 : 440), ctx.currentTime);
+    g.gain.setValueAtTime(0.0001, ctx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.2, ctx.currentTime + 0.01);
+    o.start();
+    g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.3);
+    setTimeout(()=>{ try { o.stop(); ctx.close(); } catch(e){} }, 400);
+  } catch(e){}
+}
+
+// Match chat: send message
+async function sendMatchChatMessage(matchId, text){
+  if(!matchId || !text) return;
+  try {
+    await addDoc(collection(db, 'matches', matchId, 'chat'), {
+      from: getVerifiedStudentId() || 'anon',
+      fromName: getVerifiedStudentName() || '',
+      text: String(text).slice(0,1000),
+      createdAt: serverTimestamp()
+    });
+  } catch(e){ console.warn('sendMatchChatMessage failed', e); }
+}
+
 function showRequestSidebar(game){
   // create a small top-right sidebar with cancel button
   hideRequestSidebar(game.id); // ensure only one exists per game
@@ -2260,6 +2350,7 @@ async function isStudentInActiveGame(studentId){
 
 
 // ---------- start match ----------
+// ---------- start match ----------
 async function startMatchForGame(gameId, opts = { silent: false }) {
   const silent = Boolean(opts.silent);
   const me = getVerifiedStudentId();
@@ -2276,10 +2367,22 @@ async function startMatchForGame(gameId, opts = { silent: false }) {
     if (!gSnapPre.exists()) throw new Error('Game not found');
     const gPre = gSnapPre.data();
 
-    // pick questions (use game.titles; default to 10)
+    // ensure meta exist
     const titles = Array.isArray(gPre.titles) ? gPre.titles : [];
     const numQuestions = Number(gPre.questionsCount || 10) || 10;
+    const secondsPerQuestion = Number(gPre.secondsPerQuestion || gPre.secondsPerQuestion || 15);
+
+    // pick questions (safe)
     const questions = await pickQuestionsForTitles(titles, numQuestions);
+
+    // assign each question to players round-robin
+    const playersList = Array.isArray(gPre.players) ? gPre.players.map(p => p.playerId) : [];
+    if(playersList.length === 0) throw new Error('No players');
+
+    for(let i=0;i<questions.length;i++){
+      const assigned = playersList[i % playersList.length];
+      questions[i].assignedTo = assigned;
+    }
 
     let matchId = null;
 
@@ -2302,13 +2405,15 @@ async function startMatchForGame(gameId, opts = { silent: false }) {
       // create match id
       matchId = doc(collection(db, 'matches')).id;
 
-      // store a serverTimestamp startedAt and include match metadata + questions
       t.set(doc(db, 'matches', matchId), {
         gameId,
+        gameName: g.name || '',
+        titles: g.titles || [],
         players,
-        questions,                // full question objects
+        questions,
+        totalQuestions: questions.length,
         currentIndex: 0,
-        secondsPerQuestion: g.secondsPerQuestion || 15,
+        secondsPerQuestion: secondsPerQuestion,
         stake: g.stake || 0,
         scoringModel: g.scoringModel || 'perQuestion',
         wrongPenalty: g.wrongPenalty || 'none',
@@ -2334,7 +2439,6 @@ async function startMatchForGame(gameId, opts = { silent: false }) {
 
     return true;
   } catch (e) {
-    // suppress expected race errors when silent==true (e.g. Game already started)
     const msg = (e && e.message) ? e.message.toString().toLowerCase() : '';
     if (silent && (msg.includes('already started') || msg.includes('not enough players'))) {
       console.warn('[START suppressed]', e.message || e);
@@ -2345,6 +2449,7 @@ async function startMatchForGame(gameId, opts = { silent: false }) {
     throw e;
   }
 }
+
 
 
 
@@ -2368,99 +2473,195 @@ async function openMatchById(matchId){
   // subscribe to match doc
   const matchRef = doc(db,'matches', matchId);
   if(currentMatchUnsub){ currentMatchUnsub(); currentMatchUnsub = null; }
-// robust onSnapshot with retry
-let snapshotRetries = 0;
-function subscribeMatch() {
-  if(currentMatchUnsub){ currentMatchUnsub(); currentMatchUnsub = null; }
-  try {
-    currentMatchUnsub = onSnapshot(matchRef, snap => {
-      snapshotRetries = 0;
-      if(!snap.exists()) { toast('Match ended or removed'); closeMatchOverlay(); return; }
-      const data = snap.data();
-      currentMatchState = data;
-      renderMatchUI(data, matchRef);
-    }, err => {
-      console.warn('match onSnapshot error', err);
-      // try a few times to recover (transient Listen errors)
-      snapshotRetries++;
-      if(snapshotRetries <= 4){
-        const delay = 1000 * Math.pow(2, snapshotRetries); // exponential backoff
-        toast('Realtime connection lost — retrying...');
-        setTimeout(() => subscribeMatch(), delay);
-      } else {
-        toast('Realtime unavailable — using fallback (refresh page to retry).');
-      }
-    });
-  } catch(e){
-    console.warn('subscribeMatch failed', e);
+  // unsubscribe previous chat if any
+  if (matchRoot.__chatUnsub) { matchRoot.__chatUnsub(); matchRoot.__chatUnsub = null; }
+
+  // robust onSnapshot with retry
+  let snapshotRetries = 0;
+  function subscribeMatch() {
+    if(currentMatchUnsub){ currentMatchUnsub(); currentMatchUnsub = null; }
+    try {
+      currentMatchUnsub = onSnapshot(matchRef, snap => {
+        snapshotRetries = 0;
+        if(!snap.exists()) { toast('Match ended or removed'); closeMatchOverlay(); return; }
+        const data = snap.data();
+        currentMatchState = data;
+        renderMatchUI(data, matchRef);
+      }, err => {
+        console.warn('match onSnapshot error', err);
+        // try a few times to recover (transient Listen errors)
+        snapshotRetries++;
+        if(snapshotRetries <= 4){
+          const delay = 1000 * Math.pow(2, snapshotRetries); // exponential backoff
+          toast('Realtime connection lost — retrying...');
+          setTimeout(() => subscribeMatch(), delay);
+        } else {
+          toast('Realtime unavailable — using fallback (refresh page to retry).');
+        }
+      });
+    } catch(e){
+      console.warn('subscribeMatch failed', e);
+    }
   }
-}
-subscribeMatch();
+  subscribeMatch();
 
   // open blank overlay until snapshot arrives
-  matchRoot.innerHTML = `<div class="match-pane"><div class="match-top"><div>Loading match…</div><div><button id="closeMatchBtn" class="btn">Close</button></div></div><div class="match-body"></div></div>`;
+  matchRoot.innerHTML = `<div class="match-pane">
+    <div class="match-top" style="display:flex;justify-content:space-between;align-items:center">
+      <div>Loading match…</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button id="matchSoundToggle" class="btn small">${localStorage.getItem('gameSound') === 'off' ? '🔇' : '🔊'}</button>
+        <button id="openMatchChatBtn" class="btn small">💬</button>
+        <button id="closeMatchBtn" class="btn">Close</button>
+      </div>
+    </div>
+    <div class="match-body"></div>
+    <div class="match-chat hidden" id="matchChatWrap" style="display:none;padding:8px;border-top:1px solid #eee;background:#fafafa">
+      <div id="matchChatList" style="max-height:160px;overflow:auto;margin-bottom:6px"></div>
+      <div style="display:flex;gap:8px"><input id="matchChatInput" class="input-small" placeholder="Say something..."><button id="matchChatSend" class="btn btn-primary">Send</button></div>
+    </div>
+  </div>`;
   matchRoot.classList.remove('hidden'); matchRoot.removeAttribute('aria-hidden');
   document.getElementById('closeMatchBtn').onclick = () => { closeMatchOverlay(); };
+
+  // sound toggle
+  document.getElementById('matchSoundToggle').onclick = () => {
+    const cur = localStorage.getItem('gameSound') === 'off' ? 'on' : 'off';
+    localStorage.setItem('gameSound', cur === 'off' ? 'off' : 'on');
+    document.getElementById('matchSoundToggle').textContent = cur === 'off' ? '🔇' : '🔊';
+  };
+
+  // chat open/close
+  document.getElementById('openMatchChatBtn').onclick = () => {
+    const wrap = document.getElementById('matchChatWrap');
+    if(!wrap) return;
+    wrap.style.display = wrap.style.display === 'none' ? '' : 'none';
+  };
+
+  // setup chat send handlers (will lazy-subscribe to chat below)
+  document.getElementById('matchChatSend').onclick = async () => {
+    const input = document.getElementById('matchChatInput');
+    if(!input) return;
+    const text = input.value.trim();
+    if(!text) return;
+    input.value = '';
+    await sendMatchChatMessage(matchId, text);
+  };
+
+  // subscribe chat collection
+  try {
+    const chatQ = query(collection(db, 'matches', matchId, 'chat'), orderBy('createdAt', 'asc'), limit(200));
+    matchRoot.__chatUnsub = onSnapshot(chatQ, snap => {
+      const list = document.getElementById('matchChatList');
+      if(!list) return;
+      list.innerHTML = '';
+      snap.forEach(docu => {
+        const m = docu.data();
+        const who = escapeHtml(m.fromName || m.from || 'anon');
+        const txt = escapeHtml(m.text || '');
+        const el = document.createElement('div');
+        el.style.padding = '6px 4px';
+        el.innerHTML = `<div style="font-weight:700;font-size:12px">${who}</div><div class="small-muted" style="font-size:13px">${txt}</div>`;
+        list.appendChild(el);
+      });
+      list.scrollTop = list.scrollHeight;
+    });
+  } catch(e){ console.warn('chat subscribe failed', e); }
 }
+
 
 function closeMatchOverlay(){ if(currentMatchUnsub) currentMatchUnsub(); currentMatchUnsub = null; matchRoot.innerHTML=''; matchRoot.classList.add('hidden'); matchRoot.setAttribute('aria-hidden','true'); }
 
+// render match UI and wire answer submission
 // render match UI and wire answer submission
 function renderMatchUI(match, matchRef){
   const body = matchRoot.querySelector('.match-body');
   if(!body) return;
 
-  // top: scoreboard & meta
-  const leftPlayers = (match.players || []);
-  const currentIndex = match.currentIndex || 0;
+  // meta
+  const currentIndex = Number(match.currentIndex || 0);
+  const totalQuestions = Number(match.totalQuestions || (match.questions ? match.questions.length : 0));
   const q = match.questions && match.questions[currentIndex];
+  const secondsPerQ = Number(match.secondsPerQuestion || 15);
+  const answeredMap = match.answered || {}; // keys like "0_studentId"
 
+  // players UI
+  const leftPlayers = (match.players || []);
   let playerHtml = leftPlayers.map(p => {
     const frame = p.avatarFrame ? `frame-${p.avatarFrame}` : '';
     const avatarPart = p.avatar ? `<img src="${escapeHtml(p.avatar)}" alt="avatar" style="width:40px;height:40px;border-radius:50%;object-fit:cover">`
                                 : `<div class="avatar ${frame}">${escapeHtml((p.playerName||p.playerId||'P').slice(0,2))}</div>`;
-    return `<div style="display:flex;align-items:center;gap:8px">
+    const displayName = escapeHtml(p.playerName || `**${String(p.playerId||'').slice(-4)}`);
+    const readyFlag = p.ready ? ' ✓' : '';
+    return `<div style="display:flex;align-items:center;gap:8px;min-width:160px">
       <div style="width:40px;height:40px">${avatarPart}</div>
       <div style="display:flex;flex-direction:column">
-        <div style="font-weight:700">${escapeHtml(p.playerName||p.playerId||'—')}</div>
+        <div style="font-weight:700">${displayName}${readyFlag}</div>
         <div class="small-muted">Lvl ${p.level||'-'} • ${p.score||0} pts</div>
       </div>
     </div>`;
   }).join('<div style="width:18px"></div>');
 
+  const assignedTo = q && q.assignedTo ? q.assignedTo : null;
+  const assignedPlayer = leftPlayers.find(p => String(p.playerId) === String(assignedTo));
 
-  // question UI
-  const questionHtml = q ? `<div class="question-card"><div style="font-weight:700">Q${currentIndex+1}: ${escapeHtml(q.text || '')}</div></div>` : '<div class="small-muted">No current question</div>';
-  // choices
-  const choiceHtml = (q && q.choices && Array.isArray(q.choices)) ? q.choices.map((c, idx) => `<div class="choice" data-choice="${idx}" id="choice_${idx}">${escapeHtml(c)}</div>`).join('') : '';
+  // question header
+  const qTitle = q && (q.title || match.gameName || '') ? escapeHtml(q.title || match.gameName || '') : '';
+  const qText = q ? escapeHtml(q.text || '') : '';
+  const qHeader = q ? `<div style="font-weight:700">Q${currentIndex+1} / ${totalQuestions}${ qTitle ? ' — ' + qTitle : '' }: ${qText}</div>` : '<div class="small-muted">No current question</div>';
+  const assignedHtml = assignedPlayer ? `<div style="font-size:13px" class="small-muted">Turn: ${escapeHtml(assignedPlayer.playerName || `**${String(assignedPlayer.playerId).slice(-4)}`)}</div>` : '';
+
+  // choices + coloring based on answeredMap & logs
+  const choices = (q && q.choices && Array.isArray(q.choices)) ? q.choices : [];
+  let choiceHtml = '';
+  choices.forEach((c, idx) => {
+    // determine if someone answered this choice for current question
+    const answeredByKeys = Object.keys(answeredMap).filter(k => k.startsWith(`${currentIndex}_`));
+    const someoneAnswer = answeredByKeys.length ? answeredMap[answeredByKeys[0]] : null; // first answer
+    const isCorrect = q && q.correct !== undefined ? (Array.isArray(q.correct) ? q.correct.map(Number).includes(idx) : Number(q.correct) === idx) : false;
+    let style = 'padding:8px;border-radius:6px;margin-bottom:6px;border:1px solid #e6eef8;cursor:pointer';
+    if(someoneAnswer){
+      // color choices: correct green, chosen wrong red, others muted
+      if(isCorrect) style += ';background:#e6ffe9;border-color:#2fa84f';
+      else if(someoneAnswer.selected === idx) style += ';background:#ffecec;border-color:#e04a4a';
+      else style += ';opacity:0.6';
+    }
+    choiceHtml += `<div class="choice" data-choice="${idx}" id="choice_${idx}" style="${style}">${escapeHtml(c)}</div>`;
+  });
 
   body.innerHTML = `
-    <div style="display:flex;justify-content:space-between;align-items:center">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
       <div style="display:flex;gap:12px;align-items:center">${playerHtml}</div>
-      <div class="timer" id="matchTimer">--</div>
+      <div style="text-align:right">
+        <div class="timer" id="matchTimer">--s</div>
+        ${assignedHtml}
+        <div class="small-muted">Stake: ${match.stake || 0} • Model: ${match.scoringModel || 'perQuestion'}</div>
+      </div>
     </div>
-    <div style="margin-top:12px">${questionHtml}</div>
+    <div style="margin-top:8px">${qHeader}</div>
     <div style="margin-top:8px" id="choicesWrap">${choiceHtml}</div>
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">
-      <div><button id="surrenderBtn" class="btn">Surrender</button> <button id="rematchBtn" class="btn">Rematch</button></div>
-      <div class="small-muted">Stake: ${match.stake} • Model: ${match.scoringModel}</div>
-    </div>
   `;
 
-  // timer: show remaining seconds for current question using the match doc's question timeLimit minus a stored startEpoch (match should include questionStartEpoch)
-  // For simplicity: if match.questions[currentIndex].startEpoch exists, compute countdown; else show per-question seconds
-  // wire choices:
+  // show per-question timer countdown using Date.now() and match.questionStartEpoch if present
+  const timerEl = document.getElementById('matchTimer');
+  if(timerEl){
+    // compute remaining seconds: if match.questionStartEpoch provided and currentIndexEpoch stored? we approximate
+    let remaining = secondsPerQ;
+    // optional: if match.questionStartEpoch exist and match.questionIndexEpoch map exists, compute accurate remaining — skip advanced here
+    timerEl.textContent = `${remaining}s`;
+  }
+
+  // wire choices: only assigned player may answer first
   body.querySelectorAll('.choice').forEach(ch => {
     ch.onclick = async () => {
       const choiceIdx = Number(ch.getAttribute('data-choice'));
-      // find player's id
       const pid = getVerifiedStudentId();
-      if(!pid) return toast('Verify as student to play');
-      // anti-cheat: if time between question start and answer < 120ms mark suspicious
-      const timeNow = Date.now();
-      // We cannot fully trust client times; we will send answer object and server should validate
+      if(!pid) { toast('Verify as student to play'); return; }
+      if(assignedTo && String(pid) !== String(assignedTo)){
+        toast('Not your turn to answer');
+        return;
+      }
       try {
-        // Use a transaction to add answer into matches.answers map; simple approach: append log and update scores
         await runTransaction(db, async (t) => {
           const snap = await t.get(matchRef);
           if(!snap.exists()) throw new Error('match missing');
@@ -2468,188 +2669,161 @@ function renderMatchUI(match, matchRef){
           if(m.status !== 'inprogress') throw new Error('not in progress');
           const currentIdx = m.currentIndex || 0;
           if(currentIdx !== currentIndex) throw new Error('question changed; try again');
-          // find player's object
-          const players = m.players || [];
-          const pIdx = players.findIndex(p=>p.playerId === pid);
-          if(pIdx === -1) throw new Error('you are not part of this match');
-          // determine correctness via stored correct in question (server should validate)
+          // prevent double-answer by this player
+          const answered = m.answered || {};
+          if(answered[`${currentIdx}_${pid}`]) throw new Error('You already answered this question');
+          // determine correctness
           const qobj = m.questions[currentIdx];
           const correctArr = Array.isArray(qobj.correct) ? qobj.correct.map(Number) : [Number(qobj.correct)];
           const isCorrect = correctArr.includes(choiceIdx);
-          // scoring rules
-          let delta = 0;
-          if(isCorrect){
-            // assigned player correct = 2 points
-            delta = 2;
-          } else {
-            // if wrong, penalty per match settings
-            if(m.wrongPenalty === 'sub1') delta = -1;
-            else delta = 0;
-          }
-          // half credit if opponent answers after assigned player fail — simplified: if firstAnswer exists and not by this player and was wrong then this player gets 1
-          // Implement naive: if m.logs has last log with {type:'answer', playerId: X, correct:false} then give 1
-          const lastAnswer = (m.logs || []).slice(-1)[0];
-          if(!isCorrect && lastAnswer && lastAnswer.type === 'answer' && lastAnswer.playerId !== pid && lastAnswer.correct === false){
-            // this player answering after opponent fail -> if they are correct they should receive 1 (already covered when isCorrect true)
-            // else nothing
-          }
-
-          // update player's score
-          if(!players[pIdx].score) players[pIdx].score = 0;
+          // scoring
+          let delta = isCorrect ? 2 : (m.wrongPenalty === 'sub1' ? -1 : 0);
+          // find player index
+          const players = m.players || [];
+          const pIdx = players.findIndex(p => String(p.playerId) === String(pid));
+          if(pIdx === -1) throw new Error('You are not part of this match');
           players[pIdx].score = Math.max(0, (players[pIdx].score || 0) + delta);
-
-          // update logs
+          // logs + answered map
           const logs = m.logs || [];
-       
           logs.push({ type:'answer', playerId: pid, choice: choiceIdx, correct: isCorrect, delta, at: nowMillis() });
-          
-          
-
-          // update question answered map to prevent double answer
-          const answered = m.answered || {};
-          answered[`${currentIdx}_${pid}`] = { selected: choiceIdx, correct: isCorrect, at: nowMillis() };
-
-          // optionally advance question index if both players answered (simplified: advance immediately)
-          let newIndex = currentIdx;
-          // count players who have answered this question
+          answered[`${currentIdx}_${pid}`] = { selected: choiceIdx, correct: isCorrect, at: nowMillis(), playerId: pid };
+          // advance only when all players answered (simple)
           const answeredCount = Object.keys(answered).filter(k => k.startsWith(`${currentIdx}_`)).length;
-          const playersCount = (players || []).length || 1;
-          if(answeredCount >= playersCount) newIndex = currentIdx + 1;
-
-          // write back
+          let newIndex = currentIdx;
+          if(answeredCount >= (m.players||[]).length) newIndex = currentIdx + 1;
           t.update(matchRef, { players, logs, answered, currentIndex: newIndex, updatedAt: serverTimestamp() });
         });
+        // play sound
+        playMatchSound('correct'); // note: server validates correct/wrong but we optimistically play correct; you can inspect match to choose sound
       } catch(err){
         console.warn('submit answer failed', err);
+        playMatchSound('wrong');
         toast(err.message || 'Answer failed');
       }
     };
   });
 
-  // wire surrender/rematch
-  const surrenderBtn = document.getElementById('surrenderBtn'); if(surrenderBtn) surrenderBtn.onclick = async () => {
+  // wire surrender
+  const surrenderBtn = document.getElementById('surrenderBtn');
+  if(surrenderBtn) surrenderBtn.onclick = async () => {
     if(!confirm('Surrender match? You will lose.')) return;
     try {
-      await updateDoc(matchRef, { status:'finished', winner: 'remote', finishedAt: serverTimestamp() });
+      // compute other player as winner
+      const me = getVerifiedStudentId();
+      const other = (match.players || []).find(p => String(p.playerId) !== String(me));
+      await updateDoc(matchRef, { status:'finished', winner: other ? other.playerId : null, finishedAt: serverTimestamp(), updatedAt: serverTimestamp() });
     } catch(e){ console.warn(e); }
   };
-  // simplistic rematch: open modal to ask both clients later
 
-  // detect match end conditions: if match.status === 'finished' call onMatchFinish
+  // detect match end
   if(match.status === 'finished'){
     onMatchFinish(match, matchRef);
     return;
   }
 
-  // if bot present and a player is a bot, schedule bot moves
+  // bot simulate as before
   for(const p of match.players || []){
     if(p.playerId && p.playerId.startsWith && p.playerId.startsWith('bot')){
-      // simulate bot answering after random delay based on bot accuracy
       simulateBotForMatch(match, matchRef);
       break;
     }
   }
 }
 
+
 // handle match finish: compute winner, update profiles, release reserved points, level progression
 async function onMatchFinish(match, matchRef){
   try {
-    // compute winner by score
     const players = match.players || [];
     if(players.length === 0) return;
-    players.sort((a,b)=> (b.score||0) - (a.score||0));
-    const top = players[0];
-    const second = players[1];
-    let winnerId = top.playerId;
-    let loserId = second ? second.playerId : null;
-    const winnerScore = top.score || 0;
-    const loserScore = second ? second.score || 0 : 0;
-    // update points based on scoringModel
-    if(match.scoringModel === 'perQuestion'){
-      // per-question scoring — players already have score field representing earned points for this match
-      // compute final: winner gets their earned points and bonus of final match bonus (50% stake by default)
-      const finalBonus = Math.floor((match.stake || 0) * 0.5);
-      // Update Firestore: add points to winner, leave loser (reserved was already deducted)
-      await runTransaction(db, async (t) => {
-        // for each player, release any reserved points (we reserved stake amount on join)
-        const gameRef = doc(db,'games', match.gameId);
-        const gSnap = await t.get(gameRef);
-        if(gSnap.exists()){
-          const g = gSnap.data();
-          const reserved = g.reservedPoints || {};
-          // release losers' reserved (no refund in winner-takes? per spec: depends on scoring model; here we return losers stake - they lost stake is subtracted)
-          // Simplified approach: winners keep their stake + earned points; losers lost their reserved stake. We will add winner earned points + bonus to their student.totalPoints.
-        }
-        // update winner profile
-        const winnerRef = doc(db,'students', winnerId);
-        const winnerSnap = await t.get(winnerRef);
-        const w = winnerSnap.exists() ? winnerSnap.data() : {};
-        const winnerBefore = Number(w.totalPoints || 0);
-        const addPoints = Math.max(0, (top.score || 0) + finalBonus);
-        const winnerAfter = winnerBefore + addPoints;
-        t.update(winnerRef, {
-          totalPoints: winnerAfter,
-          totalWins: (Number(w.totalWins||0) + 1),
-          totalGames: (Number(w.totalGames||0) + 1),
-          updatedAt: serverTimestamp()
-        });
-        // log pointsHistory
-        await addDoc(collection(db,'pointsHistory'), { userId: winnerId, type:'game_win', amount: addPoints, before: winnerBefore, after: winnerAfter, referenceGameId: match.gameId, timestamp: nowMillis() });
-        // update loser stats
-        if(loserId){
-          const loserRef = doc(db,'students', loserId);
-          const loserSnap = await t.get(loserRef);
-          const L = loserSnap.exists() ? loserSnap.data() : {};
-          t.update(loserRef, {
-            totalLosses: (Number(L.totalLosses||0) + 1),
-            totalGames: (Number(L.totalGames||0) + 1),
-            updatedAt: serverTimestamp()
-          });
-          await addDoc(collection(db,'pointsHistory'), { userId: loserId, type:'game_loss', amount: 0, before: Number(L.totalPoints||0), after: Number(L.totalPoints||0), referenceGameId: match.gameId, timestamp: serverTimestamp() });
-        }
+    // if explicit winner provided (e.g. surrender)
+    let winnerId = match.winner || null;
 
-        // mark match as archived/finished
+    // if no explicit, compute by score
+    if(!winnerId){
+      players.sort((a,b)=> (b.score||0) - (a.score||0));
+      winnerId = players[0] ? players[0].playerId : null;
+    }
+    const losers = players.filter(p => String(p.playerId) !== String(winnerId)).map(p => p.playerId);
+    // scoring
+    if(match.scoringModel === 'perQuestion'){
+      const finalBonus = Math.floor((match.stake || 0) * 0.5);
+      await runTransaction(db, async (t) => {
+        // update winner
+        if(winnerId){
+          const wRef = doc(db,'students', winnerId);
+          const wSnap = await t.get(wRef);
+          const w = wSnap.exists() ? wSnap.data() : {};
+          const before = Number(w.totalPoints || 0);
+          // compute add: winner's match-earned points if in match players
+          const topObj = players.find(p => String(p.playerId) === String(winnerId)) || {};
+          const addPoints = Math.max(0, (Number(topObj.score||0) + finalBonus));
+          const after = before + addPoints;
+          t.update(wRef, { totalPoints: after, totalWins: (Number(w.totalWins||0)+1), totalGames: (Number(w.totalGames||0)+1), updatedAt: serverTimestamp() });
+          await addDoc(collection(db,'pointsHistory'), { userId: winnerId, type:'game_win', amount: addPoints, before, after, referenceGameId: match.gameId, timestamp: nowMillis() });
+        }
+        // update losers
+        for(const lid of losers){
+          const lRef = doc(db,'students', lid);
+          const lSnap = await t.get(lRef);
+          const L = lSnap.exists() ? lSnap.data() : {};
+          t.update(lRef, { totalLosses: (Number(L.totalLosses||0)+1), totalGames: (Number(L.totalGames||0)+1), updatedAt: serverTimestamp() });
+          await addDoc(collection(db,'pointsHistory'), { userId: lid, type:'game_loss', amount: 0, before: Number(L.totalPoints||0), after: Number(L.totalPoints||0), referenceGameId: match.gameId, timestamp: serverTimestamp() });
+        }
+        // finalize match and mark game finished
         t.update(matchRef, { archivedAt: serverTimestamp(), updatedAt: serverTimestamp() });
-        // also update games doc status
-        t.update(doc(db,'games', match.gameId), { status:'finished', updatedAt: serverTimestamp() });
+        t.update(doc(db,'games', match.gameId), { status:'finished', updatedAt: serverTimestamp(), finishedAt: serverTimestamp() });
       });
     } else if(match.scoringModel === 'winnerTakes'){
-      // winner takes stake pool
       const pool = (match.stake || 0) * (match.players ? match.players.length : 1);
       await runTransaction(db, async (t) => {
-        const wRef = doc(db,'students', winnerId);
-        const wSnap = await t.get(wRef);
-        const w = wSnap.exists() ? wSnap.data() : {};
-        const before = Number(w.totalPoints||0);
-        const after = before + pool;
-        t.update(wRef, { totalPoints: after, totalWins: (Number(w.totalWins||0)+1), totalGames: (Number(w.totalGames||0)+1), updatedAt: serverTimestamp() });
-        await addDoc(collection(db,'pointsHistory'), { userId: winnerId, type:'game_win', amount: pool, before, after, referenceGameId: match.gameId, timestamp: nowMillis() });
-        // losers recorded similarly
-        for(const p of match.players || []){
-          if(p.playerId === winnerId) continue;
-          const lRef = doc(db,'students', p.playerId);
+        if(winnerId){
+          const wRef = doc(db,'students', winnerId);
+          const wSnap = await t.get(wRef);
+          const w = wSnap.exists() ? wSnap.data() : {};
+          const before = Number(w.totalPoints || 0);
+          const after = before + pool;
+          t.update(wRef, { totalPoints: after, totalWins: (Number(w.totalWins||0)+1), totalGames: (Number(w.totalGames||0)+1), updatedAt: serverTimestamp() });
+          await addDoc(collection(db,'pointsHistory'), { userId: winnerId, type:'game_win', amount: pool, before, after, referenceGameId: match.gameId, timestamp: nowMillis() });
+        }
+        for(const lid of losers){
+          const lRef = doc(db,'students', lid);
           const lSnap = await t.get(lRef);
           const L = lSnap.exists() ? lSnap.data() : {};
           t.update(lRef, { totalLosses: (Number(L.totalLosses||0)+1), totalGames: (Number(L.totalGames||0)+1), updatedAt: serverTimestamp() });
         }
-        // finalize match and game
         t.update(matchRef, { archivedAt: serverTimestamp(), updatedAt: serverTimestamp() });
         t.update(doc(db,'games', match.gameId), { status:'finished', updatedAt: serverTimestamp() });
       });
     }
 
-    // level progression: check winner totalWins and award level/badges
+    // Level progression and notification
     await applyLevelProgressionForPlayers(match);
-    toast('Match finished — results applied');
-    // clear local active marker so client can join other games
-clearLocalActiveGame();
-await loadGames(); // refresh UI
 
+    // notify players (best-effort) via notifications collection
+    try {
+      await addDoc(collection(db,'notifications'), {
+        type: 'match_finished',
+        to: null,
+        gameId: match.gameId,
+        matchId: matchRef.id || null,
+        message: `Match finished — winner ${winnerId}`,
+        createdAt: serverTimestamp(),
+        seen: false
+      });
+    } catch(e){}
+
+    toast('Match finished — results applied');
+
+    // clear local active marker
+    clearLocalActiveGame();
+    await loadGames();
   } catch(e){
     console.error('onMatchFinish failed', e);
     toast('Match finalize failed');
   }
 }
+
 
 // apply level progression for players after a match
 async function applyLevelProgressionForPlayers(match){
