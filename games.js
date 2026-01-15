@@ -120,6 +120,29 @@ async function refreshStudentProfile() {
 }
 
 
+// Helper to mark current active game for this client (helps re-join/leave checks)
+function setLocalActiveGame(gameId) {
+  try { localStorage.setItem('currentActiveGame', gameId || ''); } catch(e){}
+}
+function getLocalActiveGame() {
+  try { return localStorage.getItem('currentActiveGame') || null; } catch(e){ return null; }
+}
+function clearLocalActiveGame() {
+  try { localStorage.removeItem('currentActiveGame'); } catch(e){}
+}
+
+// Small helper to format the creator line the way you requested
+function formatCreatorLine(game) {
+  const id = game.creatorId || '';
+  const masked = maskId(id); // returns '***1234' but we show **last4 per your preference
+  const last4 = String(id).slice(-4);
+  const idDisplay = last4 ? `**${last4}` : masked;
+  const name = game.creatorName || '—';
+  const stake = Number(game.stake || 0);
+  const secs = Number(game.secondsPerQuestion || 15);
+  return `${idDisplay} • ${escapeHtml(name)} • Stakes ${stake} pts • ${secs}s`;
+}
+
 /* ---------- local JSON loader (your function, integrated) ---------- */
 async function loadLocalTestSets() {
   const paths = ['./math_questions_100.json', '/math_questions_100.json', './data/math_questions_100.json', '/data/math_questions_100.json'];
@@ -398,16 +421,53 @@ subscribeNotificationsForCurrentStudent();
 // update subscription on storage change (verified user switch)
 window.addEventListener('storage', subscribeNotificationsForCurrentStudent);
 
-/* ---------- load games ---------- */
+async function expireAndRefund(game){
+  try {
+    await runTransaction(db, async (t) => {
+      const gRef = doc(db,'games', game.id);
+      const gSnap = await t.get(gRef);
+      if(!gSnap.exists()) return;
+      const g = gSnap.data();
+      if(g.status === 'expired' || g.status === 'deleted' || g.status === 'finished') return;
+      const reserved = g.reservedPoints || {};
+      for(const uid of Object.keys(reserved)){
+        const amount = Number(reserved[uid] || 0);
+        if(amount <= 0) continue;
+        const sRef = doc(db,'students', uid);
+        const sSnap = await t.get(sRef);
+        if(!sSnap.exists()) continue;
+        const sData = sSnap.data();
+        const before = Number(sData.totalPoints || 0);
+        t.update(sRef, { totalPoints: before + amount, updatedAt: serverTimestamp() });
+        await addDoc(collection(db,'pointsHistory'), { userId: uid, type:'game_refund_expire', amount, before, after: before + amount, referenceGameId: game.id, timestamp: nowMillis() });
+      }
+      t.update(gRef, { status:'expired', updatedAt: serverTimestamp(), reservedPoints: {} });
+    });
+  } catch(e){ console.warn('expireAndRefund failed', e); }
+}
+
 async function loadGames(){
   try {
-    const q = query(collection(db,'games'), orderBy('createdAt','desc'), limit(100));
+    const q = query(collection(db,'games'), orderBy('createdAt','desc'), limit(200));
     const snaps = await getDocs(q);
     gamesCache = [];
     snaps.forEach(d => gamesCache.push({ id:d.id, ...d.data() }));
+
+    // expire sweep (client-side): refund and mark expired for games past expiresAt
+    const now = Date.now();
+    const toExpire = gamesCache.filter(g => g.expiresAt && new Date(g.expiresAt).getTime() < now && !['expired','deleted','finished'].includes(g.status || ''));
+    for(const g of toExpire){
+      // best-effort; don't block UI
+      expireAndRefund(g).catch(()=>{});
+    }
+
+    // remove deleted/expired/finished from local view
+    gamesCache = gamesCache.filter(g => !['deleted'].includes(g.status || '') && !(g.expiresAt && new Date(g.expiresAt).getTime() < now));
+
     renderGames('students');
   } catch(e){ console.error('loadGames failed', e); toast('Failed to load games'); }
 }
+
 
 /* ---------- render games + bots list ---------- */
 function renderGames(mode='students'){
@@ -443,15 +503,29 @@ function renderGames(mode='students'){
   for(const g of filtered) appendGameCard(g);
 }
 
+
 function appendGameCard(g){
   const card = document.createElement('div'); card.className = 'game-card';
   const left = document.createElement('div'); left.className='game-left';
-  const avatar = document.createElement('div'); avatar.className='avatar'; avatar.textContent = (g.creatorName ? g.creatorName.split(' ').map(x=>x[0]).join('').slice(0,2) : '??');
-  if(g.creatorFrame) avatar.classList.add(`frame-${g.creatorFrame}`);
+  // Avatar (image if creatorFrame or avatar URL available; fallback to initials)
+  const avatar = document.createElement('div'); avatar.className='avatar';
+  const initials = (g.creatorName ? g.creatorName.split(' ').map(x=>x[0]).join('').slice(0,2) : '??');
+  if(g.creatorFrame && typeof g.creatorFrame === 'string' && g.creatorFrame.startsWith('http')) {
+    // if you stored avatar URL in creatorFrame (maybe you use avatar field) — try to use actual avatar first
+    const img = document.createElement('img');
+    img.src = g.creatorFrame;
+    img.style.width = '40px'; img.style.height = '40px'; img.style.borderRadius = '8px'; img.style.objectFit = 'cover';
+    avatar.appendChild(img);
+  } else {
+    avatar.textContent = initials;
+    if(g.creatorFrame) avatar.classList.add(`frame-${g.creatorFrame}`);
+  }
+
   const meta = document.createElement('div'); meta.className='game-meta';
   const title = document.createElement('div'); title.className='game-title'; title.textContent = `${g.name || 'Untitled'} ${g.isPublic? '':'(Private)'}`;
   const sub = document.createElement('div'); sub.className='game-sub small-muted';
-  sub.innerHTML = `Creator: ${escapeHtml(g.creatorName||g.creatorId||'—')} • Class ${escapeHtml(g.creatorClass||'—')} • Stakes ${g.stake||0} pts • ${g.secondsPerQuestion||15}s`;
+  // format creator line per your request: masked id (last digits), full name, stakes, seconds
+  sub.innerHTML = formatCreatorLine(g);
   meta.appendChild(title); meta.appendChild(sub);
   left.appendChild(avatar); left.appendChild(meta);
 
@@ -461,12 +535,14 @@ function appendGameCard(g){
   const playBtn = document.createElement('button'); playBtn.className='btn btn-primary'; playBtn.textContent = '▶ Play'; playBtn.onclick = () => onPlayClick(g);
   const infoBtn = document.createElement('button'); infoBtn.className='btn'; infoBtn.textContent='ℹ'; infoBtn.onclick = () => showGameOverview(g);
 
-  right.appendChild(tag); right.appendChild(status); right.appendChild(playBtn); right.appendChild(infoBtn);
+  // view button (always present) -> opens creator+game modal
+  const viewBtn = document.createElement('button'); viewBtn.className='btn'; viewBtn.textContent='View'; viewBtn.onclick = () => openCreatorProfileForGame(g);
 
-  // show creator-only controls & code
+  right.appendChild(tag); right.appendChild(status); right.appendChild(playBtn); right.appendChild(infoBtn); right.appendChild(viewBtn);
+
+  // show creator-only controls & code (creator sees code/edit/delete)
   const me = getVerifiedStudentId();
   if(String(me) === String(g.creatorId)){
-    // show code and actions for creator
     const codeDiv = document.createElement('div'); codeDiv.className='small-muted'; codeDiv.style.marginTop='6px';
     codeDiv.textContent = g.isPublic ? `Public` : `Code: ${g.code || '—'}`;
     const editBtn = document.createElement('button'); editBtn.className='btn'; editBtn.textContent='Edit'; editBtn.onclick = () => openEditGameModal(g);
@@ -474,16 +550,69 @@ function appendGameCard(g){
     right.appendChild(codeDiv);
     right.appendChild(editBtn);
     right.appendChild(delBtn);
-  } else {
-    // others: if private, show masked code length notice
-    if(!g.isPublic) {
-      const locked = document.createElement('div'); locked.className='small-muted'; locked.style.marginTop='6px';
-      locked.textContent = 'Private game — code required';
-      right.appendChild(locked);
-    }
   }
 
   card.appendChild(left); card.appendChild(right); gamesList.appendChild(card);
+}
+
+
+async function openCreatorProfileForGame(game){
+  try {
+    const studentId = game.creatorId;
+    const sSnap = await getDoc(doc(db,'students', studentId));
+    if(!sSnap.exists()){
+      // still show minimal game info if profile not found
+      const html = `<div><div><strong>${escapeHtml(game.name)}</strong></div><div class="small-muted">Creator: ${escapeHtml(game.creatorName||'—')}</div><div style="margin-top:8px">Stakes: ${game.stake} • Seconds: ${game.secondsPerQuestion}</div><div style="text-align:right;margin-top:8px"><button id="closeView" class="btn btn-primary">Close</button></div></div>`;
+      showModal(html, { title:'Game / Creator' });
+      document.getElementById('closeView').onclick = closeModal;
+      return;
+    }
+    const p = sSnap.data();
+    const name = p.name || p.displayName || p.fullName || '—';
+    const className = p.className || p.class || p.cls || '—';
+    const idMasked = `**${String(studentId).slice(-4)}`;
+    const avatarHtml = p.avatar ? `<img src="${escapeHtml(p.avatar)}" style="width:80px;height:80px;border-radius:8px;object-fit:cover" alt="avatar">`
+                                : `<div class="avatar-initials" style="width:80px;height:80px;border-radius:8px;display:flex;align-items:center;justify-content:center;background:#eef2f6;font-weight:700;font-size:20px">${escapeHtml((name||'').slice(0,2))}</div>`;
+
+    // fetch small game history (best-effort) — use student's stats fields
+    const level = p.level || 1;
+    const points = Number(p.totalPoints || 0);
+    const wins = Number(p.totalWins || 0);
+    const gamesPlayed = Number(p.totalGames || 0);
+    const losses = Number(p.totalLosses || 0);
+
+    // build modal HTML
+    let html = `<div style="display:flex;gap:12px;align-items:center">
+      <div>${avatarHtml}</div>
+      <div>
+        <div style="font-weight:800">${escapeHtml(name)}</div>
+        <div class="small-muted">ID ${escapeHtml(idMasked)} • Class ${escapeHtml(className)}</div>
+        <div class="small-muted" style="margin-top:8px">Level: ${level} • Games: ${gamesPlayed} • Wins: ${wins} • Losses: ${losses} • Points: ${points}</div>
+      </div>
+    </div>`;
+
+    // show a short game summary under profile
+    html += `<div style="margin-top:10px"><strong>Game:</strong> ${escapeHtml(game.name || '—')} <div class="small-muted">Titles: ${escapeHtml((game.titles||[]).join(', '))}</div></div>`;
+
+    // bottom buttons: if viewer is creator show Code / Edit / Delete, else just Close
+    const me = getVerifiedStudentId();
+    if(String(me) === String(studentId)){
+      const codeLine = game.isPublic ? '' : `<div style="margin-top:8px">Code: <strong>${escapeHtml(game.code || '—')}</strong></div>`;
+      html += `${codeLine}<div style="text-align:right;margin-top:10px"><button id="editGameBtn" class="btn">Edit</button> <button id="delGameBtn" class="btn">Delete</button> <button id="closeViewBtn" class="btn btn-primary">Close</button></div>`;
+      showModal(html, { title:'Creator & Game' });
+      document.getElementById('editGameBtn').onclick = () => { closeModal(); openEditGameModal(game); };
+      document.getElementById('delGameBtn').onclick = () => { closeModal(); deleteGameConfirm(game); };
+      document.getElementById('closeViewBtn').onclick = closeModal;
+    } else {
+      html += `<div style="text-align:right;margin-top:10px"><button id="cancelViewBtn" class="btn">Cancel</button> <button id="closeViewBtn" class="btn btn-primary">Close</button></div>`;
+      showModal(html, { title:'Creator & Game' });
+      document.getElementById('cancelViewBtn').onclick = closeModal;
+      document.getElementById('closeViewBtn').onclick = closeModal;
+    }
+  } catch(e){
+    console.error('openCreatorProfileForGame failed', e);
+    toast('Failed to open profile');
+  }
 }
 
 /* ---------- render bots list ---------- */
@@ -567,26 +696,21 @@ async function createQuickBotGame(botId, titles = null){
   const vrole = getVerifiedRole(), vId = getVerifiedStudentId();
   if(vrole !== 'student' || !vId) { toast('Verify as student'); throw new Error('not verified'); }
 
-  // ALWAYS fetch fresh student doc before any point checks
   let prof = {};
   try {
     const snap = await getDoc(doc(db,'students', vId));
     prof = snap.exists() ? snap.data() : {};
-    currentStudentProfile = prof; // refresh cached profile for UI
-  } catch(err){
-    console.warn('fetch student doc failed', err);
-    prof = currentStudentProfile || {};
-  }
+    currentStudentProfile = prof;
+  } catch(err){ prof = currentStudentProfile || {}; }
 
-  const stake = 50; // minimal default for quick games
+  const stake = 50;
   const available = Number(prof.totalPoints || 0);
   if(available < stake) {
     toast('Not enough points to start a quick bot game.');
     throw new Error('insufficient');
   }
 
-  const titlesToUse = titles && titles.length ? titles
-                      : (localSetsCache && localSetsCache.length ? [localSetsCache[0].title || localSetsCache[0].id] : []);
+  const titlesToUse = titles && titles.length ? titles : (localSetsCache && localSetsCache.length ? [localSetsCache[0].title || localSetsCache[0].id] : []);
 
   const newGame = {
     name: `Quick vs ${botId}`,
@@ -613,10 +737,9 @@ async function createQuickBotGame(botId, titles = null){
   // create game doc
   const ref = await addDoc(collection(db,'games'), newGame);
   newGame.id = ref.id;
-  
-  // optimistic update so creator immediately sees themselves in UI
+
+  // optimistic UI
   try {
-    // push local view so loadGames shows it immediately
     newGame.players = newGame.players || [];
     newGame.players.push({
       playerId: vId,
@@ -625,23 +748,23 @@ async function createQuickBotGame(botId, titles = null){
       avatarFrame: prof.avatarFrame || null,
       className: prof.className || ''
     });
-    gamesCache.unshift(newGame); // add to cache front for immediate visibility
+    gamesCache.unshift(newGame);
     renderGames('bots');
-  } catch(e){ /* ignore optimistic UI errors */ }
-  
-  // now try to join for real (transaction)
+  } catch(e){}
+
+  // join transaction (server authorizes and deducts points)
   const joined = await joinGameById(ref.id, vId);
   if(!joined){
-    // joining failed (race or transaction error) -> mark expired
     try { await updateDoc(doc(db,'games', ref.id), { status:'expired', updatedAt: serverTimestamp() }); } catch(e){}
     throw new Error('join_failed');
   }
-    // auto-join creator (transaction enforces points)
-  
-  // start match
+
+  // mark local active game and start
+  setLocalActiveGame(ref.id);
   await startMatchForGame(ref.id);
   return ref.id;
 }
+
 
 
 /* ---------- new game modal (unchanged except titles uses local sets) ---------- */
@@ -1032,12 +1155,13 @@ function showGameOverview(game){
     <div style="margin-top:6px">Stakes: <strong>${game.stake}</strong> • Seconds: <strong>${game.secondsPerQuestion}</strong></div>
     ${codeLine}
     <div style="margin-top:8px" class="small-muted">Wrong penalty: ${escapeHtml(game.wrongPenalty||'none')}</div>
-    <div style="text-align:right;margin-top:10px"><button id="closeInfoBtn" class="btn btn-primary">Close</button></div>
+    <div style="text-align:right;margin-top:10px"><button id="viewCreatorBtn" class="btn">View creator</button> <button id="closeInfoBtn" class="btn btn-primary">Close</button></div>
   </div>`;
-  
   showModal(html, { title:'Game overview' });
   document.getElementById('closeInfoBtn').onclick = closeModal;
+  document.getElementById('viewCreatorBtn').onclick = () => { closeModal(); openCreatorProfileForGame(game); };
 }
+
 
 
 
@@ -1105,19 +1229,44 @@ async function openEditGameModal(game) {
 async function deleteGameConfirm(game){
   const me = getVerifiedStudentId();
   if(String(me) !== String(game.creatorId)) return toast('Only creator may delete');
-  if(!confirm('Delete this game? This cannot be undone')) return;
+  if(!confirm('Delete this game? This will refund reserved points and remove the game.')) return;
   try {
-    await updateDoc(doc(db,'games', game.id), { status:'deleted', deletedAt: serverTimestamp() });
-    // optionally remove doc: await deleteDoc(doc(db,'games',game.id));
-    toast('Game removed');
+    // transaction: refund reservedPoints to students and mark the game deleted
+    await runTransaction(db, async (t) => {
+      const gRef = doc(db,'games', game.id);
+      const gSnap = await t.get(gRef);
+      if(!gSnap.exists()) throw new Error('Game not found');
+      const g = gSnap.data();
+      const reserved = g.reservedPoints || {};
+      // refund each reserved entry
+      for(const uid of Object.keys(reserved)){
+        const amount = Number(reserved[uid] || 0);
+        if(amount <= 0) continue;
+        const sRef = doc(db,'students', uid);
+        const sSnap = await t.get(sRef);
+        if(!sSnap.exists()) continue;
+        const sData = sSnap.data();
+        const before = Number(sData.totalPoints || 0);
+        t.update(sRef, { totalPoints: before + amount, updatedAt: serverTimestamp() });
+        // log refund
+        await addDoc(collection(db,'pointsHistory'), { userId: uid, type:'game_refund', amount, before, after: before + amount, referenceGameId: game.id, timestamp: nowMillis() });
+      }
+      // mark game deleted
+      t.update(gRef, { status:'deleted', deletedAt: serverTimestamp(), reservedPoints: {} });
+    });
+    toast('Game removed and points refunded');
+    // update local cache and UI
+    gamesCache = gamesCache.filter(g => String(g.id) !== String(game.id));
     await loadGames();
-  } catch(e){ console.error('delete failed', e); alert('Delete failed'); }
+  } catch(e){
+    console.error('delete failed', e);
+    alert('Delete failed: ' + (e.message || 'unknown'));
+  }
 }
 
 
 // ---------- join & reserve ----------
 async function joinGameById(gameId, studentId){
-  // join with transaction: add player to games.players and reserve points (decrement from student.totalPoints into game's reservedPoints map)
   try {
     const gameRef = doc(db,'games', gameId);
     const studentRef = doc(db,'students', studentId);
@@ -1126,7 +1275,6 @@ async function joinGameById(gameId, studentId){
       if(!gSnap.exists()) throw new Error('Game not found');
       const g = gSnap.data();
       if(g.status === 'playing' && g.opponentType !== 'bot' && g.players && g.players.length >= 2) throw new Error('Already playing');
-      // verify points
       const sSnap = await t.get(studentRef);
       const sdata = sSnap.exists() ? sSnap.data() : {};
       const available = Number(sdata.totalPoints || 0);
@@ -1136,25 +1284,27 @@ async function joinGameById(gameId, studentId){
       const newPoints = Math.max(0, available - g.stake);
       t.update(studentRef, { totalPoints: newPoints });
 
-      // update game's reservedPoints (plain object)
+      // update reservedPoints
       const reserved = g.reservedPoints || {};
       reserved[studentId] = (reserved[studentId] || 0) + g.stake;
 
-      // build players array (avoid serverTimestamp() inside array elements)
+      // build players array
       const players = Array.isArray(g.players) ? g.players.slice() : [];
-      const joinedAtNumeric = nowSeconds(); // numeric timestamp (seconds)
+      const joinedAtNumeric = nowSeconds();
       const pObj = {
         playerId: studentId,
-        joinedAt: joinedAtNumeric,         // <-- numeric, not serverTimestamp()
+        joinedAt: joinedAtNumeric,
         playerName: sdata.name || sdata.displayName || sdata.fullName || '',
         avatarFrame: sdata.avatarFrame || null,
         className: sdata.className || sdata.class || ''
       };
       players.push(pObj);
 
-      // commit: updatedAt can still be serverTimestamp() (top-level field allowed)
       t.update(gameRef, { reservedPoints: reserved, players, updatedAt: serverTimestamp() }, { merge:true });
     });
+
+    // success — mark local active game (so isStudentInActiveGame can be quicker)
+    setLocalActiveGame(gameId);
     return true;
   } catch(e){
     console.warn('joinGame transaction failed', e);
@@ -1164,16 +1314,27 @@ async function joinGameById(gameId, studentId){
 }
 
 
+
 async function isStudentInActiveGame(studentId){
   try {
-    const q = query(collection(db,'games'), where('players', 'array-contains', { playerId: studentId }), where('status','in',['waiting','playing']));
-    // Firestore cannot query array-contains for objects easily; fallback: scan small cache
+    // quick local marker check
+    const localActive = getLocalActiveGame();
+    if(localActive) {
+      // verify it still exists in cache as active
+      if(gamesCache.some(g => g.id === localActive && (g.status === 'waiting' || g.status === 'playing'))) return true;
+      // else clear it (stale)
+      clearLocalActiveGame();
+    }
+
+    // scan gamesCache for active membership (best-effort)
     for(const g of gamesCache){
       if(g.players && g.players.some(p=>p.playerId === studentId) && (g.status === 'waiting' || g.status === 'playing')) return true;
     }
+
   } catch(e){}
   return false;
 }
+
 
 // ---------- start match ----------
 async function startMatchForGame(gameId){
@@ -1509,6 +1670,10 @@ async function onMatchFinish(match, matchRef){
     // level progression: check winner totalWins and award level/badges
     await applyLevelProgressionForPlayers(match);
     toast('Match finished — results applied');
+    // clear local active marker so client can join other games
+clearLocalActiveGame();
+await loadGames(); // refresh UI
+
   } catch(e){
     console.error('onMatchFinish failed', e);
     toast('Match finalize failed');
