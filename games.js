@@ -360,26 +360,70 @@ function playMatchSound(type){
 }
 
 // helper: if a player object lacks playerName, fetch it and update DOM (does not modify DB)
-async function fillMissingPlayerNames(match) {
+// new improved fillMissingPlayerNames that also updates match doc players
+async function fillMissingPlayerNames(match, matchRef){
   try {
     const players = match.players || [];
+    const namesMap = {}; // playerId -> name
+    const toFetch = [];
     for (const p of players) {
-      if (!p.playerName && p.playerId) {
-        try {
-          const sSnap = await getDoc(doc(db,'students', p.playerId));
-          if (sSnap.exists()) {
-            const s = sSnap.data();
-            // update DOM elements if present
-            const nameEl = matchRoot.querySelector(`[data-playerid="${p.playerId}"] .player-name`);
-            if (nameEl) nameEl.textContent = s.name || s.displayName || `**${String(p.playerId).slice(-4)}`;
-            // avatar
-            const imgEl = matchRoot.querySelector(`[data-playerid="${p.playerId}"] .player-avatar img`);
-            if (imgEl && s.avatar) imgEl.src = s.avatar;
-          }
-        } catch(e){/* ignore per-player fetch errors */ }
+      if ((!p.playerName || String(p.playerName).trim() === '') && p.playerId) toFetch.push(p.playerId);
+    }
+    if (toFetch.length === 0) return;
+
+    // fetch all missing profiles in parallel
+    await Promise.all(toFetch.map(async uid => {
+      try {
+        const sSnap = await getDoc(doc(db,'students', uid));
+        if (sSnap.exists()) {
+          const s = sSnap.data();
+          const name = s.name || s.displayName || s.fullName || null;
+          if (name) namesMap[uid] = name;
+        }
+      } catch(e){}
+    }));
+
+    // update DOM immediately where possible
+    for (const uid of Object.keys(namesMap)) {
+      const nameEl = matchRoot.querySelector(`[data-playerid="${uid}"] .player-name`);
+      if (nameEl) nameEl.textContent = namesMap[uid];
+      const imgEl = matchRoot.querySelector(`[data-playerid="${uid}"] .player-avatar img`);
+      if (imgEl) {
+        // if we have avatar in profile, set it too
+        try { const sSnap = await getDoc(doc(db,'students', uid)); if (sSnap.exists() && sSnap.data().avatar) imgEl.src = sSnap.data().avatar; } catch(e){}
       }
     }
-  } catch(e){ console.warn('fillMissingPlayerNames failed', e); }
+
+    // persist the names back to the match doc (so other clients will see them)
+    if (Object.keys(namesMap).length && matchRef) {
+      await runTransaction(db, async (t) => {
+        const snap = await t.get(matchRef);
+        if(!snap.exists()) return;
+        const m = snap.data();
+        const newPlayers = (m.players || []).map(p => {
+          if (p.playerId && namesMap[p.playerId] && (!p.playerName || String(p.playerName).trim()==='')) {
+            return { ...p, playerName: namesMap[p.playerId] };
+          }
+          return p;
+        });
+        t.update(matchRef, { players: newPlayers, updatedAt: serverTimestamp() });
+      });
+    }
+  } catch(e){
+    console.warn('fillMissingPlayerNames failed', e);
+  }
+}
+
+
+function bringModalToFront(){
+  try {
+    if (typeof matchRoot !== 'undefined' && matchRoot && matchRoot.style && modalRoot && modalRoot.style) {
+      const matchZ = parseInt(getComputedStyle(matchRoot).zIndex || '1000', 10) || 1000;
+      modalRoot.style.zIndex = (matchZ + 10).toString();
+    } else if (modalRoot && modalRoot.style) {
+      modalRoot.style.zIndex = '99999';
+    }
+  } catch(e){}
 }
 
 // ---------- Helpers: pick questions, sounds, match chat ----------
@@ -1647,26 +1691,32 @@ async function onNewGameClick(){
   const titlesOptions = (titlesSnap || []).map(t => `<label style="display:block;margin-bottom:6px"><input type="checkbox" class="titleCheckbox" value="${escapeHtml(t)}"> ${escapeHtml(t)}</label>`).join('');
 
   const html = `
-    <div style="display:flex;flex-direction:column;gap:8px">
-      <label class="small">Game name</label>
-      <input id="gameName" class="input-small" placeholder="e.g. Quick Math" />
-      <label class="small">Select titles (choose at least one)</label>
-      <div style="max-height:180px;overflow:auto;border:1px solid #eef2f6;padding:8px;border-radius:8px">${titlesOptions || '<div class="small-muted">No titles available</div>'}</div>
-      <div style="display:flex;gap:8px;align-items:center">
-        <label><input type="checkbox" id="isPublic" checked /> Public</label>
-        <label>Make visible to class only <input type="checkbox" id="classOnly" /></label>
-      </div>
+  <div style="display:flex;flex-direction:column;gap:8px">
+    <label class="small">Game name</label>
+    <input id="gameName" class="input-small" placeholder="e.g. Quick Math" />
+    <label class="small">Select titles (choose at least one)</label>
+    <div style="max-height:180px;overflow:auto;border:1px solid #eef2f6;padding:8px;border-radius:8px">${titlesOptions || '<div class="small-muted">No titles available</div>'}</div>
 
-      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        <label class="small">Stake</label>
-        <select id="stakeSelect">${STAKES.map(s=>`<option value="${s}">${s}</option>`).join('')}</select>
-        <label class="small">Seconds/question</label>
-        <select id="secsSelect"><option>10</option><option selected>15</option><option>30</option></select>
-        <label class="small">Wrong penalty</label>
-        <select id="wrongPenalty"><option value="none">No penalty</option><option value="sub1">Subtract 1</option></select>
-      </div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <label><input type="checkbox" id="isPublic" checked /> Public</label>
+      <label>Make visible to class only <input type="checkbox" id="classOnly" /></label>
+    </div>
 
-      <div style="display:flex;gap:8px;align-items:center">
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <label class="small">Stake</label>
+      <select id="stakeSelect">${STAKES.map(s=>`<option value="${s}">${s}</option>`).join('')}</select>
+
+      <label class="small">Seconds/question</label>
+      <select id="secsSelect"><option>10</option><option selected>15</option><option>20</option><option>30</option></select>
+
+      <label class="small">Questions</label>
+      <select id="numQuestions"><option>5</option><option selected>10</option><option>15</option><option>20</option><option>30</option></select>
+
+      <label class="small">Wrong penalty</label>
+      <select id="wrongPenalty"><option value="none">No penalty</option><option value="sub1">Subtract 1</option></select>
+    </div>
+
+<div style="display:flex;gap:8px;align-items:center">
         <label class="small">Scoring model</label>
         <select id="scoringModel"><option value="perQuestion">Per-question (default)</option><option value="winnerTakes">Winner-takes-stakes</option></select>
         <label class="small">Tie behavior</label>
@@ -1680,8 +1730,8 @@ async function onNewGameClick(){
         <button id="cancelCreate" class="btn">Cancel</button>
         <button id="doCreate" class="btn btn-primary">Create</button>
       </div>
-    </div>
-  `;
+    </div>  
+`;
   showModal(html, { title:'Create new game' });
 
   document.getElementById('cancelCreate').onclick = closeModal;
@@ -1690,6 +1740,10 @@ async function onNewGameClick(){
     const val = e.target.value;
     document.getElementById('botSelect').style.display = val === 'bot' ? '' : 'none';
   };
+
+  // inside document.getElementById('doCreate').onclick = async () => { ... }
+// ...
+
 
   document.getElementById('doCreate').onclick = async () => {
     const name = document.getElementById('gameName').value.trim();
@@ -1703,6 +1757,8 @@ async function onNewGameClick(){
     const tieBehavior = document.getElementById('tieBehavior').value;
     const opponentType = document.getElementById('opponentSelect').value;
     const botId = document.getElementById('botSelect').value || null;
+
+    const numQuestions = Number(document.getElementById('numQuestions').value || 10);
 
     if(!name) return alert('Enter game name');
     if(chosen.length === 0) return alert('Select at least one title');
@@ -1722,6 +1778,7 @@ async function onNewGameClick(){
       }
   
     try {
+   
       const newGame = {
         name,
         titles: chosen,
@@ -1731,6 +1788,8 @@ async function onNewGameClick(){
         wrongPenalty,
         scoringModel,
         tieBehavior,
+        questionsCount: numQuestions,            // <--- store it here
+
         opponentType: opponentType === 'bot' ? 'bot' : 'student',
         botId: botId || null,
         creatorId: currentStudentId,
@@ -2403,8 +2462,6 @@ async function isStudentInActiveGame(studentId){
 }
 
 
-// ---------- start match ----------
-// ---------- start match ----------
 async function startMatchForGame(gameId, opts = { silent: false }) {
   const silent = Boolean(opts.silent);
   const me = getVerifiedStudentId();
@@ -2413,32 +2470,29 @@ async function startMatchForGame(gameId, opts = { silent: false }) {
     throw new Error('Not verified');
   }
 
-  console.log('[START] startMatchForGame', gameId);
-
   try {
     // fetch latest game doc first (outside transaction) so we can pick questions
     const gSnapPre = await getDoc(doc(db, 'games', gameId));
     if (!gSnapPre.exists()) throw new Error('Game not found');
     const gPre = gSnapPre.data();
 
-    // ensure meta exist
     const titles = Array.isArray(gPre.titles) ? gPre.titles : [];
-    const numQuestions = Number(gPre.questionsCount || 10) || 10;
+    const numQuestions = Number(gPre.questionsCount || gPre.questionsCount || gPre.questions || 10) || 10;
     const secondsPerQuestion = Number(gPre.secondsPerQuestion || gPre.secondsPerQuestion || 15);
 
-    // pick questions (safe)
+    // pick questions (this returns exactly `numQuestions` items)
     const questions = await pickQuestionsForTitles(titles, numQuestions);
 
-    // assign each question to players round-robin
+    // assign each question to players round-robin using the snapshot players
     const playersList = Array.isArray(gPre.players) ? gPre.players.map(p => p.playerId) : [];
-    if(playersList.length === 0) throw new Error('No players');
+    if (playersList.length === 0) throw new Error('No players');
 
     for(let i=0;i<questions.length;i++){
-      const assigned = playersList[i % playersList.length];
-      questions[i].assignedTo = assigned;
+      questions[i].assignedTo = playersList[i % playersList.length];
     }
 
-    let matchId = null;
+    // create match id then write in transaction
+    let matchId = doc(collection(db,'matches')).id;
 
     await runTransaction(db, async (t) => {
       const gRef = doc(db, 'games', gameId);
@@ -2447,7 +2501,6 @@ async function startMatchForGame(gameId, opts = { silent: false }) {
       const g = gSnap.data();
 
       if (String(g.creatorId) !== String(me)) throw new Error('Only creator can start');
-
       if (g.status !== 'waiting') throw new Error('Game already started');
 
       const players = Array.isArray(g.players) ? g.players : [];
@@ -2456,18 +2509,19 @@ async function startMatchForGame(gameId, opts = { silent: false }) {
       const allReady = players.every(p => p.ready === true);
       if (!allReady) throw new Error('All players must be ready');
 
-      // create match id
-      matchId = doc(collection(db, 'matches')).id;
+      const totalQuestions = questions.length;
 
-      t.set(doc(db, 'matches', matchId), {
+      // set match doc
+      const matchRef = doc(db,'matches', matchId);
+      t.set(matchRef, {
         gameId,
         gameName: g.name || '',
         titles: g.titles || [],
         players,
         questions,
-        totalQuestions: questions.length,
+        totalQuestions,
         currentIndex: 0,
-        secondsPerQuestion: secondsPerQuestion,
+        secondsPerQuestion,
         stake: g.stake || 0,
         scoringModel: g.scoringModel || 'perQuestion',
         wrongPenalty: g.wrongPenalty || 'none',
@@ -2476,7 +2530,7 @@ async function startMatchForGame(gameId, opts = { silent: false }) {
         questionStartEpoch: Date.now()
       });
 
-      // update game doc
+      // update game doc to playing
       t.update(gRef, {
         status: 'playing',
         matchId,
@@ -2485,12 +2539,9 @@ async function startMatchForGame(gameId, opts = { silent: false }) {
       });
     });
 
-    console.log('[START] Match created:', matchId);
     if (!silent) toast('Game started 🎮');
-
     // open match overlay immediately for creator
     await openMatchOverlay(gameId);
-
     return true;
   } catch (e) {
     const msg = (e && e.message) ? e.message.toString().toLowerCase() : '';
@@ -2503,6 +2554,7 @@ async function startMatchForGame(gameId, opts = { silent: false }) {
     throw e;
   }
 }
+
 
 
 
@@ -2778,7 +2830,7 @@ function renderMatchUI(match, matchRef){
   });
 
   // try to fill missing player names in background
-  fillMissingPlayerNames(match).catch(()=>{});
+  fillMissingPlayerNames(match, matchRef).catch(()=>{});
 
   // start per-question timer
   startQuestionTimer(doc(db,'matches', matchRef.id), match);
@@ -2996,6 +3048,7 @@ async function onMatchFinish(match, matchRef){
     const winnerPlayer = players.find(p=>String(p.playerId) === String(winnerId));
     toast(`Match finished — winner: ${winnerPlayer ? (winnerPlayer.playerName || `**${String(winnerId).slice(-4)}`) : winnerId}`);
 
+    bringModalToFront();
     // cleanup
     clearLocalActiveGame();
     await loadGames();
@@ -3029,7 +3082,10 @@ async function applyLevelProgressionForPlayers(match){
           t.update(sRef, { level: newLevel, avatarFrame: frame, badges, updatedAt: serverTimestamp() });
           // inform user by creating notification doc (or show immediate modal if current user)
           if(getVerifiedStudentId() === p.playerId){
-            showModal(`<div><h3>Congratulations</h3><div>You reached Level ${newLevel} — new badge awarded.</div><div style="text-align:right;margin-top:8px"><button id="lvlClose" class="btn btn-primary">OK</button></div></div>`, { title:'Level up' });
+            showModal(`<div><h3>Congratulations</h3><div>You reached Level ${newLevel} — new badge awarded.</div><div style="text-align:right;margin-top:8px"><button id="lvlClose" class="btn btn-primary">OK</button></div></div>`, { title:'Level up' }
+
+            );
+            bringModalToFront();
             document.getElementById('lvlClose').onclick = closeModal;
           }
         }
@@ -3092,7 +3148,15 @@ async function simulateBotForMatch(match, matchRef){
         players[pIdx].score = Math.max(0, (players[pIdx].score || 0) + (correct ? 2 : (m.wrongPenalty === 'sub1' ? -1 : 0)));
         const logs = m.logs || [];
         logs.push({ type:'answer', playerId: bot.id, choice: chosen, correct, at: nowMillis() });
-        t.update(matchRef, { players, logs, currentIndex: (m.currentIndex || 0) + 1, updatedAt: serverTimestamp() });
+      // compute next index and finish if last
+const nextIdx = (m.currentIndex || 0) + 1;
+const totalQ = Number(m.totalQuestions || (m.questions ? m.questions.length : 0));
+if (nextIdx >= totalQ) {
+  t.update(matchRef, { players, logs, currentIndex: totalQ, status: 'finished', finishedAt: serverTimestamp(), updatedAt: serverTimestamp() });
+} else {
+  t.update(matchRef, { players, logs, currentIndex: nextIdx, updatedAt: serverTimestamp() });
+}
+
 
       });
     } catch(e){ console.warn('bot answer failed', e); }
@@ -3133,7 +3197,8 @@ async function openPlayerProfileModal(studentId){
       <div style="text-align:right;margin-top:10px"><button id="closeProfile" class="btn btn-primary">Close</button></div>
     </div>`;
     showModal(html, { title:'Player profile' });
-    // ensure modal is above match overlay (matchRoot might exist)
+    bringModalToFront();
+        // ensure modal is above match overlay (matchRoot might exist)
     try {
       if (typeof matchRoot !== 'undefined' && matchRoot && matchRoot.style) {
         const matchZ = parseInt(getComputedStyle(matchRoot).zIndex || '1000', 10) || 1000;
