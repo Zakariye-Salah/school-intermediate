@@ -1424,18 +1424,20 @@ async function createQuickBotGame(botId, titles = null){
   const ref = await addDoc(collection(db,'games'), newGame);
   newGame.id = ref.id;
   
-  // auto-join the creator so they appear in players[] and their stake is reserved
+  // --- Auto-join the creator so they are present in players[] and have stake reserved
   try {
+    // joinGameById is already transactional: it deducts stake, updates reservedPoints and pushes the player into players[]
     await joinGameById(ref.id, currentStudentId);
-  } catch(e){
+  } catch (e) {
     console.warn('creator auto-join failed', e);
-    // optionally notify: toast('Warning: creator auto-join failed');
+    // optional: toast('Warning: failed to auto-join creator');
   }
   
-  // existing behavior for bot opponent
-  if(opponentType === 'bot' && botId){
+  // existing bot-start logic (keep it)
+  if (opponentType === 'bot' && botId) {
     await startMatchForGame(ref.id);
   }
+  
   
 // --- OPTIMISTIC UI: make the just-created game visible immediately ---
 try {
@@ -1599,11 +1601,28 @@ async function onNewGameClick(){
       }
 
       const ref = await addDoc(collection(db,'games'), newGame);
-      newGame.id = ref.id;
-      if(opponentType === 'bot' && botId){
-        await joinGameById(ref.id, currentStudentId);
-        await startMatchForGame(ref.id);
-      }
+newGame.id = ref.id;
+
+// --- Auto-join the creator so they are present in players[] and have stake reserved
+try {
+  // joinGameById is already transactional: it deducts stake, updates reservedPoints and pushes the player into players[]
+  await joinGameById(ref.id, currentStudentId);
+} catch (e) {
+  console.warn('creator auto-join failed', e);
+  // optional: toast('Warning: failed to auto-join creator');
+}
+
+// existing bot-start logic (keep it)
+if (opponentType === 'bot' && botId) {
+  await startMatchForGame(ref.id);
+}
+
+      // const ref = await addDoc(collection(db,'games'), newGame);
+      // newGame.id = ref.id;
+      // if(opponentType === 'bot' && botId){
+      //   await joinGameById(ref.id, currentStudentId);
+      //   await startMatchForGame(ref.id);
+      // }
 
       toast('Game created');
       closeModal();
@@ -1904,9 +1923,66 @@ function showGameOverview(game){
     const meId = String(getVerifiedStudentId() || '');
     const isCreatorNow = String(meId) === String(gDoc.creatorId);
     // if current user is the creator, ensure we are monitoring ready flags so auto-start works
-if (isCreatorNow) {
-  try { monitorGameReadyAndAutoStart(gDoc.id); } catch(e){ console.warn('monitor start failed', e); }
-}
+    if (isCreatorNow) {
+      // compute players & allReady at render time
+      const playersArr = Array.isArray(gDoc.players) ? gDoc.players : [];
+      const allReady = playersArr.length >= 2 && playersArr.every(p => Boolean(p.ready) === true);
+      const meId = String(getVerifiedStudentId() || '');
+    
+      // Ready toggle for the creator
+      const creatorPlayer = playersArr.find(p => String(p.playerId) === meId) || {};
+      const creatorReadyBtn = document.createElement('button');
+      creatorReadyBtn.className = 'btn';
+      creatorReadyBtn.textContent = (creatorPlayer && creatorPlayer.ready) ? 'Unready' : 'Ready';
+      creatorReadyBtn.onclick = async () => {
+        try {
+          const newReady = !(creatorPlayer && creatorPlayer.ready);
+          await setPlayerReady(gDoc.id, meId, newReady);
+          // UI will update because onSnapshot re-renders; no manual DOM update needed
+        } catch (err) {
+          console.warn('creator ready toggle failed', err);
+          toast('Failed to toggle ready');
+        }
+      };
+      actionsWrap.appendChild(creatorReadyBtn);
+    
+      const requestsBtn = document.createElement('button'); requestsBtn.className='btn'; requestsBtn.textContent='Requests';
+      requestsBtn.onclick = () => { closeModal(); showJoinRequestsForGame(gDoc.id); };
+      actionsWrap.appendChild(requestsBtn);
+    
+      const editBtn = document.createElement('button'); editBtn.className='btn'; editBtn.textContent='Edit';
+      editBtn.onclick = () => { closeModal(); openEditGameModal(gDoc); };
+      actionsWrap.appendChild(editBtn);
+    
+      const delBtn = document.createElement('button'); delBtn.className='btn'; delBtn.textContent='Delete';
+      delBtn.onclick = () => { closeModal(); deleteGameConfirm(gDoc); };
+      actionsWrap.appendChild(delBtn);
+    
+      const cancelBtn = document.createElement('button'); cancelBtn.className='btn';
+      cancelBtn.textContent = gDoc.status === 'waiting' ? 'Cancel' : 'Remove';
+      cancelBtn.onclick = () => {
+        if(!confirm('Cancel this game? This will refund reserved points.')) return;
+        expireAndRefund(gDoc).then(()=>{ toast('Game cancelled'); closeModal(); loadGames(); }).catch(()=>{ toast('Cancel failed'); });
+      };
+      actionsWrap.appendChild(cancelBtn);
+    
+      // Start button: require at least 2 players AND everyone ready
+      const startBtn = document.createElement('button');
+      startBtn.className = 'btn btn-primary';
+      startBtn.textContent = 'Start';
+      startBtn.disabled = !(playersArr.length >= 2 && allReady);
+      startBtn.onclick = async () => {
+        try {
+          await startMatchForGame(gDoc.id);
+          closeModal();
+        } catch(e) {
+          console.warn(e);
+          toast('Start failed: ' + (e.message || ''));
+        }
+      };
+      actionsWrap.appendChild(startBtn);
+    }
+    
 
     const amPlayerNow = Array.isArray(gDoc.players) && gDoc.players.some(p => String(p.playerId) === meId);
     // players display
