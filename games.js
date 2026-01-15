@@ -681,42 +681,58 @@ async function loadGames(){
 
 
 /* ---------- render games + bots list ---------- */
-function renderGames(mode='students'){
+function renderGames(mode = 'students') {
   gamesList.innerHTML = '';
-  // if mode is bots, show bot cards first and games that are bot games afterwards
-  if(mode === 'bots'){
-    renderBotsList(); // shows the 10 bots
-    // also append any existing bot games
-    const botGames = gamesCache.filter(g => g.opponentType === 'bot' && (!g.expiresAt || new Date(g.expiresAt).getTime() > Date.now()));
-    if(botGames.length === 0){
-      const el = document.createElement('div'); el.className='small-muted'; el.textContent = 'No active bot games — choose a bot to play.'; gamesList.appendChild(el);
+
+  // bots mode: show bots first then bot games
+  if (mode === 'bots') {
+    renderBotsList();
+    const botGames = gamesCache.filter(g => g.opponentType === 'bot' && !isExpired(g));
+    if (botGames.length === 0) {
+      const el = document.createElement('div'); el.className = 'small-muted'; el.textContent = 'No active bot games — choose a bot to play.';
+      gamesList.appendChild(el);
     } else {
-      for(const g of botGames) appendGameCard(g);
+      botGames.forEach(g => appendGameCard(g));
     }
     statActive.textContent = botGames.length;
     return;
   }
 
-  
-  // students mode
-  const now = Date.now();
+  // students mode: show only non-expired, non-deleted, non-finished games and only allowed statuses
+  const allowedStatuses = new Set(['waiting', 'playing', 'open', 'pending']);
   const filtered = gamesCache.filter(g => {
-    if(g.expiresAt && new Date(g.expiresAt).getTime() < now) return false;
-    if(g.opponentType === 'bot') return false;
-    return true;
+    if (!g) return false;
+    if (['deleted', 'expired', 'finished'].includes((g.status || '').toLowerCase())) return false;
+    if (g.expiresAt && new Date(g.expiresAt).getTime() < Date.now()) return false;
+    // hide bot games in students mode
+    if (g.opponentType === 'bot') return false;
+    // allow only known active-like statuses (fallback: if no status, treat as waiting)
+    const st = (g.status || 'waiting').toString().toLowerCase();
+    return allowedStatuses.has(st);
   });
 
-  if(filtered.length === 0){
+  statActive.textContent = String(filtered.length);
+
+  if (filtered.length === 0) {
     gamesList.innerHTML = `<div class="small-muted">No games found.</div>`;
-    statActive.textContent = '0';
     return;
   }
-  statActive.textContent = filtered.length;
-  for(const g of filtered) appendGameCard(g);
+
+  filtered.forEach(g => appendGameCard(g));
+}
+
+// small helper: checks expiresAt safely
+function isExpired(g) {
+  try {
+    return g.expiresAt && new Date(g.expiresAt).getTime() < Date.now();
+  } catch (e) { return false; }
 }
 
 
-function appendGameCard(g){
+
+// --- appendGameCard (replace your existing appendGameCard) ---
+// Note: list cards are intentionally minimal: Avatar / title / tag / status / Play / Info only.
+function appendGameCard(g) {
   const card = document.createElement('div');
   card.className = 'game-card';
 
@@ -724,22 +740,21 @@ function appendGameCard(g){
   const left = document.createElement('div');
   left.className = 'game-left';
 
-  // Avatar - prefer explicit avatar URL fields, otherwise initials. Make round.
+  // Avatar (round)
   const avatar = document.createElement('div');
   avatar.className = 'avatar';
   const avatarUrl = g.creatorAvatar || g.creatorAvatarUrl || g.creatorFrame || g.avatar || null;
-  if(avatarUrl && typeof avatarUrl === 'string' && (avatarUrl.startsWith('http') || avatarUrl.startsWith('/'))){
+  if (avatarUrl && typeof avatarUrl === 'string' && (avatarUrl.startsWith('http') || avatarUrl.startsWith('/'))) {
     const img = document.createElement('img');
     img.src = avatarUrl;
-    img.alt = (g.creatorName || 'Creator').slice(0,20);
+    img.alt = (g.creatorName || 'Creator').slice(0, 20);
     img.style.width = '48px';
     img.style.height = '48px';
     img.style.borderRadius = '50%';
     img.style.objectFit = 'cover';
     avatar.appendChild(img);
   } else {
-    // initials fallback
-    const initials = (g.creatorName ? g.creatorName.split(' ').map(x => x[0]).join('').slice(0,2) : '??');
+    const initials = (g.creatorName ? g.creatorName.split(' ').map(x => x[0]).join('').slice(0, 2) : '??');
     avatar.textContent = initials;
     avatar.style.width = '48px';
     avatar.style.height = '48px';
@@ -749,7 +764,7 @@ function appendGameCard(g){
     avatar.style.justifyContent = 'center';
     avatar.style.fontWeight = '700';
     avatar.style.background = '#eef2f6';
-    if(g.creatorFrame) avatar.classList.add(`frame-${g.creatorFrame}`);
+    if (g.creatorFrame) avatar.classList.add(`frame-${g.creatorFrame}`);
   }
 
   const meta = document.createElement('div');
@@ -759,100 +774,52 @@ function appendGameCard(g){
   title.className = 'game-title';
   title.textContent = `${g.name || 'Untitled'} ${g.isPublic ? '' : '(Private)'}`;
 
-  // single compact sub line: ID(last4) • Name • Stakes • Seconds • Class (if available)
   const sub = document.createElement('div');
   sub.className = 'game-sub small-muted';
-  // Add class name if available
-  const creatorClass = g.creatorClass ? ` • Class ${escapeHtml(g.creatorClass)}` : '';
-  // formatCreatorLine already includes masked id and name and stakes/seconds
-  sub.innerHTML = `${formatCreatorLine(g)}${creatorClass}`;
+  sub.innerHTML = `${formatCreatorLine(g)}${g.creatorClass ? ` • Class ${escapeHtml(g.creatorClass)}` : ''}`;
 
   meta.appendChild(title);
   meta.appendChild(sub);
   left.appendChild(avatar);
   left.appendChild(meta);
 
-  // RIGHT: actions
+  // RIGHT: actions (minimal)
   const right = document.createElement('div');
   right.className = 'game-right';
 
-  // tag (Public / Private) and single status text (no duplicates)
+  // Tag (Public/Private)
   const tag = document.createElement('div');
   tag.className = `tag ${g.isPublic ? 'public' : 'private'}`;
   tag.textContent = g.isPublic ? 'Public' : 'Private';
   right.appendChild(tag);
 
-  // show status once (e.g., waiting, playing)
+  // status single line
   const status = document.createElement('div');
   status.className = 'small-muted';
   status.style.marginTop = '6px';
   status.textContent = g.status || 'waiting';
   right.appendChild(status);
 
-  // Play button (main action)
+  // Play button
   const playBtn = document.createElement('button');
   playBtn.className = 'btn btn-primary';
   playBtn.textContent = '▶ Play';
   playBtn.onclick = () => onPlayClick(g);
   right.appendChild(playBtn);
 
-  // Info button to open game overview (keeps list uncluttered)
+  // Info button -> opens overview modal (all actions there)
   const infoBtn = document.createElement('button');
   infoBtn.className = 'btn';
   infoBtn.textContent = 'ℹ';
   infoBtn.onclick = () => showGameOverview(g);
   right.appendChild(infoBtn);
 
-  // Decide identity once
-  const me = String(getVerifiedStudentId() || '');
-
-  // If current user is a participant (in players) -> show Leave button
-  const amPlayer = Array.isArray(g.players) && g.players.some(p => String(p.playerId) === me);
-  if(amPlayer){
-    const leaveBtn = document.createElement('button');
-    leaveBtn.className = 'btn';
-    leaveBtn.textContent = 'Leave';
-    leaveBtn.onclick = () => {
-      if(!confirm('Leave this game? You will be removed and reserved points returned.')) return;
-      leaveGame(g.id, me).catch(err => { console.warn(err); toast('Failed to leave'); });
-    };
-    right.appendChild(leaveBtn);
-  }
-
-  // Creator-only controls: Code/Requests/Cancel (no Edit/Delete on list)
-  if(String(me) === String(g.creatorId)){
-    // small code line (Public or Code: X)
-    const codeDiv = document.createElement('div');
-    codeDiv.className = 'small-muted';
-    codeDiv.style.marginTop = '6px';
-    codeDiv.textContent = g.isPublic ? 'Public' : `Code: ${g.code || '—'}`;
-
-    // Requests button (creator opens pending join requests modal)
-    const reqBtn = document.createElement('button');
-    reqBtn.className = 'btn';
-    reqBtn.textContent = 'Requests';
-    reqBtn.onclick = () => showJoinRequestsForGame(g.id);
-
-    // Cancel/Remove button
-    const cancelBtn = document.createElement('button');
-    cancelBtn.className = 'btn';
-    cancelBtn.textContent = (g.status === 'waiting') ? 'Cancel' : 'Remove';
-    cancelBtn.onclick = () => {
-      if(!confirm('Cancel this game? This will refund reserved points.')) return;
-      expireAndRefund(g).then(()=>{ toast('Game cancelled'); }).catch(()=>{ toast('Cancel failed'); });
-    };
-
-    // append in sensible order
-    right.appendChild(codeDiv);
-    right.appendChild(reqBtn);
-    right.appendChild(cancelBtn);
-  }
-
-  // DONE: assemble and append
+  // assemble
   card.appendChild(left);
   card.appendChild(right);
   gamesList.appendChild(card);
 }
+
 
 
 
@@ -1459,21 +1426,85 @@ try {
 }
 
 // open overview modal
-function showGameOverview(game){
-  const codeLine = (String(getVerifiedStudentId()) === String(game.creatorId) && !game.isPublic) ? `<div style="margin-top:8px">Code: <strong>${escapeHtml(game.code||'—')}</strong></div>` : '';
-  const html = `<div>
-    <div><strong>${escapeHtml(game.name)}</strong></div>
-    <div class="small-muted">Creator: ${escapeHtml(game.creatorName||game.creatorId||'—')} • Class: ${escapeHtml(game.creatorClass||'—')}</div>
-    <div style="margin-top:8px">Titles: ${escapeHtml((game.titles||[]).join(', '))}</div>
-    <div style="margin-top:6px">Stakes: <strong>${game.stake}</strong> • Seconds: <strong>${game.secondsPerQuestion}</strong></div>
+// --- showGameOverview (replace your existing showGameOverview) ---
+// Overview shows creator controls (Requests/Edit/Delete/Cancel) and participant Leave button.
+// This keeps the list clean and puts all actions in the modal as you requested.
+function showGameOverview(game) {
+  const me = String(getVerifiedStudentId() || '');
+  const isCreator = String(me) === String(game.creatorId);
+  const amPlayer = Array.isArray(game.players) && game.players.some(p => String(p.playerId) === me);
+
+  // code line only if private (don't duplicate "Public")
+  const codeLine = (!game.isPublic && String(me) === String(game.creatorId)) ?
+    `<div style="margin-top:8px">Code: <strong>${escapeHtml(game.code || '—')}</strong></div>` : '';
+
+  let html = `<div>
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <div>
+        <div style="font-weight:800">${escapeHtml(game.name)}</div>
+        <div class="small-muted">Creator: ${escapeHtml(game.creatorName||game.creatorId||'—')} • Class: ${escapeHtml(game.creatorClass||'—')}</div>
+      </div>
+      <div style="text-align:right">
+        <div class="tag ${game.isPublic ? 'public' : 'private'}">${game.isPublic ? 'Public' : 'Private'}</div>
+        <div class="small-muted" style="margin-top:6px">${escapeHtml(game.status || 'waiting')}</div>
+      </div>
+    </div>
+
+    <div style="margin-top:10px">Titles: ${escapeHtml((game.titles||[]).join(', '))}</div>
+    <div style="margin-top:6px">Stakes: <strong>${escapeHtml(String(game.stake||0))}</strong> • Seconds: <strong>${escapeHtml(String(game.secondsPerQuestion||15))}</strong></div>
     ${codeLine}
     <div style="margin-top:8px" class="small-muted">Wrong penalty: ${escapeHtml(game.wrongPenalty||'none')}</div>
-    <div style="text-align:right;margin-top:10px"><button id="viewCreatorBtn" class="btn">View creator</button> <button id="closeInfoBtn" class="btn btn-primary">Close</button></div>
-  </div>`;
-  showModal(html, { title:'Game overview' });
+    <div style="margin-top:12px" class="small-muted">Players: ${Array.isArray(game.players) ? game.players.map(p=>escapeHtml(p.playerName||p.playerId)).join(', ') : '—'}</div>
+  `;
+
+  // action buttons region
+  html += `<div style="text-align:right;margin-top:12px">`;
+
+  if (isCreator) {
+    // Creator: Requests, Edit, Cancel/Remove, Close
+    html += `<button id="openRequestsBtn" class="btn">Requests</button> `;
+    html += `<button id="editGameBtn" class="btn">Edit</button> `;
+    html += `<button id="delGameBtn" class="btn">Delete</button> `;
+    html += `<button id="cancelGameBtn" class="btn">${game.status === 'waiting' ? 'Cancel' : 'Remove'}</button> `;
+    html += `<button id="closeInfoBtn" class="btn btn-primary">Close</button>`;
+  } else if (amPlayer) {
+    // Participant (not creator): Leave + Close
+    html += `<button id="leaveGameBtn" class="btn">Leave</button> <button id="closeInfoBtn" class="btn btn-primary">Close</button>`;
+  } else {
+    // Not a participant: Join/Play + Close
+    html += `<button id="joinGameBtn" class="btn btn-primary">Join / Play</button> <button id="closeInfoBtn" class="btn">Close</button>`;
+  }
+
+  html += `</div></div>`;
+
+  showModal(html, { title: 'Game overview' });
+
   document.getElementById('closeInfoBtn').onclick = closeModal;
-  document.getElementById('viewCreatorBtn').onclick = () => { closeModal(); openCreatorProfileForGame(game); };
+
+  if (isCreator) {
+    document.getElementById('openRequestsBtn').onclick = () => { closeModal(); showJoinRequestsForGame(game.id); };
+    document.getElementById('editGameBtn').onclick = () => { closeModal(); openEditGameModal(game); };
+    document.getElementById('delGameBtn').onclick = () => { closeModal(); deleteGameConfirm(game); };
+    document.getElementById('cancelGameBtn').onclick = () => {
+      if(!confirm('Cancel this game? This will refund reserved points.')) return;
+      expireAndRefund(game).then(()=>{ toast('Game cancelled'); closeModal(); loadGames(); }).catch(()=>{ toast('Cancel failed'); });
+    };
+  } else if (amPlayer) {
+    document.getElementById('leaveGameBtn').onclick = async () => {
+      if(!confirm('Leave this game? You will be removed and reserved points returned.')) return;
+      try {
+        await leaveGame(game.id, me);
+        closeModal();
+      } catch(e){ console.warn(e); toast('Leave failed'); }
+    };
+  } else {
+    document.getElementById('joinGameBtn').onclick = async () => {
+      closeModal();
+      await onPlayClick(game);
+    };
+  }
 }
+
 
 
 
