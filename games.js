@@ -580,6 +580,9 @@ window.addEventListener('storage', subscribeNotificationsForCurrentStudent);
 
 async function expireAndRefund(game){
   try {
+    // We'll collect refund details to record history AFTER transaction completes
+    const refundDetails = [];
+
     await runTransaction(db, async (t) => {
       const gRef = doc(db,'games', game.id);
       const gSnap = await t.get(gRef);
@@ -588,26 +591,46 @@ async function expireAndRefund(game){
       if(['expired','deleted','finished'].includes(g.status || '')) return;
 
       const reserved = g.reservedPoints || {};
-      // refund each reserved entry
-      for(const uid of Object.keys(reserved)){
+      const uids = Object.keys(reserved);
+
+      // 1) READ ALL student docs first (required by Firestore: all reads before writes)
+      const studentData = {};
+      for(const uid of uids){
+        const sRef = doc(db,'students', uid);
+        const sSnap = await t.get(sRef);
+        studentData[uid] = sSnap.exists() ? sSnap.data() : null;
+      }
+
+      // 2) Now perform writes: update each student's points
+      for(const uid of uids){
         const amount = Number(reserved[uid] || 0);
         if(amount <= 0) continue;
         const sRef = doc(db,'students', uid);
-        const sSnap = await t.get(sRef);
-        if(!sSnap.exists()) continue;
-        const sData = sSnap.data();
-        const before = Number(sData.totalPoints || 0);
+        const before = Number((studentData[uid]?.totalPoints) || 0);
         t.update(sRef, { totalPoints: before + amount, updatedAt: serverTimestamp() });
-        // record history (best-effort)
-        await addDoc(collection(db,'pointsHistory'), {
-          userId: uid, type:'game_refund_expire', amount, before, after: before + amount,
-          referenceGameId: game.id, timestamp: nowMillis()
-        });
+        refundDetails.push({ userId: uid, amount, before, after: before + amount });
       }
 
-      // mark game expired and clear reservedPoints/players so it disappears
+      // 3) Mark game expired and clear reserved/players
       t.update(gRef, { status:'expired', reservedPoints: {}, players: [], updatedAt: serverTimestamp(), expiredAt: serverTimestamp() });
     });
+
+    // 4) After transaction: record pointsHistory entries (best-effort)
+    for(const r of refundDetails){
+      try {
+        await addDoc(collection(db,'pointsHistory'), {
+          userId: r.userId,
+          type: 'game_refund_expire',
+          amount: r.amount,
+          before: r.before,
+          after: r.after,
+          referenceGameId: game.id,
+          timestamp: nowMillis()
+        });
+      } catch(e){
+        console.warn('pointsHistory add failed', e);
+      }
+    }
 
     // update local cache/UI
     gamesCache = gamesCache.filter(g => String(g.id) !== String(game.id));
@@ -617,13 +640,8 @@ async function expireAndRefund(game){
   }
 }
 
-if (game.creatorId === getVerifiedStudentId()) {
-  const reqBtn = document.createElement('button');
-  reqBtn.className = 'btn btn-small';
-  reqBtn.textContent = 'Requests';
-  reqBtn.onclick = () => showJoinRequestsForGame(game.id);
-  card.appendChild(reqBtn);
-}
+
+
 
 
 async function loadGames(){
@@ -679,6 +697,7 @@ function renderGames(mode='students'){
     return;
   }
 
+  
   // students mode
   const now = Date.now();
   const filtered = gamesCache.filter(g => {
@@ -717,6 +736,14 @@ function appendGameCard(g){
     if(g.creatorFrame) avatar.classList.add(`frame-${g.creatorFrame}`);
   }
 
+  if (game.creatorId === getVerifiedStudentId()) {
+    const reqBtn = document.createElement('button');
+    reqBtn.className = 'btn btn-small';
+    reqBtn.textContent = 'Requests';
+    reqBtn.onclick = () => showJoinRequestsForGame(game.id);
+    card.appendChild(reqBtn);
+  }
+
   const meta = document.createElement('div'); meta.className='game-meta';
   const title = document.createElement('div'); title.className='game-title'; title.textContent = `${g.name || 'Untitled'} ${g.isPublic? '':'(Private)'}`;
 
@@ -752,15 +779,24 @@ function appendGameCard(g){
   if(String(me) === String(g.creatorId)){
     const codeDiv = document.createElement('div'); codeDiv.className='small-muted'; codeDiv.style.marginTop='6px';
     codeDiv.textContent = g.isPublic ? `Public` : `Code: ${g.code || '—'}`;
+  
     const cancelBtn = document.createElement('button'); cancelBtn.className='btn'; cancelBtn.textContent = (g.status === 'waiting') ? 'Cancel' : 'Remove';
     cancelBtn.onclick = () => {
       if(!confirm('Cancel this game? This will refund reserved points.')) return;
-      // cancel or delete -> reuse expireAndRefund to refund and mark
       expireAndRefund(g).then(()=>{ toast('Game cancelled'); }).catch(()=>{ toast('Cancel failed'); });
     };
+  
+    // REQUESTS button: open the join-requests modal for this game (creator only)
+    const reqBtn = document.createElement('button');
+    reqBtn.className = 'btn';
+    reqBtn.textContent = 'Requests';
+    reqBtn.onclick = () => showJoinRequestsForGame(g.id);
+  
     right.appendChild(codeDiv);
+    right.appendChild(reqBtn);   // <-- add here
     right.appendChild(cancelBtn);
   }
+  
 
   card.appendChild(left); card.appendChild(right); gamesList.appendChild(card);
 }
