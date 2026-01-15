@@ -290,9 +290,36 @@ function hideRequestSidebar(gameId){
   el.remove();
 }
 
+function watchMyActiveMatch() {
+  const me = getVerifiedStudentId();
+  if (!me) return;
+
+  const q = query(
+    collection(db, 'games'),
+    where('status', '==', 'playing')
+  );
+
+  onSnapshot(q, snap => {
+    snap.forEach(docu => {
+      const g = docu.data();
+      const isPlayer = Array.isArray(g.players)
+        && g.players.some(p => String(p.playerId) === String(me));
+
+      if (isPlayer && g.matchId) {
+        console.log('[AUTO-ENTER] Opening match', g.id);
+        toast('Match started — joining 🎮');
+        openMatchOverlay(docu.id);
+      }
+    });
+  });
+
+}
+
+
 /* ---------- Edit profile modal (avatar select & save) ---------- */
 function openEditProfileModal(){
   const vId = getVerifiedStudentId();
+
   if(!vId) return toast('Verify first');
   // build avatar grid for assets/avatar1.png .. avatar10.png
   let optionsHtml = '<div style="display:flex;flex-wrap:wrap;gap:8px">';
@@ -404,6 +431,8 @@ async function initPage(){
   }
 
   await loadGames();
+    watchMyActiveMatch(); 
+
   subscribeStats();
 
   // wire UI actions
@@ -658,104 +687,224 @@ async function acceptJoinRequest(gameId, requesterId){
 }
 
 
+// place near top of file (global)
 let notificationsUnsub = null;
-function subscribeNotificationsForCurrentStudent() {
-  if(notificationsUnsub) { notificationsUnsub(); notificationsUnsub = null; }
-  const to = getVerifiedStudentId();
-  if(!to) return;
+const gameReadyUnsubs = new Map(); // gameId -> unsubscribe function
+
+// Helper: watch a single game doc and if current user is the creator and ALL players.ready === true -> start match
+function monitorGameReadyAndAutoStart(gameId) {
+  if (!gameId) return;
+  if (gameReadyUnsubs.has(gameId)) return;
   try {
-    const q = query(collection(db,'notifications'), where('to','==', to), orderBy('createdAt','desc'), limit(20));
-    notificationsUnsub = onSnapshot(q, snap => {
-      snap.docChanges().forEach(ch => {
-        if(ch.type === 'added') {
+    const gRef = doc(db, 'games', gameId);
+    const unsub = onSnapshot(gRef, async snap => {
+      if (!snap.exists()) {
+        // game removed, cleanup
+        if (gameReadyUnsubs.has(gameId)) { gameReadyUnsubs.get(gameId)(); gameReadyUnsubs.delete(gameId); }
+        return;
+      }
+      const g = { id: snap.id, ...snap.data() };
+      try {
+        const me = getVerifiedStudentId();
+        if (!me) return; // not verified -> ignore
+        if (String(me) !== String(g.creatorId)) return; // only creator auto-starts
+        if ((g.status || '').toString().toLowerCase() !== 'waiting') {
+          // if game changed status, we can stop monitoring
+          if (gameReadyUnsubs.has(gameId)) { gameReadyUnsubs.get(gameId)(); gameReadyUnsubs.delete(gameId); }
+          return;
+        }
+        const players = Array.isArray(g.players) ? g.players : [];
+        if (players.length < 2) return;
+        const allReady = players.every(p => Boolean(p.ready) === true);
+        if (allReady) {
+          // cleanup before starting to avoid duplicate starts
+          if (gameReadyUnsubs.has(gameId)) { gameReadyUnsubs.get(gameId)(); gameReadyUnsubs.delete(gameId); }
+          try {
+            await startMatchForGame(gameId);
+            toast('All players ready — starting match');
+          } catch (e) {
+            console.warn('auto start failed', e);
+          }
+        }
+      } catch (e) {
+        console.warn('monitorGameReadyAndAutoStart callback failed', e);
+      }
+    }, err => console.warn('monitorGameReadyAndAutoStart onSnapshot err', err));
+    gameReadyUnsubs.set(gameId, unsub);
+  } catch (e) {
+    console.warn('monitorGameReadyAndAutoStart failed', e);
+  }
+}
+
+// The fixed subscribeNotificationsForCurrentStudent() function
+function subscribeNotificationsForCurrentStudent() {
+  if (notificationsUnsub) { notificationsUnsub(); notificationsUnsub = null; }
+  const to = getVerifiedStudentId();
+  if (!to) return;
+  try {
+    const q = query(collection(db, 'notifications'), where('to', '==', to), orderBy('createdAt', 'desc'), limit(20));
+    // onSnapshot callback can be async so we can await inside
+    notificationsUnsub = onSnapshot(q, async snap => {
+      // iterate using for..of so await works correctly
+      for (const ch of snap.docChanges()) {
+        try {
+          if (ch.type !== 'added') continue;
           const n = ch.doc.data();
           const notifId = ch.doc.id;
-          if(!n.seen) {
-            // Creator sees an incoming join attempt
-            if(n.type === 'join_attempt') {
-              toast(`Join attempt: ${n.fromName || n.from} → ${n.gameName}`);
-              // show small popup with Accept / Accept & Start / Reject
-              showModal(`
-                <div>
-                  <div><strong>${escapeHtml(n.fromName || n.from)}</strong> tried to join your game <strong>${escapeHtml(n.gameName)}</strong>.</div>
-                  <div style="margin-top:10px;display:flex;gap:8px;justify-content:flex-end">
-                    <button id="notifAccept" class="btn btn-primary">Accept</button>
-                    <button id="notifAcceptStart" class="btn btn-success">Accept & Start</button>
-                    <button id="notifReject" class="btn">Reject</button>
-                    <button id="notifClose" class="btn">Close</button>
-                  </div>
-                </div>
-              `, { title: 'Join attempt' });
+          if (n && n.seen) continue;
 
-              document.getElementById('notifClose').onclick = closeModal;
-              document.getElementById('notifReject').onclick = async () => {
-                try {
-                  await updateDoc(doc(db,'notifications', notifId), { seen:true, handled:true, handledAt: serverTimestamp() });
-                } catch(e){ console.warn('reject notif failed', e); }
-                toast('Rejected');
-                closeModal();
-              };
-              document.getElementById('notifAccept').onclick = async () => {
-                closeModal();
-                try {
-                  await acceptJoinRequest(n.gameId, n.from);
-                  // send small live notification to requester (handled in acceptJoinRequest)
-                  toast('Accepted');
-                  await loadGames();
-                } catch(e){ console.warn('accept failed', e); toast('Accept failed'); }
-              };
-              document.getElementById('notifAcceptStart').onclick = async () => {
-                closeModal();
-                try {
-                  await acceptAndStartRequest(n.gameId, n.from);
-                  toast('Accepted & starting');
-                  await loadGames();
-                } catch(e){ console.warn('accept&start failed', e); toast('Accept & Start failed'); }
-              };
-            }
-            // Requester sees that they were accepted
-            else if(n.type === 'join_accepted') {
-              // hide request sidebar if any
-              hideRequestSidebar(n.gameId);
-              toast(`Accepted: ${n.gameName}`);
+          // Creator sees an incoming join attempt
+          if (n.type === 'join_attempt') {
+            toast(`Join attempt: ${n.fromName || n.from} → ${n.gameName}`);
+            showModal(`
+              <div>
+                <div><strong>${escapeHtml(n.fromName || n.from)}</strong> tried to join your game <strong>${escapeHtml(n.gameName)}</strong>.</div>
+                <div style="margin-top:10px;display:flex;gap:8px;justify-content:flex-end">
+                  <button id="notifAccept" class="btn btn-primary">Accept</button>
+                  <button id="notifAcceptStart" class="btn btn-success">Accept & Start</button>
+                  <button id="notifReject" class="btn">Reject</button>
+                  <button id="notifClose" class="btn">Close</button>
+                </div>
+              </div>
+            `, { title: 'Join attempt' });
+
+            document.getElementById('notifClose').onclick = closeModal;
+
+            document.getElementById('notifReject').onclick = async () => {
+              try {
+                await updateDoc(doc(db, 'notifications', notifId), { seen: true, handled: true, handledAt: serverTimestamp() });
+              } catch (e) { console.warn('reject notif failed', e); }
+              toast('Rejected');
+              closeModal();
+            };
+
+            document.getElementById('notifAccept').onclick = async () => {
+              closeModal();
+              try {
+                await acceptJoinRequest(n.gameId, n.from);
+                // start monitoring for auto-start in case creator wants auto-start when both ready
+                monitorGameReadyAndAutoStart(n.gameId);
+                // mark the notification handled
+                await updateDoc(doc(db, 'notifications', notifId), { seen: true, handled: true, handledAt: serverTimestamp() }).catch(() => {});
+                toast('Accepted');
+                await loadGames();
+              } catch (e) { console.warn('accept failed', e); toast('Accept failed'); }
+            };
+
+            document.getElementById('notifAcceptStart').onclick = async () => {
+              closeModal();
+              try {
+                await acceptAndStartRequest(n.gameId, n.from);
+                // mark the notification handled
+                await updateDoc(doc(db, 'notifications', notifId), { seen: true, handled: true, handledAt: serverTimestamp() }).catch(() => {});
+                toast('Accepted & starting');
+                await loadGames();
+              } catch (e) { console.warn('accept&start failed', e); toast('Accept & Start failed'); }
+            };
+
+            // best-effort mark as seen (we also mark when action occurs)
+            try { await updateDoc(doc(db, 'notifications', notifId), { seen: true, seenAt: serverTimestamp() }); } catch (e) { /* ignore */ }
+            continue;
+          }
+
+          // Requester sees that they were accepted
+          if (n.type === 'join_accepted') {
+            // hide request sidebar if any
+            hideRequestSidebar(n.gameId);
+            toast(`Accepted: ${n.gameName}`);
+            try {
+              const gSnap = await getDoc(doc(db, 'games', n.gameId));
+              if (!gSnap.exists()) {
+                showModal(`<div class="small-muted">Game no longer available</div>`, { title: 'Request accepted' });
+                // mark notif seen
+                await updateDoc(doc(db, 'notifications', notifId), { seen: true, seenAt: serverTimestamp() }).catch(() => {});
+                continue;
+              }
+              const g = { id: gSnap.id, ...gSnap.data() };
+
+              // If match already created and game is playing -> open match directly
+              if ((g.status || '').toString().toLowerCase() === 'playing' && g.matchId) {
+                showModal(`
+                  <div>
+                    <div><strong>${escapeHtml(n.gameName)}</strong> — ${escapeHtml(n.fromName || n.from)} accepted and match started.</div>
+                    <div style="margin-top:10px;display:flex;gap:8px;justify-content:flex-end">
+                      <button id="notifOpenGame" class="btn btn-primary">Open match</button>
+                      <button id="notifClose2" class="btn">Close</button>
+                    </div>
+                  </div>
+                `, { title: 'Request accepted' });
+                document.getElementById('notifClose2').onclick = closeModal;
+                document.getElementById('notifOpenGame').onclick = async () => {
+                  closeModal();
+                  try {
+                    await openMatchOverlay(g.id);
+                  } catch (e) {
+                    console.warn('openMatchOverlay failed', e);
+                    showGameOverview(g);
+                  }
+                };
+                // mark notif seen
+                await updateDoc(doc(db, 'notifications', notifId), { seen: true, seenAt: serverTimestamp() }).catch(() => {});
+                continue;
+              }
+
+              // Otherwise: show prepare-to-play modal (Ready + Open overview)
               showModal(`
                 <div>
                   <div><strong>${escapeHtml(n.gameName)}</strong> — your request was accepted by ${escapeHtml(n.fromName || n.from)}.</div>
-                  <div style="margin-top:10px;display:flex;gap:8px;justify-content:flex-end">
-                    <button id="notifOpenGame" class="btn btn-primary">Open game</button>
+                  <div class="small-muted" style="margin-top:8px">The creator hasn't started the match yet. Mark yourself as ready and wait for them to start.</div>
+                  <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
+                    <button id="notifReady" class="btn btn-primary">I'm ready</button>
+                    <button id="notifOpenGame" class="btn">Open overview</button>
                     <button id="notifClose2" class="btn">Close</button>
                   </div>
                 </div>
               `, { title: 'Request accepted' });
+
               document.getElementById('notifClose2').onclick = closeModal;
               document.getElementById('notifOpenGame').onclick = async () => {
                 closeModal();
-                try {
-                  const gSnap = await getDoc(doc(db,'games', n.gameId));
-                  if(gSnap.exists()){
-                    const g = { id: gSnap.id, ...gSnap.data() };
-                    showGameOverview(g);
-                    if(g.status === 'playing' && g.matchId) openMatchOverlay(g.id).catch(()=>{});
-                  } else {
-                    toast('Game no longer available');
-                  }
-                } catch(e){ console.warn('open accepted game failed', e); toast('Failed to open game'); }
+                showGameOverview(g);
               };
-            } else {
-              // other types
-              toast(n.message || 'Notification');
-              try { updateDoc(doc(db,'notifications', notifId), { seen:true, seenAt: serverTimestamp() }).catch(()=>{}); } catch(e){}
-            }
 
-            // best-effort mark as seen for join_attempt here only when UI shown above?
-            // We mark as seen when action occurs (Accept/Reject) or here as fallback:
-            try { updateDoc(doc(db,'notifications', notifId), { seen: true, seenAt: serverTimestamp() }).catch(()=>{}); } catch(e){}
+              document.getElementById('notifReady').onclick = async () => {
+                try {
+                  const me = getVerifiedStudentId();
+                  if (!me) { toast('Verify as student'); return; }
+                  await setPlayerReady(g.id, me, true);
+                  // optionally open overview to let player watch
+                  closeModal();
+                  showGameOverview(g);
+                } catch (e) {
+                  console.warn('set ready failed', e);
+                  toast('Failed to set ready');
+                }
+              };
+
+              // mark notif seen
+              await updateDoc(doc(db, 'notifications', notifId), { seen: true, seenAt: serverTimestamp() }).catch(() => {});
+            } catch (e) {
+              console.warn('open accepted game failed', e);
+              showModal(`<div class="small-muted">Failed to fetch game details</div>`, { title: 'Request accepted' });
+              await updateDoc(doc(db, 'notifications', notifId), { seen: true, seenAt: serverTimestamp() }).catch(() => {});
+            }
+            continue;
           }
+
+          // Other notification types -> default handling
+          toast(n.message || 'Notification');
+          try { await updateDoc(doc(db, 'notifications', notifId), { seen: true, seenAt: serverTimestamp() }); } catch (e) { /* ignore */ }
+
+        } catch (innerErr) {
+          console.warn('notification handling inner error', innerErr);
         }
-      });
+      } // end for..of
     }, err => console.warn('notif onSnapshot err', err));
-  } catch(e){ console.warn('subscribeNotifications failed', e); }
+  } catch (e) {
+    console.warn('subscribeNotifications failed', e);
+  }
 }
+
 
 async function acceptAndStartRequest(gameId, requesterId){
   try {
@@ -1981,48 +2130,70 @@ async function isStudentInActiveGame(studentId){
 
 
 // ---------- start match ----------
-async function startMatchForGame(gameId){
-  // server-side should be authoritative; client attempts to create a match doc that both clients subscribe to
+async function startMatchForGame(gameId) {
+  const me = getVerifiedStudentId();
+  if (!me) throw new Error('Not verified');
+
+  console.log('[START] startMatchForGame', gameId);
+
   try {
-    const gameRef = doc(db,'games', gameId);
+    let matchId = null;
+
     await runTransaction(db, async (t) => {
-      const gSnap = await t.get(gameRef);
-      if(!gSnap.exists()) throw new Error('game missing');
+      const gRef = doc(db, 'games', gameId);
+      const gSnap = await t.get(gRef);
+      if (!gSnap.exists()) throw new Error('Game not found');
+
       const g = gSnap.data();
-      if(g.status === 'playing') { return; } // already started
-      // require at least 1 player (creator) or bot
-      const players = g.players || [];
-      if(g.opponentType === 'student' && players.length < 2) throw new Error('Need 2 players to start');
-      // pick questions by titles (simplified: pull 10 random questions matching chosen titles)
-      const questions = await pickQuestionsForTitles(g.titles || [], 10);
-      // create match doc in 'matches'
-      const matchDoc = {
+
+      if (String(g.creatorId) !== String(me))
+        throw new Error('Only creator can start');
+
+      if (g.status !== 'waiting')
+        throw new Error('Game already started');
+
+      const players = Array.isArray(g.players) ? g.players : [];
+      if (players.length < 2)
+        throw new Error('Not enough players');
+
+      // 🔴 SAFETY: require all ready
+      const allReady = players.every(p => p.ready === true);
+      if (!allReady)
+        throw new Error('All players must be ready');
+
+      // create match id
+      matchId = doc(collection(db, 'matches')).id;
+
+      t.set(doc(db, 'matches', matchId), {
         gameId,
-        gameName: g.name,
-        stake: g.stake,
-        scoringModel: g.scoringModel || 'perQuestion',
-        wrongPenalty: g.wrongPenalty || 'none',
-        secondsPerQuestion: g.secondsPerQuestion || 15,
-        createdAt: serverTimestamp(),
-        status: 'inprogress',
-        currentIndex: 0,
-        questions,
-        players: players.map(p=>({ playerId: p.playerId, score:0, ready:true, answered: {} })), // answered: map qIdx -> { selected, correct, time }
-        logs: [],
-        tieOffers: {},
-        expireSeconds: nowSeconds() + 60*60 // fallback
-      };
-      const mRef = await addDoc(collection(db,'matches'), matchDoc);
-      // set game.status to playing and set matchId
-      t.update(gameRef, { status:'playing', matchId: mRef.id, updatedAt: serverTimestamp() });
+        players,
+        startedAt: serverTimestamp(),
+        status: 'playing'
+      });
+
+      t.update(gRef, {
+        status: 'playing',
+        matchId,
+        startedAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
     });
-    // subscribe to match doc
+
+    console.log('[START] Match created:', matchId);
+    toast('Game started 🎮');
+
+    // 🔥 IMPORTANT: open match for creator immediately
     await openMatchOverlay(gameId);
-  } catch(e){
-    console.error('startMatch failed', e);
-    toast('Failed to start match');
+
+    return true;
+
+  } catch (e) {
+    console.error('[START FAILED]', e);
+    toast(e.message || 'Failed to start game');
+    throw e;
   }
 }
+
 
 // pick questions: tries to fetch from Firestore 'questions' collection; fallbacks included
 
@@ -2467,4 +2638,3 @@ async function openMatchOverlayForSpectate(gameId){
 
 
 /* ---------- End of file: games.js ---------- */
-
