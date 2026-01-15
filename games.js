@@ -674,10 +674,12 @@ async function acceptJoinRequest(gameId, requesterId){
           playerId: requesterId,
           joinedAt: nowSeconds(),
           playerName: sdata.name || '',
+          avatar: sdata.avatar || null,
           avatarFrame: sdata.avatarFrame || null,
           className: sdata.className || '',
           ready: false
         });
+
       }
 
       t.update(gRef, { reservedPoints: reserved, players, updatedAt: serverTimestamp() }, { merge:true });
@@ -768,10 +770,12 @@ function monitorGameReadyAndAutoStart(gameId) {
     }
 
     try {
-      await startMatchForGame(gameId);
+      // silent: true -> suppress toast if another client already started the game
+      await startMatchForGame(gameId, { silent: true });
     } catch (e) {
       console.warn('auto-start failed', e);
     }
+
   }, 5000);
 
   autoStartTimers.set(gameId, timer);
@@ -2212,9 +2216,11 @@ async function joinGameById(gameId, studentId){
         playerId: studentId,
         joinedAt: joinedAtNumeric,
         playerName: sdata.name || sdata.displayName || sdata.fullName || '',
+        avatar: sdata.avatar || null,
         avatarFrame: sdata.avatarFrame || null,
         className: sdata.className || sdata.class || ''
       };
+
       players.push(pObj);
 
       t.update(gameRef, { reservedPoints: reserved, players, updatedAt: serverTimestamp() }, { merge:true });
@@ -2254,49 +2260,64 @@ async function isStudentInActiveGame(studentId){
 
 
 // ---------- start match ----------
-async function startMatchForGame(gameId) {
+async function startMatchForGame(gameId, opts = { silent: false }) {
+  const silent = Boolean(opts.silent);
   const me = getVerifiedStudentId();
-  if (!me) throw new Error('Not verified');
+  if (!me) {
+    if (!silent) toast('Not verified');
+    throw new Error('Not verified');
+  }
 
   console.log('[START] startMatchForGame', gameId);
 
   try {
+    // fetch latest game doc first (outside transaction) so we can pick questions
+    const gSnapPre = await getDoc(doc(db, 'games', gameId));
+    if (!gSnapPre.exists()) throw new Error('Game not found');
+    const gPre = gSnapPre.data();
+
+    // pick questions (use game.titles; default to 10)
+    const titles = Array.isArray(gPre.titles) ? gPre.titles : [];
+    const numQuestions = Number(gPre.questionsCount || 10) || 10;
+    const questions = await pickQuestionsForTitles(titles, numQuestions);
+
     let matchId = null;
 
     await runTransaction(db, async (t) => {
       const gRef = doc(db, 'games', gameId);
       const gSnap = await t.get(gRef);
       if (!gSnap.exists()) throw new Error('Game not found');
-
       const g = gSnap.data();
 
-      if (String(g.creatorId) !== String(me))
-        throw new Error('Only creator can start');
+      if (String(g.creatorId) !== String(me)) throw new Error('Only creator can start');
 
-      if (g.status !== 'waiting')
-        throw new Error('Game already started');
+      if (g.status !== 'waiting') throw new Error('Game already started');
 
       const players = Array.isArray(g.players) ? g.players : [];
-      if (players.length < 2)
-        throw new Error('Not enough players');
+      if (players.length < 2) throw new Error('Not enough players');
 
-      // 🔴 SAFETY: require all ready
       const allReady = players.every(p => p.ready === true);
-      if (!allReady)
-        throw new Error('All players must be ready');
+      if (!allReady) throw new Error('All players must be ready');
 
       // create match id
       matchId = doc(collection(db, 'matches')).id;
 
+      // store a serverTimestamp startedAt and include match metadata + questions
       t.set(doc(db, 'matches', matchId), {
         gameId,
         players,
+        questions,                // full question objects
+        currentIndex: 0,
+        secondsPerQuestion: g.secondsPerQuestion || 15,
+        stake: g.stake || 0,
+        scoringModel: g.scoringModel || 'perQuestion',
+        wrongPenalty: g.wrongPenalty || 'none',
         startedAt: serverTimestamp(),
-        status: 'inprogress'   // match UI expects 'inprogress' when active
+        status: 'inprogress',
+        questionStartEpoch: Date.now()
       });
-      
-      
 
+      // update game doc
       t.update(gRef, {
         status: 'playing',
         matchId,
@@ -2306,19 +2327,25 @@ async function startMatchForGame(gameId) {
     });
 
     console.log('[START] Match created:', matchId);
-    toast('Game started 🎮');
+    if (!silent) toast('Game started 🎮');
 
-    // 🔥 IMPORTANT: open match for creator immediately
+    // open match overlay immediately for creator
     await openMatchOverlay(gameId);
 
     return true;
-
   } catch (e) {
+    // suppress expected race errors when silent==true (e.g. Game already started)
+    const msg = (e && e.message) ? e.message.toString().toLowerCase() : '';
+    if (silent && (msg.includes('already started') || msg.includes('not enough players'))) {
+      console.warn('[START suppressed]', e.message || e);
+      return false;
+    }
     console.error('[START FAILED]', e);
-    toast(e.message || 'Failed to start game');
+    if (!silent) toast(e.message || 'Failed to start game');
     throw e;
   }
 }
+
 
 
 // pick questions: tries to fetch from Firestore 'questions' collection; fallbacks included
@@ -2390,14 +2417,17 @@ function renderMatchUI(match, matchRef){
 
   let playerHtml = leftPlayers.map(p => {
     const frame = p.avatarFrame ? `frame-${p.avatarFrame}` : '';
+    const avatarPart = p.avatar ? `<img src="${escapeHtml(p.avatar)}" alt="avatar" style="width:40px;height:40px;border-radius:50%;object-fit:cover">`
+                                : `<div class="avatar ${frame}">${escapeHtml((p.playerName||p.playerId||'P').slice(0,2))}</div>`;
     return `<div style="display:flex;align-items:center;gap:8px">
-      <div class="avatar ${frame}">${(p.playerName||p.playerId||'P').slice(0,2)}</div>
+      <div style="width:40px;height:40px">${avatarPart}</div>
       <div style="display:flex;flex-direction:column">
         <div style="font-weight:700">${escapeHtml(p.playerName||p.playerId||'—')}</div>
         <div class="small-muted">Lvl ${p.level||'-'} • ${p.score||0} pts</div>
       </div>
     </div>`;
   }).join('<div style="width:18px"></div>');
+
 
   // question UI
   const questionHtml = q ? `<div class="question-card"><div style="font-weight:700">Q${currentIndex+1}: ${escapeHtml(q.text || '')}</div></div>` : '<div class="small-muted">No current question</div>';
