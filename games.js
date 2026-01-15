@@ -717,89 +717,143 @@ function renderGames(mode='students'){
 
 
 function appendGameCard(g){
-  const card = document.createElement('div'); card.className = 'game-card';
-  const left = document.createElement('div'); left.className='game-left';
+  const card = document.createElement('div');
+  card.className = 'game-card';
+
+  // LEFT: avatar + meta
+  const left = document.createElement('div');
+  left.className = 'game-left';
 
   // Avatar - prefer explicit avatar URL fields, otherwise initials. Make round.
-  const avatar = document.createElement('div'); avatar.className='avatar';
+  const avatar = document.createElement('div');
+  avatar.className = 'avatar';
   const avatarUrl = g.creatorAvatar || g.creatorAvatarUrl || g.creatorFrame || g.avatar || null;
-  if(avatarUrl && typeof avatarUrl === 'string' && avatarUrl.startsWith('http')){
+  if(avatarUrl && typeof avatarUrl === 'string' && (avatarUrl.startsWith('http') || avatarUrl.startsWith('/'))){
     const img = document.createElement('img');
     img.src = avatarUrl;
-    img.style.width = '48px'; img.style.height = '48px'; img.style.borderRadius = '50%'; img.style.objectFit = 'cover';
+    img.alt = (g.creatorName || 'Creator').slice(0,20);
+    img.style.width = '48px';
+    img.style.height = '48px';
+    img.style.borderRadius = '50%';
+    img.style.objectFit = 'cover';
     avatar.appendChild(img);
   } else {
-    avatar.textContent = (g.creatorName ? g.creatorName.split(' ').map(x=>x[0]).join('').slice(0,2) : '??');
-    avatar.style.width = '48px'; avatar.style.height = '48px'; avatar.style.borderRadius = '50%';
-    avatar.style.display = 'flex'; avatar.style.alignItems = 'center'; avatar.style.justifyContent = 'center';
+    // initials fallback
+    const initials = (g.creatorName ? g.creatorName.split(' ').map(x => x[0]).join('').slice(0,2) : '??');
+    avatar.textContent = initials;
+    avatar.style.width = '48px';
+    avatar.style.height = '48px';
+    avatar.style.borderRadius = '50%';
+    avatar.style.display = 'flex';
+    avatar.style.alignItems = 'center';
+    avatar.style.justifyContent = 'center';
     avatar.style.fontWeight = '700';
+    avatar.style.background = '#eef2f6';
     if(g.creatorFrame) avatar.classList.add(`frame-${g.creatorFrame}`);
   }
 
-  if (game.creatorId === getVerifiedStudentId()) {
-    const reqBtn = document.createElement('button');
-    reqBtn.className = 'btn btn-small';
-    reqBtn.textContent = 'Requests';
-    reqBtn.onclick = () => showJoinRequestsForGame(game.id);
-    card.appendChild(reqBtn);
-  }
+  const meta = document.createElement('div');
+  meta.className = 'game-meta';
 
-  const meta = document.createElement('div'); meta.className='game-meta';
-  const title = document.createElement('div'); title.className='game-title'; title.textContent = `${g.name || 'Untitled'} ${g.isPublic? '':'(Private)'}`;
+  const title = document.createElement('div');
+  title.className = 'game-title';
+  title.textContent = `${g.name || 'Untitled'} ${g.isPublic ? '' : '(Private)'}`;
 
-  // single compact sub line (no duplicate status)
-  const sub = document.createElement('div'); sub.className='game-sub small-muted';
-  sub.innerHTML = formatCreatorLine(g);
+  // single compact sub line: ID(last4) • Name • Stakes • Seconds • Class (if available)
+  const sub = document.createElement('div');
+  sub.className = 'game-sub small-muted';
+  // Add class name if available
+  const creatorClass = g.creatorClass ? ` • Class ${escapeHtml(g.creatorClass)}` : '';
+  // formatCreatorLine already includes masked id and name and stakes/seconds
+  sub.innerHTML = `${formatCreatorLine(g)}${creatorClass}`;
 
-  meta.appendChild(title); meta.appendChild(sub);
-  left.appendChild(avatar); left.appendChild(meta);
+  meta.appendChild(title);
+  meta.appendChild(sub);
+  left.appendChild(avatar);
+  left.appendChild(meta);
 
-  const right = document.createElement('div'); right.className='game-right';
-  const tag = document.createElement('div'); tag.className = `tag ${g.isPublic? 'public':'private'}`; tag.textContent = g.isPublic? 'Public' : 'Private';
+  // RIGHT: actions
+  const right = document.createElement('div');
+  right.className = 'game-right';
 
-  const playBtn = document.createElement('button'); playBtn.className='btn btn-primary'; playBtn.textContent = '▶ Play'; playBtn.onclick = () => onPlayClick(g);
-  const infoBtn = document.createElement('button'); infoBtn.className='btn'; infoBtn.textContent='ℹ'; infoBtn.onclick = () => showGameOverview(g);
+  // tag (Public / Private) and single status text (no duplicates)
+  const tag = document.createElement('div');
+  tag.className = `tag ${g.isPublic ? 'public' : 'private'}`;
+  tag.textContent = g.isPublic ? 'Public' : 'Private';
+  right.appendChild(tag);
 
-  right.appendChild(tag); right.appendChild(playBtn); right.appendChild(infoBtn);
+  // show status once (e.g., waiting, playing)
+  const status = document.createElement('div');
+  status.className = 'small-muted';
+  status.style.marginTop = '6px';
+  status.textContent = g.status || 'waiting';
+  right.appendChild(status);
 
-  const me = String(getVerifiedStudentId());
+  // Play button (main action)
+  const playBtn = document.createElement('button');
+  playBtn.className = 'btn btn-primary';
+  playBtn.textContent = '▶ Play';
+  playBtn.onclick = () => onPlayClick(g);
+  right.appendChild(playBtn);
 
-  // if current user is a participant (in players) -> show Leave button
+  // Info button to open game overview (keeps list uncluttered)
+  const infoBtn = document.createElement('button');
+  infoBtn.className = 'btn';
+  infoBtn.textContent = 'ℹ';
+  infoBtn.onclick = () => showGameOverview(g);
+  right.appendChild(infoBtn);
+
+  // Decide identity once
+  const me = String(getVerifiedStudentId() || '');
+
+  // If current user is a participant (in players) -> show Leave button
   const amPlayer = Array.isArray(g.players) && g.players.some(p => String(p.playerId) === me);
   if(amPlayer){
-    const leaveBtn = document.createElement('button'); leaveBtn.className='btn'; leaveBtn.textContent='Leave'; 
+    const leaveBtn = document.createElement('button');
+    leaveBtn.className = 'btn';
+    leaveBtn.textContent = 'Leave';
     leaveBtn.onclick = () => {
       if(!confirm('Leave this game? You will be removed and reserved points returned.')) return;
-      leaveGame(g.id, me).catch(err=>{ console.warn(err); toast('Failed to leave'); });
+      leaveGame(g.id, me).catch(err => { console.warn(err); toast('Failed to leave'); });
     };
     right.appendChild(leaveBtn);
   }
 
-  // if current user is the creator -> show code + Cancel (not duplicate edit/delete on list)
+  // Creator-only controls: Code/Requests/Cancel (no Edit/Delete on list)
   if(String(me) === String(g.creatorId)){
-    const codeDiv = document.createElement('div'); codeDiv.className='small-muted'; codeDiv.style.marginTop='6px';
-    codeDiv.textContent = g.isPublic ? `Public` : `Code: ${g.code || '—'}`;
-  
-    const cancelBtn = document.createElement('button'); cancelBtn.className='btn'; cancelBtn.textContent = (g.status === 'waiting') ? 'Cancel' : 'Remove';
-    cancelBtn.onclick = () => {
-      if(!confirm('Cancel this game? This will refund reserved points.')) return;
-      expireAndRefund(g).then(()=>{ toast('Game cancelled'); }).catch(()=>{ toast('Cancel failed'); });
-    };
-  
-    // REQUESTS button: open the join-requests modal for this game (creator only)
+    // small code line (Public or Code: X)
+    const codeDiv = document.createElement('div');
+    codeDiv.className = 'small-muted';
+    codeDiv.style.marginTop = '6px';
+    codeDiv.textContent = g.isPublic ? 'Public' : `Code: ${g.code || '—'}`;
+
+    // Requests button (creator opens pending join requests modal)
     const reqBtn = document.createElement('button');
     reqBtn.className = 'btn';
     reqBtn.textContent = 'Requests';
     reqBtn.onclick = () => showJoinRequestsForGame(g.id);
-  
+
+    // Cancel/Remove button
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'btn';
+    cancelBtn.textContent = (g.status === 'waiting') ? 'Cancel' : 'Remove';
+    cancelBtn.onclick = () => {
+      if(!confirm('Cancel this game? This will refund reserved points.')) return;
+      expireAndRefund(g).then(()=>{ toast('Game cancelled'); }).catch(()=>{ toast('Cancel failed'); });
+    };
+
+    // append in sensible order
     right.appendChild(codeDiv);
-    right.appendChild(reqBtn);   // <-- add here
+    right.appendChild(reqBtn);
     right.appendChild(cancelBtn);
   }
-  
 
-  card.appendChild(left); card.appendChild(right); gamesList.appendChild(card);
+  // DONE: assemble and append
+  card.appendChild(left);
+  card.appendChild(right);
+  gamesList.appendChild(card);
 }
+
 
 
 
