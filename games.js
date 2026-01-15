@@ -596,14 +596,27 @@ async function showJoinRequestsForGame(gameId){
         closeModal();
         try {
           await acceptJoinRequest(gameId, requester);
-          // mark the handled notification
-          await updateDoc(doc(db,'notifications', notifId), { seen:true, handled:true, handledAt: serverTimestamp() }).catch(()=>{});
-          // notify requester (already handled in acceptJoinRequest)
+    
+          // ✅ ADD HERE
+          try {
+            monitorGameReadyAndAutoStart(gameId);
+          } catch(e){
+            console.warn('monitor start failed', e);
+          }
+    
+          await updateDoc(doc(db,'notifications', notifId), {
+            seen:true, handled:true, handledAt: serverTimestamp()
+          }).catch(()=>{});
+    
           toast('Accepted and joined');
           await loadGames();
-        } catch(e){ console.warn(e); toast('Accept failed'); }
+        } catch(e){
+          console.warn(e);
+          toast('Accept failed');
+        }
       };
     });
+    
     modalRoot.querySelectorAll('.acceptStartReq').forEach(b => {
       b.onclick = async (ev) => {
         const requester = ev.currentTarget.getAttribute('data-from');
@@ -1408,8 +1421,22 @@ async function createQuickBotGame(botId, titles = null){
 
   // create game doc
   const ref = await addDoc(collection(db,'games'), newGame);
-newGame.id = ref.id;
-
+  newGame.id = ref.id;
+  
+  // make the creator join the game immediately (reserve stake, appear in players list)
+  try {
+    // joinGameById handles the transactional stake deduction and pushes the player into g.players
+    await joinGameById(ref.id, currentStudentId);
+  } catch (e) {
+    console.warn('creator auto-join failed', e);
+    // but still continue — leaving a creator out would break start logic, so log and surface if needed
+  }
+  
+  // If creator asked to play vs a bot, keep existing behavior to start immediately
+  if (opponentType === 'bot' && botId) {
+    await startMatchForGame(ref.id);
+  }
+  
 // --- OPTIMISTIC UI: make the just-created game visible immediately ---
 try {
   // use a client-side createdAt for immediate sorting/display
@@ -1421,11 +1448,7 @@ try {
   renderGames('students');
 } catch(e){ console.warn('optimistic UI push failed', e); }
 
-// if it's a bot-opponent creation you may auto-join & start (existing logic)
-if(opponentType === 'bot' && botId){
-  await joinGameById(ref.id, currentStudentId);
-  await startMatchForGame(ref.id);
-}
+
 
 toast('Game created');
 closeModal();
@@ -2206,8 +2229,10 @@ async function startMatchForGame(gameId) {
         gameId,
         players,
         startedAt: serverTimestamp(),
-        status: 'playing'
+        status: 'inprogress'   // match UI expects 'inprogress' when active
       });
+      
+      
 
       t.update(gRef, {
         status: 'playing',
