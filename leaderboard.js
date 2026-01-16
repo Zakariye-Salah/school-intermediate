@@ -1439,7 +1439,6 @@ if (viewAllBtn) {
 }
 /* ---------- openTestModal (improved: breakdown, +3 popup, retry skipped) ---------- */
 
-/* ---------- openTestModal (fixed: retry skipped works + sound cleanup) ---------- */
 function openTestModal(set){
   // prepare questions: shuffle choices and remap correct indexes
   const questions = (set.questions || []).map((q, idx) => {
@@ -1489,6 +1488,9 @@ function openTestModal(set){
       @keyframes loadingDots{0%{opacity:.2}50%{opacity:1}100%{opacity:.2}}
       .points-counter{font-weight:900}
       .plus-popup { position: absolute; left:50%; top:45%; transform: translate(-50%, -50%); font-weight:900; font-size:28px; pointer-events:none; opacity:0; transition: transform .6s ease, opacity .6s; color:#0b67c9; }
+      /* small overlay used for skip/retry inside modal */
+      .skip-overlay { position: absolute; inset:0; display:flex; align-items:center; justify-content:center; background: rgba(2,6,23,0.35); z-index: 2600; }
+      .skip-card { background: white; padding:14px; border-radius:10px; max-width:400px; box-shadow: 0 10px 30px rgba(2,6,23,0.2); }
     </style>`,
     `<div id="testHeaderWrapper">${headerHtml.join('')}</div>`,
     `<div id="testContainer" style="margin-top:12px;position:relative;"></div>`,
@@ -1525,6 +1527,7 @@ function openTestModal(set){
       const newOn = !SoundManager.bgEnabled;
       SoundManager.setBgEnabled(newOn);
       bgBtn.textContent = `BG: ${newOn ? 'ON' : 'OFF'}`;
+      if(newOn) modalStartedBg = true;
     };
     fxBtn.onclick = () => {
       const newOn = !SoundManager.effectsEnabled;
@@ -1532,7 +1535,7 @@ function openTestModal(set){
       fxBtn.textContent = `FX: ${newOn ? 'ON' : 'OFF'}`;
     };
 
-    // If bg already enabled, note that modal started it (so we can stop it on close)
+    // If bg already enabled when modal opens, mark modalStartedBg so cleanup will stop it
     if(SoundManager.bgEnabled){
       modalStartedBg = true;
       // ensure it is actually playing
@@ -1694,36 +1697,40 @@ function openTestModal(set){
     cleanupAndClose();
   };
 
-  // Small in-modal skip/retry dialog helper
-  function showSkipRetryModal(count, onRetry, onFinish){
-    const html = `
-      <div style="padding:12px;max-width:360px">
-        <h3 style="margin:0 0 8px 0">Unanswered questions</h3>
-        <div class="small-muted">
-          You skipped <strong>${count}</strong> question${count > 1 ? 's' : ''}.
-          Do you want to answer them now?
-        </div>
-  
-        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
-          <button id="skipFinishBtn" class="btn">Finish test</button>
-          <button id="skipRetryBtn" class="btn btn-primary">Retry skipped</button>
-        </div>
+  // Show skip/retry overlay inside the existing modal (does not replace the modal)
+  function showSkipRetryOverlay(count, onRetry, onFinish){
+    const modalBox = document.querySelector('#modalRoot .modal');
+    if(!modalBox) {
+      // fallback to modal replacement if modal missing (shouldn't happen)
+      showModalInner(`<div style="padding:12px"><h3>Unanswered questions</h3><div class="small-muted">You skipped ${count} question(s).</div><div style="text-align:right;margin-top:12px"><button id="fallbackClose" class="btn btn-primary">Close</button></div></div>`, { title: 'Skipped questions' });
+      const fb = document.getElementById('fallbackClose');
+      if(fb) fb.onclick = () => closeModal();
+      return;
+    }
+
+    // create overlay card
+    const overlay = document.createElement('div');
+    overlay.className = 'skip-overlay';
+    overlay.innerHTML = `<div class="skip-card">
+      <h3 style="margin:0 0 8px 0">Unanswered questions</h3>
+      <div class="small-muted">You skipped <strong>${count}</strong> question${count > 1 ? 's' : ''}. Do you want to answer them now?</div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+        <button id="overlayFinishBtn" class="btn">Finish test</button>
+        <button id="overlayRetryBtn" class="btn btn-primary">Retry skipped</button>
       </div>
-    `;
-    showModalInner(html, { title: 'Skipped questions' });
+    </div>`;
 
-    // Make sure focus is moved inside modal to avoid aria-hidden focus errors
-    try { const b = document.getElementById('skipRetryBtn'); if(b) b.focus(); } catch(e){}
+    modalBox.appendChild(overlay);
+    // focus the primary button for accessibility
+    try { overlay.querySelector('#overlayRetryBtn').focus(); } catch(e){}
 
-    const retryEl = document.getElementById('skipRetryBtn');
-    const finishEl = document.getElementById('skipFinishBtn');
-
-    if(retryEl) retryEl.onclick = () => {
-      closeModal();
+    // handlers
+    overlay.querySelector('#overlayRetryBtn').onclick = () => {
+      overlay.remove();
       onRetry();
     };
-    if(finishEl) finishEl.onclick = () => {
-      closeModal();
+    overlay.querySelector('#overlayFinishBtn').onclick = () => {
+      overlay.remove();
       onFinish();
     };
   }
@@ -1739,7 +1746,7 @@ function openTestModal(set){
     const total = state.questions.length;
     const scoreDelta = state.pointsGained; // tracked live
 
-    // show saving indicator immediately
+    // show saving indicator immediately (replace modal body)
     showModalInner(`<div style="padding:12px"><h3>Saving results</h3><div style="margin-top:10px">Please wait <span class="loading-dots"><span>•</span><span style="animation-delay:.12s">•</span><span style="animation-delay:.24s">•</span></span></div></div>`, { title: 'Saving' });
 
     try {
@@ -1797,20 +1804,19 @@ function openTestModal(set){
 
     const unansweredIdx = state.questions.map((_,i)=> i).filter(i => state.answers[i] === null);
     if(unansweredIdx.length > 0){
-      // show in-modal retry/finish dialog
-      showSkipRetryModal(
+      // show overlay (does not destroy modal)
+      showSkipRetryOverlay(
         unansweredIdx.length,
 
         // YES → retry skipped questions (build a new randomized set from unanswered)
         () => {
+          // build copy of unanswered questions but re-shuffle choices & map correct
           const newQs = unansweredIdx.map(i => {
             const old = state.questions[i];
-            // reconstruct orig with original correct mapping using the text values
+            // take current choices as 'orig' and re-shuffle them
             const orig = Array.isArray(old.choices) ? old.choices.map((c, idx) => ({ text: c.text, origIndex: idx })) : [];
             shuffleArray(orig);
             const origCorrect = Array.isArray(old.correct) ? old.correct.map(Number) : [Number(old.correct)];
-            // Because we shuffled original choices when first creating q, origIndex corresponds to current index,
-            // we need to map correct indexes relative to this new orig order.
             const newCorrect = [];
             orig.forEach((cNew, newPos) => {
               if(origCorrect.includes(cNew.origIndex)) newCorrect.push(newPos);
@@ -1859,8 +1865,13 @@ function openTestModal(set){
     if(state.timeoutId){ clearInterval(state.timeoutId); state.timeoutId = null; }
     // remove key handler
     window.removeEventListener('keydown', keyHandler);
-    // if modal started background music, stop it
-    try { if(modalStartedBg) SoundManager.setBgEnabled(false); } catch(e){/* ignore */ }
+    // attempt to stop all sounds (be aggressive)
+    try {
+      SoundManager.setBgEnabled && SoundManager.setBgEnabled(false);
+      SoundManager.setEffectsEnabled && SoundManager.setEffectsEnabled(false);
+      // if user provided stopAll, call it
+      if(typeof SoundManager.stopAll === 'function') SoundManager.stopAll();
+    } catch(e){/* ignore */ }
     // finally close modal
     closeModal();
   }
@@ -1872,6 +1883,7 @@ function openTestModal(set){
   // render first
   renderQuestion();
 }
+
 
 
 
