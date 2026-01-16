@@ -5,296 +5,90 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Leaderboard — AL-FATXI</title>
   <link rel="stylesheet" href="style.css">
-<style>
-  :root{
-  --bg:#fbfdff; --text:#0f172a; --muted:#6b7280; --card-bg:#fff;
-  --primary:#0b74ff; --radius:12px; --card-shadow:0 8px 30px rgba(15,23,42,0.04);
-}
+  <style>
+    :root{
+      --bg:#fbfdff; --text:#0f172a; --muted:#6b7280; --card-bg:#fff;
+      --primary:#0b74ff; --radius:12px; --card-shadow:0 8px 30px rgba(15,23,42,0.04);
+    }
+    html,body{height:100%;margin:0;padding:0;font-family:Inter,system-ui,Arial,sans-serif;background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased}
+    .container{max-width:1100px;margin:14px auto;padding:12px;box-sizing:border-box}
 
-/* Page base */
-html,body{height:100%;margin:0;padding:0;font-family:Inter,system-ui,Arial,sans-serif;background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased}
-.container{max-width:980px;margin:14px auto;padding:12px;box-sizing:border-box}
+    .card{background:var(--card-bg);border-radius:var(--radius);padding:12px;box-shadow:var(--card-shadow);margin-bottom:12px}
+    header{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+    header h1{margin:0;font-size:1.05rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .small-muted{color:var(--muted);font-size:13px}
+    .btn{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border-radius:8px;border:1px solid rgba(11,116,255,0.06);background:#fff;cursor:pointer;font-weight:700;font-size:14px}
+    .btn-primary{background:var(--primary);color:#fff;border-color:var(--primary)}
 
-/* Cards / header / buttons */
-.card{background:var(--card-bg);border-radius:var(--radius);padding:12px;box-shadow:var(--card-shadow);margin-bottom:12px}
-header{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap}
-header h1{margin:0;font-size:1.05rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.small-muted{color:var(--muted);font-size:13px}
-.btn{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border-radius:8px;border:1px solid rgba(11,116,255,0.06);background:#fff;cursor:pointer;font-weight:700;font-size:14px}
-.btn-primary{background:var(--primary);color:#fff;border-color:var(--primary)}
+    /* table container */
+    .table-wrap{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;border-radius:10px;padding:6px;background:linear-gradient(180deg,#fff,#fbfdff);box-sizing:border-box}
+    table.leader{width:100%;border-collapse:collapse;table-layout:auto;min-width:0;font-family:inherit}
 
-/* Table wrapper */
-.table-wrap{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;border-radius:10px;padding:6px;background:linear-gradient(180deg,#fff,#fbfdff);box-sizing:border-box}
-table.leader{width:100%;border-collapse:collapse;table-layout:fixed;min-width:520px;font-family:inherit}
+    /* columns for desktop */
+    table.leader col.col-rank{width:80px}
+    table.leader col.col-name{width:auto}
+    table.leader col.col-class{width:150px}
+    table.leader col.col-id{width:120px}
+    table.leader col.col-points{width:110px}
+    table.leader col.col-action{width:220px}
 
-/* column defaults */
-table.leader col.col-rank{width:56px}
-table.leader col.col-class{width:56px}
-table.leader col.col-id{width:64px}
-table.leader col.col-points{width:64px}
-table.leader col.col-action{width:88px}
-table.leader col.col-name{width:auto}
+    /* header / cells */
+    table.leader thead th{font-weight:800;color:var(--muted);font-size:13px;padding:10px 8px;text-align:left;border-bottom:1px solid rgba(241,245,249,0.9);white-space:nowrap}
+    table.leader td{padding:10px 8px;font-weight:700;font-size:13px;text-align:left;vertical-align:middle;border-bottom:1px solid rgba(245,248,251,0.9);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
-/* header / body styling */
-table.leader thead th{font-weight:800;color:var(--muted);font-size:12px;padding:8px 6px;text-align:left;border-bottom:1px solid rgba(241,245,249,0.9);white-space:nowrap}
-table.leader td{padding:6px 6px;font-weight:800;font-size:13px;text-align:left;vertical-align:middle;border-bottom:1px solid rgba(245,248,251,0.9);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    /* badges / small bits */
+    .rank-badge{display:inline-flex;align-items:center;justify-content:center;min-width:44px;height:44px;border-radius:10px;font-weight:900;background:#fff9e6;color:#07122b;font-size:0.98rem;box-shadow:0 6px 18px rgba(2,6,23,0.06)}
+    .id-mask{font-family:monospace;letter-spacing:0.6px;color:var(--muted);font-size:0.95rem}
 
-/* rank / points / id */
-.rank-badge{display:inline-flex;align-items:center;justify-content:center;min-width:40px;height:40px;border-radius:10px;font-weight:900;background:#fff9e6;color:#07122b;font-size:0.98rem;box-shadow:0 6px 18px rgba(2,6,23,0.06)}
-.points-badge{display:inline-block;padding:6px 8px;border-radius:8px;font-weight:800;min-width:54px;text-align:center;background:linear-gradient(180deg,#f3f9ff,#eef6ff)}
-.id-mask{font-family:monospace;letter-spacing:0.6px;color:var(--muted);font-size:0.95rem}
+    /* name/class presentation */
+    .student-full{display:block;white-space:normal;font-weight:900}
+    .class-full{display:block;color:var(--muted);font-weight:800}
+    .name-cell .mobile-id{display:none;font-size:0.92rem;color:var(--muted);margin-top:4px;font-weight:700}
 
-/* actions */
-.actions-wrap{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.actions-wrap .btn{padding:6px 8px;font-size:12px}
+    /* points and actions */
+    .points-cell{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:120px}
+    .points-value{font-weight:900}
+    .points-actions{display:flex;gap:8px;align-items:center}
+    .actions-wrap{display:flex;gap:8px;align-items:center;flex-wrap:nowrap}
+    .actions-wrap .btn{padding:6px 10px;font-size:13px}
 
-/* ============ NAME / CLASS COLLAPSE/EXPAND ============ */
-/* container cell */
-.name-cell, .class-cell{padding:4px 6px;box-sizing:border-box;white-space:nowrap}
+    /* more button (mobile only) */
+    .more-btn{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:8px;border:1px solid rgba(2,6,23,0.06);background:#fff;font-weight:800;cursor:pointer}
 
-/* anchor that holds the text */
-.student-toggle, .class-toggle{display:inline-block;overflow:hidden;vertical-align:middle;text-decoration:none;color:inherit;border:0;background:transparent;padding:0;margin:0;font-weight:800}
+    /* helpers */
+    .desktop-only{display:inline}
+    .mobile-only{display:none}
 
-/* COLLAPSED: exact width for 5 characters + room for star */
-.student-toggle[data-expanded="0"], .class-toggle[data-expanded="0"]{
-  width: calc(5ch + 0.95rem);   /* tweak +/-.05rem if your font needs it */
-  max-width: calc(5ch + 0.95rem);
-  white-space:nowrap;
-  text-overflow:ellipsis;
-  overflow:hidden;
-}
+    /* modal container display (empty by default; JS will fill it) */
+    #modalRoot{display:none}
 
-/* ensure strong inside has no extra padding */
-.student-toggle[data-expanded="0"] strong, .class-toggle[data-expanded="0"] strong{
-  display:inline-block;padding:0;margin:0;line-height:1;vertical-align:middle;
-}
+    /* responsive mobile */
+    @media (max-width:820px){
+      .container{padding:8px}
+      table.leader thead th{font-size:12px;padding:8px 6px}
+      table.leader td{font-size:13px;padding:10px 6px}
+      /* hide desktop-only columns: ID and Action */
+      col.col-id, col.col-action { display:none }
+      th.col-id, th.col-action, td.id-mask, td.action-cell { display:none !important }
+      .desktop-only{display:none !important}
+      .mobile-only{display:inline !important}
+      .name-cell .mobile-id{display:block}
+      /* show only the more button in the points area */
+      .points-actions{gap:6px}
+      .actions-wrap{display:none}
+      /* make table layout not push ID into points cell */
+      table.leader { table-layout:auto; }
+    }
 
-/* EXPANDED: full text allowed only for that element */
-.student-toggle[data-expanded="1"], .class-toggle[data-expanded="1"], .student-toggle.expanded, .class-toggle.expanded{
-  width:auto !important; max-width:none !important; white-space:normal; display:block; font-weight:900; line-height:1.15;
-}
+    /* very small phones */
+    @media (max-width:420px){
+      .rank-badge{min-width:34px;height:34px;font-size:0.9rem}
+      .more-btn{width:34px;height:34px}
+    }
 
-/* keep other rows compact always */
-table.leader td { vertical-align:middle; }
-
-/* tighter for small screens */
-@media (max-width:720px){
-  .container{padding:8px;max-width:640px}
-  table.leader{min-width:480px}
-  table.leader thead th{font-size:11px;padding:6px}
-  table.leader td{font-size:12px;padding:6px}
-  .student-toggle[data-expanded="0"], .class-toggle[data-expanded="0"]{width:calc(5ch + 0.85rem)}
-  .rank-badge{min-width:36px;height:36px;font-size:0.9rem}
-  .points-badge{min-width:50px;padding:6px 6px;font-size:0.86rem}
-  .actions-wrap .btn{padding:6px 6px;font-size:12px}
-}
-
-/* very small phones */
-@media (max-width:420px){
-  .student-toggle[data-expanded="0"], .class-toggle[data-expanded="0"]{width:calc(5ch + 0.75rem)}
-  table.leader{min-width:440px}
-  table.leader td{font-size:11px;padding:5px}
-  .id-mask{font-size:0.9rem}
-}
-
-/* scrollbar polish */
-.table-wrap::-webkit-scrollbar{height:8px}
-.table-wrap::-webkit-scrollbar-thumb{background:rgba(11,116,255,0.16);border-radius:8px}
-
-/* ============ MODAL (centered & on top) ============ */
-#modalRoot{position:fixed;inset:0;z-index:2400;display:none;align-items:center;justify-content:center;padding:18px;box-sizing:border-box}
-#modalRoot.visible{display:flex}
-#modalRoot .modal-backdrop{position:absolute;inset:0;background:rgba(2,6,23,0.45);backdrop-filter:blur(2px)}
-#modalRoot .modal{
-  position:relative;
-  z-index:2420;
-  width:min(820px,96%);
-  max-height:92vh;
-
-  display:flex;
-  flex-direction:column;
-
-  border-radius:12px;
-  padding:16px;
-  box-sizing:border-box;
-  background:linear-gradient(180deg,#fff,#fbfdff);
-  box-shadow:0 18px 48px rgba(2,6,23,0.28);
-  margin:auto;
-}
-#modalRoot .modal .modal-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:8px}
-#modalRoot .modal .modal-title{font-weight:800;font-size:18px;margin:0}
-#modalRoot .modal .modal-sub{color:var(--muted);font-size:13px}
-#modalRoot .modal .modal-body{font-size:14px;color:var(--text);line-height:1.3}
-#modalRoot .modal .modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
- 
-/* make modal body scrollable so choices always appear */
-#modalRoot .modal .modal-body{
-  flex:1;
-  overflow-y:auto;
-  padding-right:4px;
-}
-
-/* modal small screens */
-@media (max-width:720px){
-  #modalRoot .modal{width:min(640px,96%);padding:12px;border-radius:10px}
-  #modalRoot .modal .modal-title{font-size:16px}
-}
-
-/* prevent background scroll when modal open (toggle via JS: body.classList.add('modal-open')) */
-.modal-open{overflow:hidden;height:100%}
-
-/* safety for long nodes inside cells */
-table.leader td > *{max-width:100%;overflow:hidden;text-overflow:ellipsis}
-
-  /* ===== Choices (modal question options) ===== */
-.choices { margin-top: 8px; display:block; width:100%; box-sizing:border-box; }
-
-.choices label {
-  display: block;                 /* take full width */
-  background: #ffffff;            /* visible on modal bg */
-  color: var(--text, #0f172a);    /* ensure readable text */
-  border: 1px solid #eef2f6;      /* subtle border */
-  border-radius: 10px;
-  padding: 10px 12px;
-  margin-bottom: 8px;
-  cursor: pointer;
-  font-weight: 700;
-  font-size: 0.95rem;             /* readable but compact */
-  line-height: 1.25;
-  word-break: break-word;         /* wrap long answers */
-  white-space: normal;            /* allow wrapping */
-  transition: box-shadow .12s ease, transform .06s ease;
-  box-sizing: border-box;
-}
-
-/* meta mark (tick/cross) at the right side of the label */
-.choices label .choice-meta {
-  float: right;
-  font-weight: 900;
-  margin-left: 8px;
-}
-
-/* hover & focus accessibility */
-.choices label:hover { box-shadow: 0 8px 22px rgba(2,6,23,0.06); transform: translateY(-1px); }
-.choices label:focus { outline: 2px solid rgba(11,116,255,0.12); outline-offset: 2px; }
-
-/* selected / result states your JS uses */
-.choice-selected { box-shadow: 0 8px 20px rgba(37,99,235,0.08); }
-.choice-correct {
-  background: #ecfdf5;
-  border-color: #bbf7d0;
-  color: #064e3b;
-}
-.choice-wrong {
-  background: #fff1f2;
-  border-color: #fecaca;
-  color: #7f1d1d;
-}
-
-/* Ensure labels are visible inside modal even if modal-body has limited height */
-#modalRoot .modal .modal-body .choices { z-index: 1; position: relative; }
-
-/* Mobile tweaks: slightly larger tap targets */
-@media (max-width:720px){
-  .choices label { padding: 12px 14px; font-size: 1rem; border-radius: 10px; }
-}
-
-/* force choices to show and not collapse */
-.choices{
-  display:block !important;
-  visibility:visible !important;
-  opacity:1 !important;
-}
-
-.choices label{
-  display:block !important;
-}
-
-/* helpers for desktop / mobile header text */
-.desktop-only { display:inline; }
-.mobile-only { display:none; }
-
-/* id under name (hidden by default; shown on mobile) */
-.name-cell .mobile-id { display:none; font-size:0.92rem; color:var(--muted); margin-top:6px; font-weight:700; }
-
-/* Points cell layout (left: points; right: actions) */
-.points-cell { display:flex; align-items:center; justify-content:space-between; gap:8px; }
-.points-value { font-weight:900; }
-.points-actions { display:flex; gap:8px; align-items:center; }
-
-/* hide standalone ID/action columns on mobile and show mobile variants */
-@media (max-width:720px){
-  col.col-id, col.col-action { display:none; }
-  th.col-id, th.col-action, td.id-mask, td.action-cell { display:none !important; }
-  .desktop-only { display:none !important; }
-  .mobile-only { display:inline !important; }
-  .name-cell .mobile-id { display:block; }
-  .points-cell .points-actions { display:flex; }
-}
-/* --- tighter, responsive leaderboard styling --- */
-.table-wrap { width:100%; overflow-x:auto; -webkit-overflow-scrolling:touch; border-radius:10px; padding:6px; background:linear-gradient(180deg,#fff,#fbfdff); box-sizing:border-box; }
-
-/* allow table to shrink on mobile (prevents horizontal scrollbar) */
-table.leader { width:100%; border-collapse:collapse; table-layout:auto; min-width:0; font-family:inherit; }
-
-/* columns: use flexible widths so desktop fits, mobile shrinks nicely */
-table.leader col.col-rank { width:64px; }
-table.leader col.col-name { width:auto; }
-table.leader col.col-class { width:96px; }
-table.leader col.col-id { width:84px; }
-table.leader col.col-points { width:120px; }
-table.leader col.col-action { width:120px; }
-
-/* tighten header/body spacing */
-table.leader thead th { padding:8px 8px; font-size:12px; color:var(--muted); font-weight:800; }
-table.leader td { padding:8px 8px; font-size:13px; font-weight:700; vertical-align:middle; border-bottom:1px solid rgba(245,248,251,0.9); }
-
-/* compact rank badge */
-.rank-badge { min-width:40px; height:40px; border-radius:10px; display:inline-flex; align-items:center; justify-content:center; font-weight:900; font-size:0.95rem; }
-
-/* name & class full display */
-.name-cell .student-full { display:block; white-space:normal; font-weight:900; }
-.class-cell .class-full { display:block; color:var(--muted); font-weight:800; }
-
-/* mobile id under name — hidden on desktop */
-.name-cell .mobile-id { display:none; font-size:0.92rem; color:var(--muted); margin-top:4px; font-weight:700; }
-
-/* points cell: left points, right actions (compact) */
-.points-cell { display:flex; align-items:center; justify-content:space-between; gap:8px; min-width:120px; }
-.points-value { font-weight:900; }
-.points-actions { display:flex; gap:8px; align-items:center; }
-
-/* small icon for "more" (mobile) */
-.more-btn { display:inline-flex; align-items:center; justify-content:center; width:36px; height:36px; border-radius:8px; border:1px solid rgba(2,6,23,0.06); background:#fff; font-weight:800; cursor:pointer; }
-
-/* Desktop-only / mobile-only helpers */
-.desktop-only { display:inline; }
-.mobile-only { display:none; }
-
-/* -------- Mobile adjustments -------- */
-@media (max-width:720px){
-  /* hide separate ID & action columns on mobile */
-  col.col-id, col.col-action { display:none; }
-  th.col-id, th.col-action, td.id-mask, td.action-cell { display:none !important; }
-
-  /* swap header text for the name column */
-  .desktop-only { display:none !important; }
-  .mobile-only { display:inline !important; }
-
-  /* show masked id under name on mobile */
-  .name-cell .mobile-id { display:block; }
-
-  /* smaller paddings on mobile to fit content */
-  table.leader td { padding:10px 6px; font-size:13px; }
-  table.leader thead th { padding:8px 6px; font-size:12px; }
-  .rank-badge { min-width:36px; height:36px; font-size:0.92rem; }
-
-  /* points-actions visible and compact */
-  .points-actions { display:flex; gap:6px; }
-}
-
-
-</style>
+    /* accessibility safety */
+    table.leader td > *{max-width:100%;overflow:hidden;text-overflow:ellipsis}
+  </style>
 </head>
 <body>
   <div class="container">
@@ -318,25 +112,20 @@ table.leader td { padding:8px 8px; font-size:13px; font-weight:700; vertical-ali
       </div>
     </header>
 
-    <div id="adminControls" class="card hidden">
+    <div id="adminControls" class="card hidden" aria-hidden="true">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
         <div>
           <label style="font-weight:700">Manage competition</label>
-          <div class="small-muted">
-            Manage competition settings and view all scorers.
-          </div>
+          <div class="small-muted">Manage competition settings and view all scorers.</div>
         </div>
-    
         <div style="display:flex;gap:8px;align-items:center">
-          <!-- ONLY these buttons stay -->
           <button id="manageCompBtn" class="btn" style="display:none">Manage</button>
           <button id="viewAllBtn" class="btn" style="display:none">View all scorers</button>
         </div>
       </div>
     </div>
-    
 
-    <div id="leaderContainer" class="card">
+    <div id="leaderContainer" class="card" role="region" aria-label="Leaderboard">
       <div style="display:flex;justify-content:space-between;align-items:center">
         <div>
           <strong id="compTitle">—</strong>
@@ -344,46 +133,40 @@ table.leader td { padding:8px 8px; font-size:13px; font-weight:700; vertical-ali
         </div>
       </div>
 
-     <!-- put this inside #leaderContainer where your table currently is -->
-<div class="table-wrap">
-  <table class="leader" id="leaderTable">
-    <colgroup>
-      <col class="col-rank">
-      <col class="col-name">
-      <col class="col-class">
-      <col class="col-id">
-      <col class="col-points">
-      <col class="col-action">
-    </colgroup>
-    <thead>
-      <tr>
-        <th class="col-rank">Rank</th>
-        <th class="col-name">
-          <span class="desktop-only">Name</span>
-          <span class="mobile-only">Name / ID</span>
-        </th>
-        <th class="col-class">Class</th>
-        <th class="col-id desktop-only">ID</th>
-        <th class="col-points">Points</th>
-        <th class="col-action desktop-only">Action</th>
-      </tr>
-    </thead>
-    <tbody id="leaderTbody">
-      <tr><td colspan="6" class="small-muted">Loading…</td></tr>
-    </tbody>
-  </table>
-  
-</div>
-
+      <div class="table-wrap">
+        <table class="leader" id="leaderTable" aria-describedby="competitionSub">
+          <colgroup>
+            <col class="col-rank">
+            <col class="col-name">
+            <col class="col-class">
+            <col class="col-id">
+            <col class="col-points">
+            <col class="col-action">
+          </colgroup>
+          <thead>
+            <tr>
+              <th class="col-rank">Rank</th>
+              <th class="col-name"><span class="desktop-only">Name</span><span class="mobile-only">Name / ID</span></th>
+              <th class="col-class">Class</th>
+              <th class="col-id desktop-only">ID</th>
+              <th class="col-points">Points</th>
+              <th class="col-action desktop-only">Action</th>
+            </tr>
+          </thead>
+          <tbody id="leaderTbody">
+            <tr><td colspan="6" class="small-muted">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
     </div>
 
     <div id="moreArea"></div>
   </div>
 
-  <!-- modal container -->
-  <div id="modalRoot" class="hidden"></div>
+  <!-- Modal container (JS will render into this) -->
+  <div id="modalRoot" class="hidden" aria-hidden="true"></div>
 
-  <!-- scripts -->
+  <!-- keep JS external — no inline JS in this file -->
   <script type="module" src="firebase-config.js"></script>
   <script type="module" src="leaderboard.js"></script>
 </body>
