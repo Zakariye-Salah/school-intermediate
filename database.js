@@ -804,74 +804,6 @@ async function deleteSubject(e){
 }
 
 
-function renderExams(){
-  if(!examsList) return;
-
-  // ensure sort control exists (insert above exams list if missing)
-  const controlsId = 'examControlsArea';
-  let controls = document.getElementById(controlsId);
-  if(!controls && pageExams){
-    controls = document.createElement('div'); controls.id = controlsId; controls.style.marginBottom = '8px';
-    // create select for sort
-    const sel = document.createElement('select'); sel.id = 'examSortSelect';
-    sel.innerHTML = `<option value="date">Sort: Date (default)</option><option value="a-z">A → Z</option><option value="z-a">Z → A</option>`;
-    sel.value = examSortMode || 'date';
-    sel.onchange = (ev)=>{ examSortMode = ev.target.value; renderExams(); };
-    controls.appendChild(sel);
-    // append to page before list
-    pageExams.insertBefore(controls, examsList);
-  } else if(controls){
-    const sel = document.getElementById('examSortSelect'); if(sel) sel.value = examSortMode;
-  }
-
-  const q = (examSearch && examSearch.value||'').trim().toLowerCase();
-  const classFilterVal = (examClassFilter && examClassFilter.value) || '';
-  examsList.innerHTML = '';
-
-  let list = examsCache.slice();
-  // filter
-  list = list.filter(e => {
-    if(classFilterVal && (!e.classes || !e.classes.includes(classFilterVal))) return false;
-    if(!q) return true;
-    return (e.name||'').toLowerCase().includes(q);
-  });
-
-  // sort
-  if(examSortMode === 'date'){
-    list.sort((a,b)=> {
-      const ta = (a.date && a.date.seconds) ? a.date.seconds : (a.publishedAt?.seconds || 0);
-      const tb = (b.date && b.date.seconds) ? b.date.seconds : (b.publishedAt?.seconds || 0);
-      return tb - ta;
-    });
-  } else if(examSortMode === 'a-z'){
-    list.sort((a,b)=> (a.name||'').localeCompare(b.name||''));
-  } else if(examSortMode === 'z-a'){
-    list.sort((a,b)=> (b.name||'').localeCompare(a.name||''));
-  }
-
-  for(const e of list){
-    const div = document.createElement('div'); div.className='row';
-    const status = e.status || 'draft';
-    const classesText = e.classes && e.classes.length ? e.classes.join(', ') : 'All classes';
-    const dateText = e.date ? (new Date(e.date.seconds ? e.date.seconds*1000 : e.date)).toLocaleDateString() : '';
-    div.innerHTML = `<div class="meta">
-        <strong>${escape(e.name)} ${status==='published'?'<span style="color:#059669">(published)</span>':status==='deactivated'?'<span style="color:#dc2626">(deactivated)</span>':''}</strong>
-        <small>${escape(classesText)} • ${escape(dateText)}</small>
-      </div>
-      <div>
-        <button class="btn btn-ghost btn-sm open-exam" data-id="${escape(e.id)}">Open</button>
-        <button class="btn btn-ghost btn-sm edit-exam" data-id="${escape(e.id)}">Edit</button>
-        <button class="btn btn-danger btn-sm del-exam" data-id="${escape(e.id)}">Delete</button>
-        <button class="btn btn-primary btn-sm pub-exam" data-id="${escape(e.id)}">${e.status==='published'?'Unpublish':'Publish'}</button>
-      </div>`;
-    examsList.appendChild(div);
-  }
-  document.querySelectorAll('.open-exam').forEach(b=>b.onclick = openExam);
-  document.querySelectorAll('.edit-exam').forEach(b=>b.onclick = openEditExamModal);
-  document.querySelectorAll('.del-exam').forEach(b=>b.onclick = deleteExam);
-  document.querySelectorAll('.pub-exam').forEach(b=>b.onclick = togglePublishExam);
-}
-
 
 
 /* events */
@@ -1158,8 +1090,190 @@ async function deleteOrUnblockStudent(e){
 
 /* -------------------------------------
    Exam open / add results / publish
--------------------------------------*/
-function openExam(e){
+   -------------------------------------*/
+
+function renderExams(){
+  if(!examsList) return;
+
+  // ensure sort control exists (same as before)
+  const controlsId = 'examControlsArea';
+  let controls = document.getElementById(controlsId);
+  if(!controls && pageExams){
+    controls = document.createElement('div'); controls.id = controlsId; controls.style.marginBottom = '8px';
+    const sel = document.createElement('select'); sel.id = 'examSortSelect';
+    sel.innerHTML = `<option value="date">Sort: Date (default)</option><option value="a-z">A → Z</option><option value="z-a">Z → A</option>`;
+    sel.value = examSortMode || 'date';
+    sel.onchange = (ev)=>{ examSortMode = ev.target.value; renderExams(); };
+    controls.appendChild(sel);
+    pageExams.insertBefore(controls, examsList);
+  } else if(controls){
+    const sel = document.getElementById('examSortSelect'); if(sel) sel.value = examSortMode;
+  }
+
+  const q = (examSearch && examSearch.value||'').trim().toLowerCase();
+  const classFilterVal = (examClassFilter && examClassFilter.value) || '';
+  examsList.innerHTML = '';
+
+  let list = examsCache.slice();
+  // filter
+  list = list.filter(e => {
+    if(classFilterVal && (!e.classes || !e.classes.includes(classFilterVal))) return false;
+    if(!q) return true;
+    return (e.name||'').toLowerCase().includes(q);
+  });
+
+  // sort
+  if(examSortMode === 'date'){
+    list.sort((a,b)=> {
+      const ta = (a.date && a.date.seconds) ? a.date.seconds : (a.publishedAt?.seconds || 0);
+      const tb = (b.date && b.date.seconds) ? b.date.seconds : (b.publishedAt?.seconds || 0);
+      return tb - ta;
+    });
+  } else if(examSortMode === 'a-z'){
+    list.sort((a,b)=> (a.name||'').localeCompare(b.name||''));
+  } else if(examSortMode === 'z-a'){
+    list.sort((a,b)=> (b.name||'').localeCompare(a.name||''));
+  }
+
+  // mobile vs desktop switch
+  const mobile = (typeof isMobileViewport === 'function') ? isMobileViewport() : (window.matchMedia && window.matchMedia('(max-width:768px)').matches);
+
+  if(mobile){
+    // compact mobile list
+    let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <strong>Total exams: ${list.length}</strong>
+      <div class="muted">Tap More for exam details</div>
+    </div><div id="examsMobileList">`;
+
+    list.forEach((e, idx) => {
+      const statusLabel = (e.status === 'published') ? 'Published' : (e.status === 'deactivated' ? 'Deactivated' : 'Unpublished');
+      html += `<div style="padding:12px;border-bottom:1px solid #f1f5f9;display:flex;flex-direction:column;gap:6px">
+        <div style="font-weight:800;display:flex;align-items:center;justify-content:space-between">
+          <div style="display:flex;gap:8px;align-items:center">
+            <div style="min-width:26px;text-align:center;font-weight:700">${idx+1}</div>
+            <div style="max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escape(e.name||'')}</div>
+          </div>
+          <div style="text-align:right"><small class="muted">${escape(statusLabel)}</small></div>
+        </div>
+        <div style="display:flex;justify-content:flex-end">
+          <button class="btn btn-ghost btn-sm mobile-exam-more" data-id="${escape(e.id)}">More</button>
+        </div>
+      </div>`;
+    });
+
+    html += `</div>`;
+    examsList.innerHTML = html;
+
+    // wire mobile More buttons to open modal
+    examsList.querySelectorAll('.mobile-exam-more').forEach(b => {
+      b.onclick = (ev) => openExamModal(ev.currentTarget.dataset.id);
+    });
+
+    return;
+  }
+
+  // Desktop: original rows (keeps actions)
+  for(const e of list){
+    const div = document.createElement('div'); div.className='row';
+    const status = e.status || 'draft';
+    const classesText = e.classes && e.classes.length ? e.classes.join(', ') : 'All classes';
+    const dateText = e.date ? (new Date(e.date.seconds ? e.date.seconds*1000 : e.date)).toLocaleDateString() : '';
+    div.innerHTML = `<div class="meta">
+        <strong>${escape(e.name)} ${status==='published'?'<span style="color:#059669">(published)</span>':status==='deactivated'?'<span style="color:#dc2626">(deactivated)</span>':'(unpublished)'}</strong>
+        <small>${escape(classesText)} • ${escape(dateText)}</small>
+      </div>
+      <div>
+        <button class="btn btn-ghost btn-sm open-exam" data-id="${escape(e.id)}">Open</button>
+        <button class="btn btn-ghost btn-sm edit-exam" data-id="${escape(e.id)}">Edit</button>
+        <button class="btn btn-danger btn-sm del-exam" data-id="${escape(e.id)}">Delete</button>
+        <button class="btn btn-primary btn-sm pub-exam" data-id="${escape(e.id)}">${e.status==='published'?'Unpublish':'Publish'}</button>
+      </div>`;
+    examsList.appendChild(div);
+  }
+
+  document.querySelectorAll('.open-exam').forEach(b=>b.onclick = openExam);
+  document.querySelectorAll('.edit-exam').forEach(b=>b.onclick = openEditExamModal);
+  document.querySelectorAll('.del-exam').forEach(b=>b.onclick = deleteExam);
+  document.querySelectorAll('.pub-exam').forEach(b=>b.onclick = togglePublishExam);
+}
+
+/* ---------- openExamModal (show exam details + footer actions) ---------- */
+async function openExamModal(examId){
+  if(!examId) return;
+  // try cached exam, fallback to DB fetch
+  let ex = examsCache.find(x => x.id === examId);
+  if(!ex){
+    try {
+      const snap = await getDoc(doc(db,'exams', examId));
+      if(!snap.exists()) return toast && toast('Exam not found');
+      ex = { id: snap.id, ...snap.data() };
+    } catch(err){ console.error('openExamModal load failed', err); return toast && toast('Failed to load exam'); }
+  }
+
+  const statusLabel = ex.status === 'published' ? 'Published' : (ex.status === 'deactivated' ? 'Deactivated' : 'Unpublished');
+  const classesText = (ex.classes && ex.classes.length) ? ex.classes.join(', ') : 'All classes';
+  const dateText = ex.date ? (new Date(ex.date.seconds ? ex.date.seconds*1000 : ex.date)).toLocaleDateString() : '—';
+
+  const html = `
+    <div style="display:grid;grid-template-columns:1fr;gap:8px">
+      <div><strong>Exam</strong><div class="muted">${escape(ex.name||'')}</div></div>
+      <div><strong>Status</strong><div class="muted">${escape(statusLabel)}</div></div>
+      <div><strong>Classes assigned</strong><div class="muted">${escape(classesText)}</div></div>
+      <div><strong>Date</strong><div class="muted">${escape(dateText)}</div></div>
+    </div>
+    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn btn-ghost" id="examModalOpen">Open</button>
+      <button class="btn btn-ghost" id="examModalEdit">Edit</button>
+      <button class="btn btn-danger" id="examModalDelete">Delete</button>
+      <button class="btn btn-primary" id="examModalToggle">${ex.status==='published' ? 'Unpublish' : 'Publish'}</button>
+      <button class="btn" id="examModalClose">Close</button>
+    </div>
+  `;
+
+  showModal(`${escape(ex.name||'Exam')}`, html);
+
+  // wire buttons
+  const openBtn = document.getElementById('examModalOpen');
+  const editBtn = document.getElementById('examModalEdit');
+  const delBtn = document.getElementById('examModalDelete');
+  const toggleBtn = document.getElementById('examModalToggle');
+  const closeBtn = document.getElementById('examModalClose');
+
+  if(openBtn) openBtn.onclick = () => {
+    closeModal();
+    // reuse original openExam navigator
+    openExam({ target: { dataset: { id: ex.id } } });
+  };
+  if(editBtn) editBtn.onclick = () => {
+    closeModal();
+    openEditExamModal({ target: { dataset: { id: ex.id } } });
+  };
+  if(delBtn) delBtn.onclick = async () => {
+    if(!confirm('Delete exam?')) return;
+    await deleteExam({ target: { dataset: { id: ex.id } } });
+    closeModal();
+  };
+  if(toggleBtn) toggleBtn.onclick = async () => {
+    await togglePublishExam({ target: { dataset: { id: ex.id } } });
+    // refresh UI in modal and list
+    await loadExams();
+    renderExams();
+    // update modal - replace status text and toggle label
+    const newEx = examsCache.find(x=>x.id===ex.id) || ex;
+    const newStatus = newEx.status === 'published' ? 'Published' : (newEx.status === 'deactivated' ? 'Deactivated' : 'Unpublished');
+    const newLabel = newEx.status === 'published' ? 'Unpublish' : 'Publish';
+    // update DOM elements safely
+    try {
+      // replace the modal by reopening with fresh data
+      closeModal();
+      openExamModal(ex.id);
+    } catch(e){ console.error(e); }
+  };
+  if(closeBtn) closeBtn.onclick = closeModal;
+}
+
+  
+   function openExam(e){
   const id = e.target.dataset.id;
   if(!id) return alert('No exam id');
   window.location.href = `exam.html?examId=${encodeURIComponent(id)}`;
