@@ -262,12 +262,102 @@ function clearMatchTimers() {
   if (matchRoot.__questionInterval) { clearInterval(matchRoot.__questionInterval); matchRoot.__questionInterval = null; }
 }
 
-// start/refresh a question countdown shown in the UI and auto-advance when time expires
+// ---------- helper: shuffle array and return mapping ----------
+function shuffleWithIndexes(arr){
+  const idxs = arr.map((_,i)=>i);
+  for(let i=idxs.length-1;i>0;i--){
+    const j = Math.floor(Math.random()*(i+1));
+    [idxs[i], idxs[j]] = [idxs[j], idxs[i]];
+  }
+  return idxs;
+}
+
+// ---------- processPendingReveal (robust, with retry) ----------
+async function processPendingReveal(matchRef, matchData){
+  try {
+    if(!matchRef || !matchData) return;
+    const awaiting = matchData.awaitingReveal;
+    if(!awaiting) return;
+    const now = Date.now();
+    if(now < (awaiting.revealUntil || 0)) return; // not yet time
+
+    // limited retry attempts to avoid spamming commits
+    const MAX_RETRIES = 3;
+    let attempt = 0;
+    while(attempt < MAX_RETRIES){
+      attempt++;
+      try {
+        await runTransaction(db, async (t) => {
+          const snap = await t.get(matchRef);
+          if(!snap.exists()) return;
+          const m = snap.data();
+          // Nothing to do if awaitingReveal changed
+          if(!m.awaitingReveal || m.awaitingReveal.revealUntil !== awaiting.revealUntil) return;
+          const next = Number(m.awaitingReveal.advanceTo || ( (m.currentIndex || 0) + 1 ));
+          const total = Number(m.totalQuestions || (m.questions ? m.questions.length : 0));
+          if(next >= total){
+            // finish the match
+            t.update(matchRef, {
+              currentIndex: total,
+              status: 'finished',
+              finishedAt: serverTimestamp(),
+              awaitingReveal: null,
+              updatedAt: serverTimestamp()
+            });
+          } else {
+            t.update(matchRef, {
+              currentIndex: next,
+              questionStartEpoch: Date.now(),
+              awaitingReveal: null,
+              updatedAt: serverTimestamp()
+            });
+          }
+        });
+        // success — break loop
+        break;
+      } catch(err){
+        // If precondition failure / concurrent write, retry with small backoff
+        console.warn(`processPendingReveal attempt ${attempt} failed`, err && err.code ? err.code : err);
+        if(attempt >= MAX_RETRIES) {
+          console.warn('processPendingReveal: giving up after retries');
+          break;
+        }
+        // short exponential backoff
+        await new Promise(res => setTimeout(res, 120 * attempt));
+      }
+    }
+  } catch(e){ console.warn('processPendingReveal failed', e); }
+}
+
+// ---------- ensure match doc has gameName (one-off sync) ----------
+async function ensureMatchHasGameName(match, matchRef){
+  try {
+    if(match && match.gameName) return;
+    if(!match || !match.gameId || !matchRef) return;
+    const gSnap = await getDoc(doc(db,'games', match.gameId));
+    if(gSnap.exists()){
+      const g = gSnap.data();
+      if(g && (g.name || g.title)){
+        // write only if missing to avoid churn
+        try { await updateDoc(matchRef, { gameName: g.name || g.title }); } catch(e){/* ignore */ }
+      }
+    }
+  } catch(e){ console.warn('ensureMatchHasGameName failed', e); }
+}
+
+// ---------- startQuestionTimer (safeguarded) ----------
 function startQuestionTimer(matchRef, matchData) {
   try {
     clearMatchTimers();
+
+    if(!matchData || matchData.status !== 'inprogress') return;
+
     const secondsPerQ = Number(matchData.secondsPerQuestion || 15);
     const currentIdx = Number(matchData.currentIndex || 0);
+    const totalQ = Number(matchData.totalQuestions || (matchData.questions ? matchData.questions.length : 0));
+    // if finished already, don't start timers
+    if(totalQ > 0 && currentIdx >= totalQ) return;
+
     const startEpoch = (matchData.questionStartEpoch && Number(matchData.questionStartEpoch)) || Date.now();
     // compute elapsed from server epoch guess
     const elapsed = Math.floor((Date.now() - startEpoch) / 1000);
@@ -293,7 +383,7 @@ function startQuestionTimer(matchRef, matchData) {
     matchRoot.__questionTimer = setTimeout(async () => {
       clearMatchTimers();
       try {
-        // mark assigned player as missed (no points) and advance question
+        // mark assigned player as missed (no points) and advance question (respect totalQuestions)
         await runTransaction(db, async (t) => {
           const mSnap = await t.get(matchRef);
           if (!mSnap.exists()) return;
@@ -302,37 +392,21 @@ function startQuestionTimer(matchRef, matchData) {
           const q = (m.questions || [])[currentIdx];
           const answered = m.answered || {};
           if (q && q.assignedTo && !answered[`${currentIdx}_${q.assignedTo}`]) {
-            // record a missed answer (no score change)
             answered[`${currentIdx}_${q.assignedTo}`] = { selected: null, correct: false, missed: true, at: nowMillis(), playerId: q.assignedTo };
           }
-          // t.update(matchRef, { answered, currentIndex: (currentIdx + 1), questionStartEpoch: Date.now(), updatedAt: serverTimestamp() });
-
-          const totalQ = Number(m.totalQuestions || (m.questions ? m.questions.length : 0));
-const next = currentIdx + 1;
-if(next >= totalQ){
-  t.update(matchRef, { answered, currentIndex: totalQ, status: 'finished', finishedAt: serverTimestamp(), questionStartEpoch: Date.now(), updatedAt: serverTimestamp() });
-} else {
-  t.update(matchRef, { answered, currentIndex: next, questionStartEpoch: Date.now(), updatedAt: serverTimestamp() });
-}
-
+          const total = Number(m.totalQuestions || (m.questions ? m.questions.length : 0));
+          const next = currentIdx + 1;
+          if(next >= total){
+            t.update(matchRef, { answered, currentIndex: total, status: 'finished', finishedAt: serverTimestamp(), questionStartEpoch: Date.now(), updatedAt: serverTimestamp() });
+          } else {
+            t.update(matchRef, { answered, currentIndex: next, questionStartEpoch: Date.now(), updatedAt: serverTimestamp() });
+          }
         });
       } catch (e) { console.warn('auto-advance failed', e); }
     }, remaining * 1000);
   } catch (e) { console.warn('startQuestionTimer failed', e); }
 }
-async function ensureMatchHasGameName(match, matchRef){
-  try {
-    if(match && match.gameName) return;
-    if(!match || !match.gameId || !matchRef) return;
-    const gSnap = await getDoc(doc(db,'games', match.gameId));
-    if(gSnap.exists()){
-      const g = gSnap.data();
-      if(g && (g.name || g.title)){
-        await updateDoc(matchRef, { gameName: g.name || g.title });
-      }
-    }
-  } catch(e){ console.warn('ensureMatchHasGameName failed', e); }
-}
+
 
 
 
@@ -540,30 +614,7 @@ function watchMyActiveMatch() {
     });
   }, err => console.warn('watchMyActiveMatch error', err));
 }
-async function processPendingReveal(matchRef, matchData){
-  try {
-    if(!matchRef || !matchData) return;
-    const awaiting = matchData.awaitingReveal;
-    if(!awaiting) return;
-    const now = Date.now();
-    if(now < (awaiting.revealUntil || 0)) return; // not yet
-    // attempt to advance the index (one client will win the transaction)
-    await runTransaction(db, async (t) => {
-      const snap = await t.get(matchRef);
-      if(!snap.exists()) return;
-      const m = snap.data();
-      // if already advanced or awaitingReveal changed, cancel
-      if (!m.awaitingReveal || m.awaitingReveal.revealUntil !== awaiting.revealUntil) return;
-      const next = awaiting.advanceTo;
-      const total = Number(m.totalQuestions || (m.questions ? m.questions.length : 0));
-      if(next >= total){
-        t.update(matchRef, { currentIndex: total, status: 'finished', finishedAt: serverTimestamp(), awaitingReveal: null, updatedAt: serverTimestamp() });
-      } else {
-        t.update(matchRef, { currentIndex: next, questionStartEpoch: Date.now(), awaitingReveal: null, updatedAt: serverTimestamp() });
-      }
-    });
-  } catch(e){ console.warn('processPendingReveal failed', e); }
-}
+
 
 
 
@@ -1734,60 +1785,23 @@ loadGames().catch(()=>{});
 
 
 
-function buildQuestionOptionsForTotal(total){
-  const opts = new Set();
-  opts.add(total);
-  if(total >= 70) opts.add(Math.floor(total * 0.7));
-  if(total >= 50) opts.add(Math.floor(total * 0.5));
-  if(total >= 20) opts.add(20);
-  opts.add(10);
-  // produce sorted unique array descending and ensure values >=1
-  return Array.from(opts).map(n=>Math.max(1,Math.floor(n))).sort((a,b)=>b-a);
-}
 
-/* ---------- new game modal (unchanged except titles uses local sets) ---------- */
+
+// ---------- onNewGameClick (dynamic question count options + UI) ----------
 async function onNewGameClick(){
   const vrole = getVerifiedRole();
   const vId = getVerifiedStudentId();
   if(vrole !== 'student' || !vId){ toast('Only verified students may create games.'); return; }
 
-  const titlesSnap = await loadAvailableTitles(); // now prefers local sets
+  const titlesSnap = await loadAvailableTitles(); // prefers local sets
   const titlesOptions = (titlesSnap || []).map(t => `<label style="display:block;margin-bottom:6px"><input type="checkbox" class="titleCheckbox" value="${escapeHtml(t)}"> ${escapeHtml(t)}</label>`).join('');
-
-  // after you showModal(...)
-function updateNumQuestionsOptions(){
-  // compute combined total from localSetsCache (fallback to large number)
-  let total = 0;
-  const checked = Array.from(document.querySelectorAll('.titleCheckbox')).filter(c=>c.checked).map(c=>c.value);
-  if(checked.length === 0){
-    // default: sum first set or 100
-    total = (localSetsCache && localSetsCache[0] && Array.isArray(localSetsCache[0].questions)) ? localSetsCache[0].questions.length : 100;
-  } else {
-    for(const t of checked){
-      // try matching localSetsCache names and count questions
-      const s = (localSetsCache || []).find(x => (x.title||x.id||'').toString().toLowerCase() === t.toString().toLowerCase());
-      if(s && Array.isArray(s.questions)) total += s.questions.length;
-      else total += 0;
-    }
-  }
-  const opts = buildQuestionOptionsForTotal(total);
-  const sel = document.getElementById('numQuestions');
-  if(!sel) return;
-  sel.innerHTML = opts.map(o=>`<option value="${o}">${o}</option>`).join('');
-  // default select top (largest)
-  if(opts.length) sel.value = opts[0];
-}
-
-// wire checkboxes
-document.querySelectorAll('.titleCheckbox').forEach(cb => cb.onchange = updateNumQuestionsOptions);
-updateNumQuestionsOptions();
 
   const html = `
   <div style="display:flex;flex-direction:column;gap:8px">
     <label class="small">Game name</label>
     <input id="gameName" class="input-small" placeholder="e.g. Quick Math" />
     <label class="small">Select titles (choose at least one)</label>
-    <div style="max-height:180px;overflow:auto;border:1px solid #eef2f6;padding:8px;border-radius:8px">${titlesOptions || '<div class="small-muted">No titles available</div>'}</div>
+    <div id="titlesWrap" style="max-height:180px;overflow:auto;border:1px solid #eef2f6;padding:8px;border-radius:8px">${titlesOptions || '<div class="small-muted">No titles available</div>'}</div>
 
     <div style="display:flex;gap:8px;align-items:center">
       <label><input type="checkbox" id="isPublic" checked /> Public</label>
@@ -1808,23 +1822,24 @@ updateNumQuestionsOptions();
       <select id="wrongPenalty"><option value="none">No penalty</option><option value="sub1">Subtract 1</option></select>
     </div>
 
-<div style="display:flex;gap:8px;align-items:center">
-        <label class="small">Scoring model</label>
-        <select id="scoringModel"><option value="perQuestion">Per-question (default)</option><option value="winnerTakes">Winner-takes-stakes</option></select>
-        <label class="small">Tie behavior</label>
-        <select id="tieBehavior"><option value="reduceTime">Continue with reduced time</option><option value="nextTitle">Next title</option><option value="split">Split stake/refund</option><option value="rematch">Rematch vote</option></select>
-        <label class="small">Opponent</label>
-        <select id="opponentSelect"><option value="public">Public</option><option value="private">Private (code)</option><option value="invite">Invite specific</option><option value="bot">Play vs Bot</option></select>
-        <select id="botSelect" style="display:none">${botsCache.map(b=>`<option value="${b.id}">${escapeHtml(b.name)} (${b.difficultyTag})</option>`).join('')}</select>
-      </div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <label class="small">Scoring model</label>
+      <select id="scoringModel"><option value="perQuestion">Per-question (default)</option><option value="winnerTakes">Winner-takes-stakes</option></select>
+      <label class="small">Tie behavior</label>
+      <select id="tieBehavior"><option value="reduceTime">Continue with reduced time</option><option value="nextTitle">Next title</option><option value="split">Split stake/refund</option><option value="rematch">Rematch vote</option></select>
+      <label class="small">Opponent</label>
+      <select id="opponentSelect"><option value="public">Public</option><option value="private">Private (code)</option><option value="invite">Invite specific</option><option value="bot">Play vs Bot</option></select>
+      <select id="botSelect" style="display:none">${botsCache.map(b=>`<option value="${b.id}">${escapeHtml(b.name)} (${b.difficultyTag})</option>`).join('')}</select>
+    </div>
 
-      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:6px">
-        <button id="cancelCreate" class="btn">Cancel</button>
-        <button id="doCreate" class="btn btn-primary">Create</button>
-      </div>
-    </div>  
-`;
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:6px">
+      <button id="cancelCreate" class="btn">Cancel</button>
+      <button id="doCreate" class="btn btn-primary">Create</button>
+    </div>
+  </div>
+  `;
   showModal(html, { title:'Create new game' });
+  bringModalToFront();
 
   document.getElementById('cancelCreate').onclick = closeModal;
   const opponentSelect = document.getElementById('opponentSelect');
@@ -1833,9 +1848,36 @@ updateNumQuestionsOptions();
     document.getElementById('botSelect').style.display = val === 'bot' ? '' : 'none';
   };
 
-  // inside document.getElementById('doCreate').onclick = async () => { ... }
-// ...
+  // dynamic question options based on selected titles (uses localSetsCache to count)
+  function buildQuestionOptionsForTotal(total){
+    const opts = new Set();
+    opts.add(total);
+    if(total >= 70) opts.add(Math.floor(total * 0.7));
+    if(total >= 50) opts.add(Math.floor(total * 0.5));
+    if(total >= 20) opts.add(20);
+    opts.add(10);
+    return Array.from(opts).map(n=>Math.max(1,Math.floor(n))).sort((a,b)=>b-a);
+  }
+  function updateNumQuestionsOptions(){
+    let total = 0;
+    const checked = Array.from(document.querySelectorAll('.titleCheckbox')).filter(c=>c.checked).map(c=>c.value);
+    if(checked.length === 0){
+      total = (localSetsCache && localSetsCache[0] && Array.isArray(localSetsCache[0].questions)) ? localSetsCache[0].questions.length : 100;
+    } else {
+      for(const t of checked){
+        const s = (localSetsCache || []).find(x => (x.title||x.id||'').toString().toLowerCase() === t.toString().toLowerCase());
+        if(s && Array.isArray(s.questions)) total += s.questions.length;
+      }
+    }
+    const opts = buildQuestionOptionsForTotal(total);
+    const sel = document.getElementById('numQuestions');
+    if(!sel) return;
+    sel.innerHTML = opts.map(o=>`<option value="${o}">${o}</option>`).join('');
+    if(opts.length) sel.value = opts[0];
+  }
 
+  document.querySelectorAll('.titleCheckbox').forEach(cb => cb.onchange = updateNumQuestionsOptions);
+  updateNumQuestionsOptions();
 
   document.getElementById('doCreate').onclick = async () => {
     const name = document.getElementById('gameName').value.trim();
@@ -1849,28 +1891,23 @@ updateNumQuestionsOptions();
     const tieBehavior = document.getElementById('tieBehavior').value;
     const opponentType = document.getElementById('opponentSelect').value;
     const botId = document.getElementById('botSelect').value || null;
-
     const numQuestions = Number(document.getElementById('numQuestions').value || 10);
 
     if(!name) return alert('Enter game name');
     if(chosen.length === 0) return alert('Select at least one title');
     if(stake < 50) return alert('Minimum stake is 50');
-      // refresh profile BEFORE validating stake (avoid stale cache)
-      let profData = currentStudentProfile || {};
-      try {
-        const sSnap = await getDoc(doc(db,'students', currentStudentId));
-        if(sSnap.exists()) profData = sSnap.data();
-        currentStudentProfile = profData;
-      } catch(e){
-        console.warn('refresh student doc failed', e);
-      }
-      const availablePoints = Number(profData.totalPoints || 0);
-      if(stake > availablePoints) {
-        return alert('Not enough points to create this stake');
-      }
-  
+
+    // refresh profile BEFORE validating stake
+    let profData = currentStudentProfile || {};
     try {
-   
+      const sSnap = await getDoc(doc(db,'students', currentStudentId));
+      if(sSnap.exists()) profData = sSnap.data();
+      currentStudentProfile = profData;
+    } catch(e){ console.warn('refresh student doc failed', e); }
+    const availablePoints = Number(profData.totalPoints || 0);
+    if(stake > availablePoints) return alert('Not enough points to create this stake');
+
+    try {
       const newGame = {
         name,
         titles: chosen,
@@ -1880,8 +1917,7 @@ updateNumQuestionsOptions();
         wrongPenalty,
         scoringModel,
         tieBehavior,
-        questionsCount: numQuestions,            // <--- store it here
-
+        questionsCount: numQuestions,
         opponentType: opponentType === 'bot' ? 'bot' : 'student',
         botId: botId || null,
         creatorId: currentStudentId,
@@ -1902,28 +1938,15 @@ updateNumQuestionsOptions();
       }
 
       const ref = await addDoc(collection(db,'games'), newGame);
-newGame.id = ref.id;
+      newGame.id = ref.id;
 
-// --- Auto-join the creator so they are present in players[] and have stake reserved
-try {
-  // joinGameById is already transactional: it deducts stake, updates reservedPoints and pushes the player into players[]
-  await joinGameById(ref.id, currentStudentId);
-} catch (e) {
-  console.warn('creator auto-join failed', e);
-  // optional: toast('Warning: failed to auto-join creator');
-}
+      // creator auto-join
+      try { await joinGameById(ref.id, currentStudentId); } catch (e){ console.warn('creator auto-join failed', e); }
 
-// existing bot-start logic (keep it)
-if (opponentType === 'bot' && botId) {
-  await startMatchForGame(ref.id);
-}
-
-      // const ref = await addDoc(collection(db,'games'), newGame);
-      // newGame.id = ref.id;
-      // if(opponentType === 'bot' && botId){
-      //   await joinGameById(ref.id, currentStudentId);
-      //   await startMatchForGame(ref.id);
-      // }
+      // auto start for bot games
+      if (opponentType === 'bot' && botId) {
+        await startMatchForGame(ref.id);
+      }
 
       toast('Game created');
       closeModal();
@@ -1934,6 +1957,7 @@ if (opponentType === 'bot' && botId) {
     }
   };
 }
+
 
 /* ---------- generate code ---------- */
 function generateCode(len=6){
@@ -2021,14 +2045,6 @@ async function pickQuestionsForTitles(titles, count){
 }
 
 // helper: shuffle array and return mapping
-function shuffleWithIndexes(arr){
-  const idxs = arr.map((_,i)=>i);
-  for(let i=idxs.length-1;i>0;i--){
-    const j = Math.floor(Math.random()*(i+1));
-    [idxs[i], idxs[j]] = [idxs[j], idxs[i]];
-  }
-  return idxs;
-}
 
 
 /* ---------- small utility ---------- */
@@ -2563,6 +2579,7 @@ async function isStudentInActiveGame(studentId){
 }
 
 
+// ---------- startMatchForGame (stores shuffled choices to match doc) ----------
 async function startMatchForGame(gameId, opts = { silent: false }) {
   const silent = Boolean(opts.silent);
   const me = getVerifiedStudentId();
@@ -2572,41 +2589,38 @@ async function startMatchForGame(gameId, opts = { silent: false }) {
   }
 
   try {
-    // fetch latest game doc first (outside transaction) so we can pick questions
+    // fetch latest game doc first
     const gSnapPre = await getDoc(doc(db, 'games', gameId));
     if (!gSnapPre.exists()) throw new Error('Game not found');
     const gPre = gSnapPre.data();
 
     const titles = Array.isArray(gPre.titles) ? gPre.titles : [];
-    const numQuestions = Number(gPre.questionsCount || gPre.questionsCount || gPre.questions || 10) || 10;
-    const secondsPerQuestion = Number(gPre.secondsPerQuestion || gPre.secondsPerQuestion || 15);
+    const numQuestions = Number(gPre.questionsCount || gPre.questions || 10) || 10;
+    const secondsPerQuestion = Number(gPre.secondsPerQuestion || 15);
 
-    // pick questions (this returns exactly `numQuestions` items)
+    // pick questions (this returns numQuestions items)
     const questions = await pickQuestionsForTitles(titles, numQuestions);
 
-
-    // shuffle choices for *each question* and remap correct index(es)
-// this ensures the same shuffled order is stored in DB so both players see identical options
-for (let qi = 0; qi < questions.length; qi++){
-  const q = questions[qi];
-  const origChoices = Array.isArray(q.choices) ? q.choices.slice() : [];
-  if(origChoices.length <= 1) {
-    q.choices = origChoices;
-    q.correct = Array.isArray(q.correct) ? q.correct.map(Number) : [Number(q.correct || 0)];
-    continue;
-  }
-  const newOrder = shuffleWithIndexes(origChoices);
-  const newChoices = newOrder.map(i => origChoices[i]);
-  // map old correct(s) indices into new shuffled indexes
-  const origCorrectArr = Array.isArray(q.correct) ? q.correct.map(Number) : [Number(q.correct || 0)];
-  const newCorrect = [];
-  for(const origIdx of origCorrectArr){
-    const newIdx = newOrder.findIndex(x => x === origIdx);
-    if(newIdx >= 0) newCorrect.push(newIdx);
-  }
-  q.choices = newChoices;
-  q.correct = newCorrect.length ? newCorrect : [0];
-}
+    // shuffle choices for each question and remap correct index(es)
+    for (let qi = 0; qi < questions.length; qi++){
+      const q = questions[qi];
+      const origChoices = Array.isArray(q.choices) ? q.choices.slice() : [];
+      if(origChoices.length <= 1) {
+        q.choices = origChoices;
+        q.correct = Array.isArray(q.correct) ? q.correct.map(Number) : [Number(q.correct || 0)];
+        continue;
+      }
+      const newOrder = shuffleWithIndexes(origChoices);
+      const newChoices = newOrder.map(i => origChoices[i]);
+      const origCorrectArr = Array.isArray(q.correct) ? q.correct.map(Number) : [Number(q.correct || 0)];
+      const newCorrect = [];
+      for(const origIdx of origCorrectArr){
+        const newIdx = newOrder.findIndex(x => x === origIdx);
+        if(newIdx >= 0) newCorrect.push(newIdx);
+      }
+      q.choices = newChoices;
+      q.correct = newCorrect.length ? newCorrect : [0];
+    }
 
     // assign each question to players round-robin using the snapshot players
     const playersList = Array.isArray(gPre.players) ? gPre.players.map(p => p.playerId) : [];
@@ -2873,18 +2887,18 @@ if (chatWrap && !chatWrap.querySelector('.emoji-row')) {
 
 function closeMatchOverlay(){ if(currentMatchUnsub) currentMatchUnsub(); currentMatchUnsub = null; matchRoot.innerHTML=''; matchRoot.classList.add('hidden'); matchRoot.setAttribute('aria-hidden','true'); }
 
+// ---------- renderMatchUI (complete updated) ----------
 function renderMatchUI(match, matchRef){
   const body = matchRoot.querySelector('.match-body');
   if(!body) return;
 
-  // clear any old timers before rerendering
+  // stop any old timers so new state controls timers
   clearMatchTimers();
 
   // meta
   const currentIndex = Number(match.currentIndex || 0);
   const totalQuestions = Number(match.totalQuestions || (match.questions ? match.questions.length : 0));
   const q = match.questions && match.questions[currentIndex];
-  const secondsPerQ = Number(match.secondsPerQuestion || 15);
   const answeredMap = match.answered || {}; // keys like "0_studentId"
 
   // players UI (attach data-playerid attr so we can update name later)
@@ -2908,33 +2922,28 @@ function renderMatchUI(match, matchRef){
   const assignedTo = q && q.assignedTo ? q.assignedTo : null;
   const assignedPlayer = leftPlayers.find(p => String(p.playerId) === String(assignedTo));
 
-  // question header
+  // question header / text
   const qTitle = q && (q.title || match.gameName || '') ? escapeHtml(q.title || match.gameName || '') : '';
   const qText = q ? escapeHtml(q.text || '') : '';
   const qHeader = q ? `<div style="font-weight:700">Q${currentIndex+1} / ${totalQuestions}${ qTitle ? ' — ' + qTitle : '' }: ${qText}</div>` : '<div class="small-muted">No current question</div>';
-  const assignedHtml = assignedPlayer ? `<div style="font-size:13px" class="small-muted">Turn: <strong>${escapeHtml(assignedPlayer.playerName || `**${String(assignedPlayer.playerId).slice(-4)}`)}</strong></div>` : '';
+  const assignedHtml = assignedPlayer ? `<div id="assignedHtml" style="font-size:13px" class="small-muted">Turn: <strong>${escapeHtml(assignedPlayer.playerName || `**${String(assignedPlayer.playerId).slice(-4)}`)}</strong></div>` : '';
 
-  // choices + coloring rules:
-  // - if someone answered correct -> show green for that choice (and play correct)
-  // - if someone answered wrong -> mark their chosen option red but DO NOT reveal the correct option (so others can still answer)
+  // choices + coloring rules (now consistent across clients because match.questions stores shuffled choices)
   const choices = (q && q.choices && Array.isArray(q.choices)) ? q.choices : [];
   let choiceHtml = '';
-  // gather answers for this question
   const answersForThis = Object.entries(answeredMap)
     .filter(([k,v]) => k.startsWith(`${currentIndex}_`))
     .map(([k,v]) => v);
   const anyCorrect = answersForThis.some(a => a.correct === true);
+
   choices.forEach((c, idx) => {
     let style = 'padding:8px;border-radius:6px;margin-bottom:6px;border:1px solid #e6eef8;cursor:pointer';
-    // if there are answers:
     if (answersForThis.length) {
-      // if someone answered correct, reveal that choice green only
       if (anyCorrect) {
         const chosenCorrect = answersForThis.find(a => a.correct === true && a.selected === idx);
         if (chosenCorrect) style += ';background:#e6ffe9;border-color:#2fa84f';
         else style += ';opacity:0.6';
       } else {
-        // no correct yet: if someone selected this (and it was wrong), show red for their chosen option only
         const wrongChosens = answersForThis.filter(a => a.selected === idx && a.correct === false);
         if (wrongChosens.length) style += ';background:#ffecec;border-color:#e04a4a';
       }
@@ -2942,49 +2951,60 @@ function renderMatchUI(match, matchRef){
     choiceHtml += `<div class="choice" data-choice="${idx}" id="choice_${idx}" style="${style}">${escapeHtml(c)}</div>`;
   });
 
-  // feedback area under choices
+  // UI arrangement: players top, question, choices, then assigned/stake/model under choices
   body.innerHTML = `
-  <div style="display:flex;gap:12px;align-items:center;margin-bottom:8px">
-    <div style="flex:1;display:flex;gap:12px;align-items:center">${playerHtml}</div>
-    <div style="text-align:right;min-width:120px">
-      <div id="matchProgressTop" class="small-muted">Q${currentIndex+1}/${totalQuestions}</div>
-      <div class="timer" id="matchTimer" style="font-weight:700">--s</div>
+    <div style="display:flex;gap:12px;align-items:center;margin-bottom:8px">
+      <div style="flex:1;display:flex;gap:12px;align-items:center">${playerHtml}</div>
+      <div style="text-align:right;min-width:120px">
+        <div id="matchProgressTop" class="small-muted">Q${currentIndex+1}/${totalQuestions}</div>
+        <div class="timer" id="matchTimer" style="font-weight:700">--s</div>
+      </div>
     </div>
-  </div>
 
-  <div style="margin-top:8px">${qHeader}</div>
-  <div style="margin-top:8px" id="choicesWrap">${choiceHtml}</div>
+    <div style="margin-top:8px">${qHeader}</div>
+    <div style="margin-top:8px" id="choicesWrap">${choiceHtml}</div>
 
-  <div id="choiceMeta" style="margin-top:10px;display:flex;justify-content:space-between;align-items:center">
-    <div id="assignedHtmlWrap">${assignedHtml}</div>
-    <div class="small-muted" id="stakeModel">Stake: ${match.stake || 0} • Model: ${match.scoringModel || 'perQuestion'}</div>
-  </div>
+    <div id="choiceMeta" style="margin-top:10px;display:flex;justify-content:space-between;align-items:center">
+      <div id="assignedHtmlWrap">${assignedHtml}</div>
+      <div class="small-muted" id="stakeModel">Stake: ${match.stake || 0} • Model: ${match.scoringModel || 'perQuestion'}</div>
+    </div>
 
-  <div id="matchFeedback" style="margin-top:10px;min-height:28px"></div>
-  <div id="matchProgress" style="margin-top:6px" class="small-muted">Q${currentIndex+1}/${totalQuestions}</div>
-`;
+    <div id="matchFeedback" style="margin-top:10px;min-height:28px"></div>
+    <div id="matchProgress" style="margin-top:6px" class="small-muted">Q${currentIndex+1}/${totalQuestions}</div>
+  `;
 
-
-  // after DOM injection: allow avatar click to open profile
+  // make avatars clickable and ensure profile modal is on top
   body.querySelectorAll('[data-playerid]').forEach(el => {
     const pid = el.getAttribute('data-playerid');
     const avatarContainer = el.querySelector('.player-avatar');
     if(avatarContainer){
       avatarContainer.style.cursor = 'pointer';
-      avatarContainer.onclick = () => { if(pid) openPlayerProfileModal(pid); };
+      avatarContainer.onclick = async () => {
+        if(!pid) return;
+        await openPlayerProfileModal(pid);
+        // ensure modal is above match overlay
+        try { bringModalToFront(); } catch(e){}
+      };
     }
   });
 
-  // try to fill missing player names in background
+  // attempt to fill missing player names (non-destructive)
   fillMissingPlayerNames(match, matchRef).catch(()=>{});
 
-  // start per-question timer
-  startQuestionTimer(doc(db,'matches', matchRef.id), match);
+  // if match finished (server-side) -> finalize & stop timers
+  if(match.status === 'finished' || (totalQuestions > 0 && currentIndex >= totalQuestions)){
+    clearMatchTimers();
+    onMatchFinish(match, matchRef);
+    return;
+  }
 
-  // wire choices:
+  // start per-question timer if appropriate
+  startQuestionTimer(matchRef, match);
+
+  // wire choice clicks
   body.querySelectorAll('.choice').forEach(ch => {
     ch.onclick = async () => {
-      // at beginning of ch.onclick
+      // immediately stop countdown UI for local client
       clearMatchTimers();
       ch.style.pointerEvents = 'none';
 
@@ -2996,54 +3016,48 @@ function renderMatchUI(match, matchRef){
         return;
       }
       try {
-        ch.style.pointerEvents = 'none';
-        // run transaction: read -> compute -> write
-await runTransaction(db, async (t) => {
-  const snap = await t.get(matchRef);
-  if(!snap.exists()) throw new Error('match missing');
-  const m = snap.data();
-  if(m.status !== 'inprogress') throw new Error('not in progress');
-  const currentIdx = m.currentIndex || 0;
-  if(currentIdx !== currentIndex) throw new Error('question changed; try again');
-  const answered = m.answered || {};
-  if(answered[`${currentIdx}_${pid}`]) throw new Error('You already answered this question');
-  const qobj = m.questions[currentIdx];
-  const correctArr = Array.isArray(qobj.correct) ? qobj.correct.map(Number) : [Number(qobj.correct || 0)];
-  const isCorrect = correctArr.includes(choiceIdx);
-  const players = m.players || [];
-  const pIdx = players.findIndex(p => String(p.playerId) === String(pid));
-  if(pIdx === -1) throw new Error('You are not part of this match');
-  const delta = isCorrect ? 2 : (m.wrongPenalty === 'sub1' ? -1 : 0);
-  players[pIdx].score = Math.max(0, (players[pIdx].score || 0) + delta);
-  const logs = m.logs || [];
-  logs.push({ type:'answer', playerId: pid, choice: choiceIdx, correct: isCorrect, delta, at: nowMillis() });
-  answered[`${currentIdx}_${pid}`] = { selected: choiceIdx, correct: isCorrect, at: nowMillis(), playerId: pid };
+        // transaction: write answered; if correct -> set awaitingReveal (do not advance currentIndex yet)
+        await runTransaction(db, async (t) => {
+          const snap = await t.get(matchRef);
+          if(!snap.exists()) throw new Error('match missing');
+          const m = snap.data();
+          if(m.status !== 'inprogress') throw new Error('not in progress');
+          const currentIdx = m.currentIndex || 0;
+          if(currentIdx !== currentIndex) throw new Error('question changed; try again');
+          const answered = m.answered || {};
+          if(answered[`${currentIdx}_${pid}`]) throw new Error('You already answered this question');
+          const qobj = m.questions[currentIdx];
+          const correctArr = Array.isArray(qobj.correct) ? qobj.correct.map(Number) : [Number(qobj.correct || 0)];
+          const isCorrect = correctArr.includes(choiceIdx);
+          const players = m.players || [];
+          const pIdx = players.findIndex(p => String(p.playerId) === String(pid));
+          if(pIdx === -1) throw new Error('You are not part of this match');
+          const delta = isCorrect ? 2 : (m.wrongPenalty === 'sub1' ? -1 : 0);
+          players[pIdx].score = Math.max(0, (players[pIdx].score || 0) + delta);
+          const logs = m.logs || [];
+          logs.push({ type:'answer', playerId: pid, choice: choiceIdx, correct: isCorrect, delta, at: nowMillis() });
+          answered[`${currentIdx}_${pid}`] = { selected: choiceIdx, correct: isCorrect, at: nowMillis(), playerId: pid };
 
-  // If correct -> request reveal/advance after 2s. Do NOT immediately bump currentIndex.
-  if(isCorrect){
-    const nextIndex = currentIdx + 1;
-    const revealUntil = Date.now() + 2000; // 2 seconds for everyone to see highlight
-    t.update(matchRef, {
-      players, logs, answered,
-      // keep currentIndex unchanged — clients will call processPendingReveal when revealUntil passes
-      awaitingReveal: { advanceTo: nextIndex, revealUntil },
-      updatedAt: serverTimestamp()
-    });
-  } else {
-    // wrong: write answered only, no immediate advance
-    t.update(matchRef, { players, logs, answered, updatedAt: serverTimestamp() });
-  }
-});
+          if(isCorrect){
+            const nextIndex = currentIdx + 1;
+            const revealUntil = Date.now() + 2000; // 2s reveal for everyone
+            t.update(matchRef, {
+              players, logs, answered,
+              awaitingReveal: { advanceTo: nextIndex, revealUntil },
+              updatedAt: serverTimestamp()
+            });
+          } else {
+            t.update(matchRef, { players, logs, answered, updatedAt: serverTimestamp() });
+          }
+        });
 
-
-        // transaction committed — fetch fresh doc so we can update UI immediately
+        // re-render from fresh data
         const freshSnap = await getDoc(matchRef);
         if(freshSnap.exists()){
-          const fresh = freshSnap.data();
-          renderMatchUI(fresh, matchRef); // re-render immediately, clears/starts timers
+          renderMatchUI(freshSnap.data(), matchRef);
         }
 
-        // play appropriate sound/feedback (determine correctness from fresh)
+        // play immediate sound on local client (the reveal will be shown to all)
         const freshData = (await getDoc(matchRef)).data();
         const result = (freshData && freshData.answered && freshData.answered[`${currentIndex}_${pid}`]) || {};
         const fb = document.getElementById('matchFeedback');
@@ -3059,12 +3073,13 @@ await runTransaction(db, async (t) => {
         playMatchSoundAsset('wrong');
         toast(err.message || 'Answer failed');
       } finally {
+        // ensure timer state is clear locally
         clearMatchTimers();
       }
     };
   });
 
-  // wire surrender button (already present in UI outside body)
+  // wire surrender button (outside UI)
   const surrenderBtn = document.getElementById('surrenderBtn');
   if(surrenderBtn) surrenderBtn.onclick = async () => {
     if(!confirm('Surrender match? You will lose.')) return;
@@ -3074,12 +3089,6 @@ await runTransaction(db, async (t) => {
       await updateDoc(matchRef, { status:'finished', winner: other ? other.playerId : null, finishedAt: serverTimestamp(), updatedAt: serverTimestamp() });
     } catch(e){ console.warn(e); }
   };
-
-  // If match finished -> handle finalize
-  if(match.status === 'finished'){
-    onMatchFinish(match, matchRef);
-    return;
-  }
 
   // simulate bot if present
   for(const p of match.players || []){
@@ -3091,7 +3100,7 @@ await runTransaction(db, async (t) => {
 }
 
 
-// handle match finish: compute winner, update profiles, release reserved points, level progression
+// ---------- onMatchFinish (ensures UI modal on top & finalization) ----------
 async function onMatchFinish(match, matchRef){
   try {
     const players = match.players || [];
@@ -3109,7 +3118,6 @@ async function onMatchFinish(match, matchRef){
       const finalBonus = Math.floor((match.stake || 0) * 0.5);
 
       await runTransaction(db, async (t) => {
-        // READ phase: read winner, losers, and game doc first
         const reads = {};
         if(winnerId){
           const wRef = doc(db,'students', winnerId);
@@ -3121,8 +3129,7 @@ async function onMatchFinish(match, matchRef){
         }
         const gameRef = doc(db,'games', match.gameId);
         const gSnap = await t.get(gameRef);
-        // compute updates
-        // winner update
+
         if(winnerId){
           const wSnap = reads[winnerId];
           const wData = wSnap.exists() ? wSnap.data() : {};
@@ -3130,24 +3137,21 @@ async function onMatchFinish(match, matchRef){
           const topObj = players.find(p => String(p.playerId) === String(winnerId)) || {};
           const addPoints = Math.max(0, (Number(topObj.score||0) + finalBonus));
           const after = before + addPoints;
-          // write winner update
           const wRef = doc(db,'students', winnerId);
           t.update(wRef, { totalPoints: after, totalWins: (Number(wData.totalWins||0)+1), totalGames: (Number(wData.totalGames||0)+1), updatedAt: serverTimestamp() });
-          // create pointsHistory doc inside transaction
           const phRef = doc(collection(db,'pointsHistory'));
           t.set(phRef, { userId: winnerId, type:'game_win', amount: addPoints, before, after, referenceGameId: match.gameId, timestamp: nowMillis() });
         }
-        // losers updates
+
         for(const lid of losers){
           const lSnap = reads[lid];
           const L = lSnap.exists() ? lSnap.data() : {};
           const lRef = doc(db,'students', lid);
           t.update(lRef, { totalLosses: (Number(L.totalLosses||0)+1), totalGames: (Number(L.totalGames||0)+1), updatedAt: serverTimestamp() });
-          // pointsHistory for loser (no change in points)
           const phRef2 = doc(collection(db,'pointsHistory'));
           t.set(phRef2, { userId: lid, type:'game_loss', amount: 0, before: Number(L.totalPoints||0), after: Number(L.totalPoints||0), referenceGameId: match.gameId, timestamp: serverTimestamp() });
         }
-        // finalize match and game records
+
         t.update(matchRef, { archivedAt: serverTimestamp(), updatedAt: serverTimestamp() });
         t.update(gameRef, { status:'finished', updatedAt: serverTimestamp(), finishedAt: serverTimestamp() });
       });
@@ -3156,7 +3160,6 @@ async function onMatchFinish(match, matchRef){
       const pool = (match.stake || 0) * (match.players ? match.players.length : 1);
 
       await runTransaction(db, async (t) => {
-        // READ phase
         const reads = {};
         if(winnerId){
           const wRef = doc(db,'students', winnerId);
@@ -3169,7 +3172,6 @@ async function onMatchFinish(match, matchRef){
         const gameRef = doc(db,'games', match.gameId);
         await t.get(gameRef);
 
-        // WRITE phase
         if(winnerId){
           const wSnap = reads[winnerId];
           const w = wSnap.exists() ? wSnap.data() : {};
@@ -3191,7 +3193,7 @@ async function onMatchFinish(match, matchRef){
       });
     }
 
-    // level progression (outside the above transaction)
+    // level progression
     await applyLevelProgressionForPlayers(match);
 
     // notify players
@@ -3207,11 +3209,18 @@ async function onMatchFinish(match, matchRef){
       });
     } catch(e){}
 
-    // UI
+    // UI: toast and open final modal (ensure modal is above match)
     const winnerPlayer = players.find(p=>String(p.playerId) === String(winnerId));
     toast(`Match finished — winner: ${winnerPlayer ? (winnerPlayer.playerName || `**${String(winnerId).slice(-4)}`) : winnerId}`);
 
-    bringModalToFront();
+    // open a winner modal (simple)
+    try {
+      const html = `<div style="padding:12px"><h3>Match finished</h3><div>Winner: <strong>${escapeHtml(winnerPlayer ? (winnerPlayer.playerName || winnerId) : winnerId)}</strong></div><div style="margin-top:8px">Points awarded: ${match.scoringModel === 'perQuestion' ? Math.floor((match.stake||0)*0.5) : ((match.stake||0) * (match.players ? match.players.length : 1))}</div><div style="text-align:right;margin-top:12px"><button id="closeWinner" class="btn btn-primary">OK</button></div></div>`;
+      showModal(html, { title: 'Match result' });
+      bringModalToFront();
+      document.getElementById('closeWinner').onclick = closeModal;
+    } catch(e){/* ignore modal errors */ }
+
     // cleanup
     clearLocalActiveGame();
     await loadGames();
@@ -3221,6 +3230,7 @@ async function onMatchFinish(match, matchRef){
     toast('Match finalize failed');
   }
 }
+
 
 
 
