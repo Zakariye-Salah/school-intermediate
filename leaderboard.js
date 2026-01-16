@@ -822,7 +822,43 @@ function ensureShortNames(){ /* intentionally blank */ }
 
 
 
-/* ---------- helper: show student "View" modal (reused) ---------- */
+/* ---------- appendOrShowMyRow (verif student row) ---------- */
+function appendOrShowMyRow(me, isPlaceholder){
+  const tr = document.createElement('tr'); tr.className = 'me-row';
+  const rankCell = `<div class="rank-badge">${escapeHtml(String(me.rank || '—'))}</div>`;
+  const idMasked = maskId(me.studentId || '');
+  const points = escapeHtml(String(me.points || 0));
+  const nameHtml = `<div class="student-full">${escapeHtml(me.studentName || '—')}</div>`;
+  const classHtml = `<div class="class-full">${escapeHtml(me.className || '—')}</div>`;
+
+  // Desktop actions go into action-cell only. Points-cell only shows points + mobile-only more button.
+  let actionHtml = `<div class="actions-wrap">`;
+  actionHtml += `<button class="btn" data-view="${escapeHtml(me.id||'__me')}">View</button>`;
+  if(getVerifiedRole() === 'student' && getVerifiedStudentId() === me.studentId){
+    actionHtml += ` <button class="btn" data-clear="${escapeHtml(me.id||'__me')}">Clear my points</button>`;
+  }
+  if(isAdmin()){
+    actionHtml += ` <button class="btn" data-history="${escapeHtml(me.studentId)}">History</button>`;
+    actionHtml += ` <button class="icon-btn settingsBtn" data-student="${escapeHtml(me.studentId)}" data-scoredoc="${escapeHtml(me.id||'__me')}">⚙</button>`;
+  }
+  actionHtml += `</div>`;
+
+  const mobileMoreBtn = `<button class="more-btn mobile-only" data-student="${escapeHtml(me.studentId)}" data-scoredoc="${escapeHtml(me.id||'__me')}">⋯</button>`;
+
+  tr.innerHTML = `
+    <td>${rankCell}</td>
+    <td class="name-cell">${nameHtml}<div class="mobile-id">${escapeHtml(idMasked)}</div></td>
+    <td class="class-cell">${classHtml}</td>
+    <td class="id-mask desktop-only">${escapeHtml(idMasked)}</td>
+    <td class="points-cell"><div class="points-value">${points}</div><div class="points-actions">${mobileMoreBtn}</div></td>
+    <td class="action-cell desktop-only">${actionHtml}</td>
+  `;
+
+  leaderTbody.appendChild(tr);
+  // no individual binding here — event delegation handles clicks
+}
+
+/* ---------- showStudentViewModal (re-used) ---------- */
 function showStudentViewModal(item){
   const canAdmin = isAdmin();
   const html = `<div>
@@ -835,76 +871,68 @@ function showStudentViewModal(item){
       <button id="modalCloseLocal" class="btn">Close</button>
     </div>
   </div>`;
-
   showModalInner(html, { title: 'Student' });
-
   const histBtn = document.getElementById('modalHistoryBtn');
-  if(histBtn){ histBtn.onclick = async () => { closeModal(); await openHistoryModal(item.studentId); }; }
+  if(histBtn) histBtn.onclick = async () => { closeModal(); await openHistoryModal(item.studentId); };
   const adminBtn = document.getElementById('modalAdminSettingsBtn');
-  if(adminBtn){ adminBtn.onclick = () => { if(!isAdmin()){ toast('Only admin'); return; } closeModal(); openStudentSettingsModal(item.studentId, item.id); }; }
+  if(adminBtn) adminBtn.onclick = () => { if(!isAdmin()){ toast('Only admin'); return; } closeModal(); openStudentSettingsModal(item.studentId, item.id); };
   const closeLocal = document.getElementById('modalCloseLocal');
   if(closeLocal) closeLocal.onclick = () => closeModal();
 }
 
-/* ---------- renderLeaderboard (complete & responsive) ---------- */
-function appendOrShowMyRow(me, isPlaceholder){
-  const tr = document.createElement('tr');
-  tr.className = 'me-row';
-  const rankCell = `<div class="rank-badge">${escapeHtml(String(me.rank || '—'))}</div>`;
-  const idMasked = maskId(me.studentId || '');
-  const points = escapeHtml(String(me.points || 0));
-  const nameHtml = `<div class="student-full">${escapeHtml(me.studentName || '—')}</div>`;
-  const classHtml = `<div class="class-full">${escapeHtml(me.className || '—')}</div>`;
+/* ---------- openMoreModalForStudent (vertical options list) ---------- */
+function openMoreModalForStudent(studentId, scoreDocId){
+  const me = (getVerifiedRole() === 'student' && getVerifiedStudentId() === studentId);
+  const admin = isAdmin();
 
-  // desktop action cell (kept same pattern as main render)
-  let actionHtml = `<div class="actions-wrap">`;
-  actionHtml += `<button class="btn" data-view="${escapeHtml(me.id||'__me')}">View</button>`;
-  if(getVerifiedRole() === 'student' && getVerifiedStudentId() === me.studentId){
-    actionHtml += ` <button class="btn" data-clear="${escapeHtml(me.id||'__me')}">Clear my points</button>`;
-  }
-  if(isAdmin()){
-    actionHtml += ` <button class="btn" data-history="${escapeHtml(me.studentId)}">History</button>`;
-    actionHtml += ` <button class="icon-btn settingsBtn" data-student="${escapeHtml(me.studentId)}" data-scoredoc="${escapeHtml(me.id||'__me')}">⚙</button>`;
-  }
-  actionHtml += `</div>`;
+  const viewBtn = `<button id="mm_view" class="btn">View</button>`;
+  const clearBtn = `<button id="mm_clear" class="btn">Clear my points</button>`;
+  const historyBtn = `<button id="mm_history" class="btn">View history</button>`;
+  const settingsBtn = `<button id="mm_settings" class="btn">Settings</button>`;
 
-  tr.innerHTML = `
-    <td>${rankCell}</td>
-    <td class="name-cell">${nameHtml}<div class="mobile-id">${escapeHtml(idMasked)}</div></td>
-    <td class="class-cell">${classHtml}</td>
-    <td class="id-mask desktop-only">${escapeHtml(idMasked)}</td>
-    <td class="points-cell"><div class="points-value">${points}</div><div class="points-actions"><button class="more-btn mobile-only" data-student="${escapeHtml(me.studentId)}" data-scoredoc="${escapeHtml(me.id||'__me')}">⋯</button></div></td>
-    <td class="action-cell desktop-only">${actionHtml}</td>
-  `;
-  leaderTbody.appendChild(tr);
+  let html = `<div style="display:flex;flex-direction:column;gap:10px;padding:6px">`;
+  html += `<div style="font-weight:800;margin-bottom:6px">${escapeHtml(studentId || '')}</div>`;
+  html += viewBtn;
+  if(admin) html += historyBtn + settingsBtn;
+  else if(me) html += clearBtn;
+  html += `<div style="text-align:right;margin-top:6px"><button id="mm_close" class="btn">Close</button></div>`;
+  html += `</div>`;
 
-  // wire events for this appended row
-  tr.querySelectorAll('button[data-view]').forEach(b => b.onclick = async () => {
-    const id = b.getAttribute('data-view');
-    const item = scoresCache.find(s => s.id === id) || me;
-    if(!item) return toast('Not found'); showStudentViewModal(item);
-  });
-  tr.querySelectorAll('button[data-clear]').forEach(b => b.onclick = async () => {
+  showModalInner(html, { title: 'Options' });
+
+  document.getElementById('mm_close').onclick = () => closeModal();
+
+  const viewEl = document.getElementById('mm_view');
+  if(viewEl) viewEl.onclick = async () => {
+    closeModal();
+    const item = (scoresCache || []).find(s => s.studentId === studentId || s.id === scoreDocId) || { studentId, id: scoreDocId, studentName: getVerifiedStudentName() };
+    showStudentViewModal(item);
+  };
+
+  const clearEl = document.getElementById('mm_clear');
+  if(clearEl) clearEl.onclick = async () => {
     if(!confirm('Clear your points for this competition? This action cannot be undone.')) return;
     try {
       const docId = `${currentCompetition.id}_${getVerifiedStudentId()}`;
       await setDoc(doc(db,'competitionScores', docId), { competitionId: currentCompetition.id, studentId: getVerifiedStudentId(), points: 0, updatedAt: serverTimestamp() }, { merge:true });
-      toast('Your points cleared.'); await loadCompetitionScores();
+      toast('Your points cleared.');
+      closeModal();
+      if(typeof loadCompetitionScores === 'function') await loadCompetitionScores();
     } catch(err){ console.error(err); toast('Failed to clear points'); }
-  });
-  tr.querySelectorAll('.settingsBtn').forEach(b => b.onclick = () => {
-    const s = b.dataset.student; const sd = b.dataset.scoredoc;
-    if(!isAdmin() && !(getVerifiedRole()==='student' && getVerifiedStudentId()===s)) return toast('Only admin or student'); openStudentSettingsModal(s, sd);
-  });
-  tr.querySelectorAll('button[data-history]').forEach(b => b.onclick = async () => { const sid = b.getAttribute('data-history'); closeModal(); await openHistoryModal(sid); });
-  tr.querySelectorAll('.more-btn').forEach(btn => btn.onclick = () => openMoreModalForStudent(btn.getAttribute('data-student'), btn.getAttribute('data-scoredoc')));
+  };
+
+  const histEl = document.getElementById('mm_history');
+  if(histEl) histEl.onclick = async () => { closeModal(); await openHistoryModal(studentId); };
+  const setEl = document.getElementById('mm_settings');
+  if(setEl) setEl.onclick = () => { closeModal(); openStudentSettingsModal(studentId, scoreDocId); };
 }
 
-/* ---------- renderLeaderboard (main) ---------- */
+/* ---------- renderLeaderboard (fixed: no actionHtml inside points column) ---------- */
 async function renderLeaderboard(){
   leaderTbody.innerHTML = '';
   if(!scoresCache || scoresCache.length === 0){
-    leaderTbody.innerHTML = `<tr><td colspan="6" class="small-muted">No scores yet. Be the first —</td></tr>`; return;
+    leaderTbody.innerHTML = `<tr><td colspan="6" class="small-muted">No scores yet. Be the first —</td></tr>`;
+    return;
   }
 
   const { ranked, topRanks } = buildRankedList(scoresCache);
@@ -915,13 +943,12 @@ async function renderLeaderboard(){
     const tr = document.createElement('tr');
 
     const rankCell = `<div class="rank-badge" style="background:${r.rank===1? '#FFD700': r.rank===2? '#C0C0C0' : r.rank===3? '#CD7F32': '#eef6ff'}">${r.rank}</div>`;
-    const fullName = r.studentName || '—';
-    const nameHtml = `<div class="student-full">${escapeHtml(fullName)}</div>`;
-    const fullClass = r.className || '—';
-    const classHtml = `<div class="class-full">${escapeHtml(fullClass)}</div>`;
+    const nameHtml = `<div class="student-full">${escapeHtml(r.studentName || '—')}</div>`;
+    const classHtml = `<div class="class-full">${escapeHtml(r.className || '—')}</div>`;
     const idMasked = maskId(r.studentId || r.id || '');
     const points = escapeHtml(String(r.points || 0));
 
+    // Desktop action column only
     let actionHtml = `<div class="actions-wrap">`;
     actionHtml += `<button class="btn" data-view="${escapeHtml(r.id)}">View</button>`;
     if(admin){
@@ -934,7 +961,7 @@ async function renderLeaderboard(){
     }
     actionHtml += `</div>`;
 
-    // mobile-only 'more' button rendered into points column (desktop actions are in action column)
+    // Mobile-only more button in points column
     const mobileMoreBtn = `<button class="more-btn mobile-only" data-student="${escapeHtml(r.studentId)}" data-scoredoc="${escapeHtml(r.id)}">⋯</button>`;
 
     tr.innerHTML = `
@@ -948,108 +975,61 @@ async function renderLeaderboard(){
     leaderTbody.appendChild(tr);
   }
 
-  // --- wiring ---
-  leaderTbody.querySelectorAll('button[data-view]').forEach(b => { b.onclick = async () => {
-    const id = b.getAttribute('data-view'); const item = scoresCache.find(s=>s.id===id);
-    if(!item) return toast('Not found'); showStudentViewModal(item);
-  }; });
-
-  leaderTbody.querySelectorAll('button[data-clear]').forEach(b => { b.onclick = async () => {
-    if(!confirm('Clear your points for this competition? This action cannot be undone.')) return;
-    try { const docId = `${currentCompetition.id}_${getVerifiedStudentId()}`; await setDoc(doc(db,'competitionScores', docId), { competitionId: currentCompetition.id, studentId: getVerifiedStudentId(), points: 0, updatedAt: serverTimestamp() }, { merge:true }); toast('Your points cleared.'); await loadCompetitionScores(); }
-    catch(err){ console.error(err); toast('Failed to clear points'); }
-  }; });
-
-  leaderTbody.querySelectorAll('button[data-history]').forEach(b => { b.onclick = async () => { const sid = b.getAttribute('data-history'); closeModal(); await openHistoryModal(sid); }; });
-
-  leaderTbody.querySelectorAll('.settingsBtn').forEach(b => { b.onclick = () => {
-    const studentId = b.dataset.student; const scoreDocId = b.dataset.scoredoc;
-    if(!isAdmin() && !(getVerifiedRole()==='student' && getVerifiedStudentId()===studentId)) return toast('Only admin or the student may access settings');
-    openStudentSettingsModal(studentId, scoreDocId);
-  }; });
-
-  leaderTbody.querySelectorAll('.more-btn').forEach(btn => { btn.onclick = () => {
-    const studentId = btn.getAttribute('data-student'); const scoreDocId = btn.getAttribute('data-scoredoc');
-    openMoreModalForStudent(studentId, scoreDocId);
-  }; });
-
-  // ensure verified student visible if not in top list
-  const verifiedSid = getVerifiedStudentId();
-  if(verifiedSid){
-    const { ranked } = buildRankedList(scoresCache);
-    const me = ranked.find(r => r.studentId === verifiedSid);
-    const topShown = isAdmin() ? ranked : buildRankedList(scoresCache).topRanks;
-    const isDisplayed = topShown.some(r => r.studentId === verifiedSid);
-    if(!isDisplayed && me) appendOrShowMyRow(me, false);
-    else if(!isDisplayed && !me) appendOrShowMyRow({ rank:'—', studentName:getVerifiedStudentName()||verifiedSid, className:'—', studentId: verifiedSid, points:0 }, true);
-  }
+  // After DOM updated: no per-button listeners — event delegation will catch clicks.
 }
 
-/* ---------- openMoreModalForStudent: handles mobile 'more' button behavior ---------- */
-function openMoreModalForStudent(studentId, scoreDocId, visitorFlag){
-  const me = (getVerifiedRole() === 'student' && getVerifiedStudentId() === studentId);
-  const admin = isAdmin();
+/* ---------- event delegation on the table body (reliable) ---------- */
+leaderTbody.addEventListener('click', async (ev) => {
+  const btn = ev.target.closest('button');
+  if(!btn) return;
 
-  // Build buttons according to role
-  const viewBtn = `<button id="mm_view" class="btn">View</button>`;
-  const clearBtn = `<button id="mm_clear" class="btn">Clear my points</button>`;
-  const historyBtn = `<button id="mm_history" class="btn">View history</button>`;
-  const settingsBtn = `<button id="mm_settings" class="btn">Settings</button>`;
-  let html = `<div style="display:flex;flex-direction:column;gap:10px;padding:6px">`;
-  html += `<div style="font-weight:800;margin-bottom:6px">${escapeHtml(studentId)}</div>`;
-
-  // Always show view
-  html += viewBtn;
-
-  if(admin){
-    html += historyBtn + settingsBtn;
-  } else if(me){
-    // current verified student -> show clear + view
-    html += clearBtn;
-  } else {
-    // visitor viewing other student -> nothing else (only view)
+  // more button (mobile)
+  if(btn.classList.contains('more-btn')){
+    const sid = btn.dataset.student;
+    const scid = btn.dataset.scoredoc;
+    openMoreModalForStudent(sid, scid);
+    return;
   }
 
-  html += `<div style="text-align:right;margin-top:6px"><button id="mm_close" class="btn">Close</button></div>`;
-  html += `</div>`;
-
-  showModalInner(html, { title: 'Options' });
-
-  // wire buttons (modal ids)
-  document.getElementById('mm_close').onclick = () => closeModal();
-
-  const viewEl = document.getElementById('mm_view');
-  if(viewEl) viewEl.onclick = async () => {
-    closeModal();
-    // find score doc item if available
-    const item = (scoresCache || []).find(s => s.studentId === studentId || s.id === scoreDocId) || { studentId, id: scoreDocId, studentName: getVerifiedStudentName() };
+  // view button (data-view)
+  if(btn.hasAttribute('data-view')){
+    const id = btn.getAttribute('data-view');
+    const item = (scoresCache || []).find(s => s.id === id);
+    if(!item) return toast('Not found');
     showStudentViewModal(item);
-  };
-
-  const clearEl = document.getElementById('mm_clear');
-  if(clearEl){
-    clearEl.onclick = async () => {
-      if(!confirm('Clear your points for this competition? This action cannot be undone.')) return;
-      try {
-        const docId = `${currentCompetition.id}_${getVerifiedStudentId()}`;
-        await setDoc(doc(db,'competitionScores', docId), { competitionId: currentCompetition.id, studentId: getVerifiedStudentId(), points: 0, updatedAt: serverTimestamp() }, { merge:true });
-        toast('Your points cleared.');
-        closeModal();
-        await loadCompetitionScores();
-      } catch(err){ console.error(err); toast('Failed to clear points'); }
-    };
+    return;
   }
 
-  const histEl = document.getElementById('mm_history');
-  if(histEl){
-    histEl.onclick = async () => { closeModal(); await openHistoryModal(studentId); };
+  // clear points (data-clear)
+  if(btn.hasAttribute('data-clear')){
+    if(!confirm('Clear your points for this competition? This action cannot be undone.')) return;
+    try {
+      const docId = `${currentCompetition.id}_${getVerifiedStudentId()}`;
+      await setDoc(doc(db,'competitionScores', docId), { competitionId: currentCompetition.id, studentId: getVerifiedStudentId(), points: 0, updatedAt: serverTimestamp() }, { merge:true });
+      toast('Your points cleared.');
+      if(typeof loadCompetitionScores === 'function') await loadCompetitionScores();
+    } catch(err){ console.error(err); toast('Failed to clear points'); }
+    return;
   }
 
-  const setEl = document.getElementById('mm_settings');
-  if(setEl){
-    setEl.onclick = () => { closeModal(); openStudentSettingsModal(studentId, scoreDocId); };
+  // history (data-history)
+  if(btn.hasAttribute('data-history')){
+    const sid = btn.getAttribute('data-history');
+    closeModal();
+    if(typeof openHistoryModal === 'function') await openHistoryModal(sid);
+    return;
   }
-}
+
+  // settings gear (settingsBtn)
+  if(btn.classList.contains('settingsBtn') || btn.classList.contains('icon-btn')){
+    const stu = btn.dataset.student;
+    const sd = btn.dataset.scoredoc;
+    if(!isAdmin() && !(getVerifiedRole() === 'student' && getVerifiedStudentId() === stu)){ toast('Only admin or the student may access settings'); return; }
+    if(typeof openStudentSettingsModal === 'function') openStudentSettingsModal(stu, sd);
+    return;
+  }
+});
+
 
 
 
