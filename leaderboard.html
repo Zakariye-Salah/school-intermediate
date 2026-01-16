@@ -146,8 +146,39 @@
       .more-btn{width:34px;height:34px}
     }
 
+
     /* accessibility safety */
     table.leader td > *{max-width:100%;overflow:hidden;text-overflow:ellipsis}
+
+    /* ---- DESKTOP COLUMN FIX ---- */
+@media (min-width:821px){
+  td.id-mask{
+    font-family: monospace;
+    font-weight: 800;
+    letter-spacing: .6px;
+  }
+
+  td.points-cell{
+    display: table-cell;
+    text-align: left;
+  }
+
+  td.points-cell .points-actions{
+    display: none; /* mobile only */
+  }
+
+  td.action-cell{
+    display: table-cell;
+    text-align: left;
+    white-space: nowrap;
+  }
+
+  .actions-wrap{
+    display: inline-flex;
+    gap: 8px;
+  }
+}
+
   </style>
 </head>
 <body>
@@ -199,9 +230,12 @@
             <col class="col-rank">
             <col class="col-name">
             <col class="col-class">
-            <col class="col-id">
-            <col class="col-points">
-            <col class="col-action">
+         
+
+            <col class="col-id" style="width:14%">
+            <col class="col-points" style="width:12%">
+            <col class="col-action" style="width:18%">
+
           </colgroup>
           <thead>
             <tr>
