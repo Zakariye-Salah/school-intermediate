@@ -211,32 +211,27 @@ table.leader td > *{max-width:100%;overflow:hidden;text-overflow:ellipsis}
   display:block !important;
 }
 
-/* desktop-only / mobile-only helpers (default desktop) */
-.desktop-only { display: inline; }
-.mobile-only { display: none; }
+/* helpers for desktop / mobile header text */
+.desktop-only { display:inline; }
+.mobile-only { display:none; }
 
-/* On small screens: hide standalone ID & action columns and show mobile variants */
-@media (max-width: 720px) {
-  /* hide the standalone ID and action columns */
-  col.col-id, col.col-action { display: none; }
-  th.col-id, th.col-action, td.id-mask, td .action-cell { display: none !important; }
+/* id under name (hidden by default; shown on mobile) */
+.name-cell .mobile-id { display:none; font-size:0.92rem; color:var(--muted); margin-top:6px; font-weight:700; }
 
-  /* header label swap */
-  .desktop-only { display: none !important; }
-  .mobile-only { display: inline !important; }
+/* Points cell layout (left: points; right: actions) */
+.points-cell { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.points-value { font-weight:900; }
+.points-actions { display:flex; gap:8px; align-items:center; }
 
-  /* show masked id under name */
-  .name-cell .mobile-id { display:block; font-size:0.88rem; color:var(--muted); margin-top:4px; font-weight:700; }
-
-  /* move actions into points cell (visible only on mobile) */
-  .mobile-actions { display:inline-flex; gap:6px; margin-left:8px; vertical-align:middle; }
-  .points-wrap { display:flex; align-items:center; justify-content:space-between; gap:8px; width:100%; }
-  .points-wrap .points-value { font-weight:900; }
+/* hide standalone ID/action columns on mobile and show mobile variants */
+@media (max-width:720px){
+  col.col-id, col.col-action { display:none; }
+  th.col-id, th.col-action, td.id-mask, td.action-cell { display:none !important; }
+  .desktop-only { display:none !important; }
+  .mobile-only { display:inline !important; }
+  .name-cell .mobile-id { display:block; }
+  .points-cell .points-actions { display:flex; }
 }
-
-/* default desktop state for these helpers */
-.name-cell .mobile-id { display:none; }
-.mobile-actions { display:none; }
 
 </style>
 </head>
