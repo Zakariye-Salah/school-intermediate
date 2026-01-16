@@ -97,6 +97,8 @@ modalClose.onclick = closeModal;
 modalBackdrop.onclick = (e) => { if(e.target === modalBackdrop) closeModal(); };
 function toast(msg, t=2200){ if(!toastEl) return; toastEl.textContent = msg; toastEl.style.display = 'block'; setTimeout(()=>toastEl.style.display='none',t); }
 
+/** helper: pad number */
+function pad(n, width){ n = String(n||''); return n.length >= width ? n : '0'.repeat(width - n.length) + n; }
 /* id generator */
 async function generateDefaultId(collectionName, prefix, digits){
   const t = Date.now() % (10**(digits));
@@ -160,15 +162,6 @@ function populateStudentsExamDropdown(){
     studentsExamForTotals.appendChild(opt);
   }
 }
-// function populateTeachersSubjectFilter(){
-//   if(!teachersSubjectFilter) return;
-//   teachersSubjectFilter.innerHTML = '<option value="">All subjects</option>';
-//   for(const s of subjectsCache){
-//     const opt = document.createElement('option'); opt.value = s.name; opt.textContent = s.name;
-//     teachersSubjectFilter.appendChild(opt);
-//   }
-// }
-
 /* rendering */
 
 /* -------------------------
@@ -271,103 +264,154 @@ async function openViewTeacherModal(e){
   modalBody.querySelector('#viewTeacherClose').onclick = closeModal;
 }
 
-/** ---------- STUDENTS (table view + View modal) ---------- */
-function renderStudents(){
-  if(!studentsList) return;
-  // filters
-  const q = (studentsSearch && studentsSearch.value||'').trim().toLowerCase();
-  const classFilterVal = (studentsClassFilter && studentsClassFilter.value) || '';
-  const examFilter = (studentsExamForTotals && studentsExamForTotals.value) || '';
-
-  let filtered = (studentsCache || []).filter(s=>{
-    if(classFilterVal && s.classId !== classFilterVal) return false;
-    if(!q) return true;
-    return (s.fullName||'').toLowerCase().includes(q) || (s.phone||'').toLowerCase().includes(q) || (s.studentId||'').toLowerCase().includes(q);
-  });
-
-  // summary + table header
-  const total = filtered.length;
-  let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-      <strong>Total students: ${total}</strong>
-      <div class="muted">Columns: No, ID, Name, Parent, Class, Total</div>
-    </div>`;
-
-  html += `<div style="overflow:auto"><table style="width:100%;border-collapse:collapse">
-    <thead>
-      <tr style="text-align:left;border-bottom:1px solid #e6eef8">
-        <th style="padding:8px;width:48px">No</th>
-        <th style="padding:8px;width:140px">ID</th>
-        <th style="padding:8px">Name</th>
-        <th style="padding:8px;width:160px">Parent</th>
-        <th style="padding:8px;width:120px">Class</th>
-        <th style="padding:8px;width:100px">Total</th>
-        <th style="padding:8px;width:220px">Actions</th>
-      </tr>
-    </thead><tbody>`;
-
-  // optionally start loading exam totals for the selected exam
-  if(examFilter) loadExamTotalsForExam(examFilter);
-
-  filtered.forEach((s, idx) => {
-    const sid = escape(s.studentId || s.id || '');
-    const parent = escape(s.parentPhone || s.motherName || '—');
-    const cls = escape(s.classId || '—');
-    let totalDisplay = '—';
-    if(examFilter && examTotalsCache[examFilter] && examTotalsCache[examFilter][s.studentId]) totalDisplay = escape(String(examTotalsCache[examFilter][s.studentId].total || '—'));
-    html += `<tr style="border-bottom:1px solid #f1f5f9">
-      <td style="padding:8px;vertical-align:middle">${idx+1}</td>
-      <td style="padding:8px;vertical-align:middle">${sid}</td>
-      <td style="padding:8px;vertical-align:middle">${escape(s.fullName||'')}</td>
-      <td style="padding:8px;vertical-align:middle">${parent}</td>
-      <td style="padding:8px;vertical-align:middle">${cls}</td>
-      <td style="padding:8px;vertical-align:middle">${totalDisplay}</td>
-      <td style="padding:8px;vertical-align:middle">
-        <button class="btn btn-ghost btn-sm view-stu" data-id="${sid}">View</button>
-        <button class="btn btn-ghost btn-sm edit-stu" data-id="${sid}">Edit</button>
-        <button class="btn btn-danger btn-sm del-stu" data-id="${sid}">${s.status==='deleted'?'Unblock':'Delete'}</button>
-      </td>
-    </tr>`;
-  });
-
-  html += `</tbody></table></div>`;
-  studentsList.innerHTML = html;
-
-  // wire actions
-  studentsList.querySelectorAll('.view-stu').forEach(b=> b.onclick = openViewStudentModal);
-  studentsList.querySelectorAll('.edit-stu').forEach(b=> b.onclick = openEditStudentModal);
-  studentsList.querySelectorAll('.del-stu').forEach(b=> b.onclick = deleteOrUnblockStudent);
+/* ---------- Ensure teachers subject/class filter is populated ---------- */
+function populateTeachersSubjectFilter(){
+  // ensure subjectsCache and classesCache are available
+  if(teachersSubjectFilter){
+    teachersSubjectFilter.innerHTML = '<option value="">All subjects</option>';
+    for(const s of (subjectsCache || [])){
+      const opt = document.createElement('option');
+      opt.value = s.name;
+      opt.textContent = s.name;
+      teachersSubjectFilter.appendChild(opt);
+    }
+  }
+  // no dedicated teachersClassFilter element in your snippet, but ensure classes are available for teacher modals
+  // (class options will be read from classesCache when opening create/edit teacher modal)
 }
 
-/** shows full student info in modal */
-async function openViewStudentModal(e){
+/* ---------- Teachers create/edit (default TEC00001) ---------- */
+function openAddTeacherModal(){
+  const classOptions = (classesCache || []).map(c => `<option value="${escape(c.name)}">${escape(c.name)}</option>`).join('');
+  const subjectOptions = (subjectsCache || []).map(s => `<option value="${escape(s.name)}">${escape(s.name)}</option>`).join('');
+  showModal('Add Teacher', `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div><label>Teacher ID (optional)</label><input id="teacherId" placeholder="TEC00001" /></div>
+      <div><label>Salary</label><input id="teacherSalary" type="number" min="0" /></div>
+      <div style="grid-column:1 / -1"><label>Full name</label><input id="teacherName" /></div>
+      <div><label>Phone</label><input id="teacherPhone" /></div>
+      <div><label>Parent phone</label><input id="teacherParentPhone" /></div>
+      <div style="grid-column:1 / -1"><label>Assign classes (select multiple)</label><select id="teacherClasses" multiple size="6" style="width:100%">${classOptions}</select></div>
+      <div style="grid-column:1 / -1"><label>Assign subjects (select multiple)</label><select id="teacherSubjects" multiple size="6" style="width:100%">${subjectOptions}</select></div>
+    </div>
+    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
+      <button id="cancelTeacher" class="btn btn-ghost">Cancel</button>
+      <button id="saveTeacher" class="btn btn-primary">Save</button>
+    </div>
+  `);
+
+  modalBody.querySelector('#cancelTeacher').onclick = closeModal;
+  modalBody.querySelector('#saveTeacher').onclick = async () => {
+    let id = modalBody.querySelector('#teacherId').value.trim();
+    const name = (modalBody.querySelector('#teacherName').value || '').trim();
+    const phone = (modalBody.querySelector('#teacherPhone').value || '').trim();
+    const parentPhone = (modalBody.querySelector('#teacherParentPhone').value || '').trim();
+    const salaryVal = modalBody.querySelector('#teacherSalary').value;
+    const salary = salaryVal ? Number(salaryVal) : null;
+    const classesSelected = Array.from(modalBody.querySelectorAll('#teacherClasses option:checked')).map(o => o.value);
+    const subjectsSelected = Array.from(modalBody.querySelectorAll('#teacherSubjects option:checked')).map(o => o.value);
+
+    if(!name) return toast('Teacher name is required');
+
+    if(!id) id = await generateDefaultId('teachers','TEC',5); // TEC00001 style (5 digits)
+    const payload = {
+      id, teacherId: id, fullName: name, phone: phone || '', parentPhone: parentPhone || '',
+      salary: salary, classes: classesSelected, subjects: subjectsSelected,
+      createdAt: Timestamp.now(), createdBy: currentUser ? currentUser.uid : null
+    };
+
+    try {
+      // use setDoc so teacher doc id matches the generated teacher ID
+      await setDoc(doc(db,'teachers', id), payload);
+      toast('Teacher created');
+      closeModal();
+      await loadTeachers(); renderTeachers();
+    } catch(err){
+      console.error('create teacher failed', err);
+      toast('Failed to create teacher');
+    }
+  };
+}
+
+/* Edit teacher (id may be teacher doc id) */
+async function openEditTeacherModal(e){
   const id = e && e.target ? e.target.dataset.id : e;
   if(!id) return;
-  let s = studentsCache.find(x => x.studentId === id || x.id === id);
-  if(!s){
+  let t = teachersCache.find(x => x.id === id || x.teacherId === id);
+  if(!t){
     try {
-      const snap = await getDoc(doc(db,'students', id));
-      if(snap.exists()) s = { id: snap.id, ...snap.data() };
-    } catch(err){ console.error('load student for view failed', err); }
+      const snap = await getDoc(doc(db,'teachers', id));
+      if(!snap.exists()) return toast('Teacher not found');
+      t = { id: snap.id, ...snap.data() };
+    } catch(err){ console.error(err); return toast('Failed to load teacher'); }
   }
-  if(!s) return toast('Student not found');
-  // build html
-  const html = `
+
+  const classOptions = (classesCache || []).map(c => `<option value="${escape(c.name)}" ${ (t.classes||[]).includes(c.name) ? 'selected' : '' }>${escape(c.name)}</option>`).join('');
+  const subjectOptions = (subjectsCache || []).map(s => `<option value="${escape(s.name)}" ${ (t.subjects||[]).includes(s.name) ? 'selected' : '' }>${escape(s.name)}</option>`).join('');
+
+  showModal('Edit Teacher', `
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-      <div><strong>ID</strong><div class="muted">${escape(s.studentId||s.id||'')}</div></div>
-      <div><strong>Name</strong><div class="muted">${escape(s.fullName||'')}</div></div>
-      <div><strong>Mother</strong><div class="muted">${escape(s.motherName||'')}</div></div>
-      <div><strong>Phone</strong><div class="muted">${escape(s.phone||'')}</div></div>
-      <div><strong>Parent phone</strong><div class="muted">${escape(s.parentPhone||'')}</div></div>
-      <div><strong>Age</strong><div class="muted">${escape(String(s.age||'—'))}</div></div>
-      <div><strong>Gender</strong><div class="muted">${escape(s.gender||'—')}</div></div>
-      <div><strong>Fee</strong><div class="muted">${typeof s.fee !== 'undefined' ? escape(String(s.fee)) : '—'}</div></div>
-      <div style="grid-column:1 / -1"><strong>Class</strong><div class="muted">${escape(s.classId||'—')}</div></div>
-      <div style="grid-column:1 / -1"><strong>Status</strong><div class="muted">${escape(s.status||'active')}</div></div>
+      <div><label>Teacher ID</label><input id="teacherId" value="${escape(t.teacherId||t.id||'')}" disabled /></div>
+      <div><label>Salary</label><input id="teacherSalary" type="number" min="0" value="${escape(String(t.salary||''))}" /></div>
+      <div style="grid-column:1 / -1"><label>Full name</label><input id="teacherName" value="${escape(t.fullName||'')}" /></div>
+      <div><label>Phone</label><input id="teacherPhone" value="${escape(t.phone||'')}" /></div>
+      <div><label>Parent phone</label><input id="teacherParentPhone" value="${escape(t.parentPhone||'')}" /></div>
+      <div style="grid-column:1 / -1"><label>Assign classes (select multiple)</label><select id="teacherClasses" multiple size="6" style="width:100%">${classOptions}</select></div>
+      <div style="grid-column:1 / -1"><label>Assign subjects (select multiple)</label><select id="teacherSubjects" multiple size="6" style="width:100%">${subjectOptions}</select></div>
     </div>
-    <div style="margin-top:12px"><button class="btn btn-ghost" id="viewStuClose">Close</button></div>
-  `;
-  showModal(`${escape(s.fullName||'Student')}`, html);
-  modalBody.querySelector('#viewStuClose').onclick = closeModal;
+    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
+      <button id="cancelTeacher" class="btn btn-ghost">Cancel</button>
+      <button id="updateTeacher" class="btn btn-primary">Save</button>
+    </div>
+  `);
+
+  modalBody.querySelector('#cancelTeacher').onclick = closeModal;
+  modalBody.querySelector('#updateTeacher').onclick = async () => {
+    const name = (modalBody.querySelector('#teacherName').value || '').trim();
+    const phone = (modalBody.querySelector('#teacherPhone').value || '').trim();
+    const parentPhone = (modalBody.querySelector('#teacherParentPhone').value || '').trim();
+    const salaryVal = modalBody.querySelector('#teacherSalary').value;
+    const salary = salaryVal ? Number(salaryVal) : null;
+    const classesSelected = Array.from(modalBody.querySelectorAll('#teacherClasses option:checked')).map(o => o.value);
+    const subjectsSelected = Array.from(modalBody.querySelectorAll('#teacherSubjects option:checked')).map(o => o.value);
+
+    if(!name) return toast('Teacher name is required');
+    try {
+      // update by doc id (t.id)
+      await updateDoc(doc(db,'teachers', t.id), {
+        fullName: name, phone: phone || '', parentPhone: parentPhone || '', salary: salary,
+        classes: classesSelected, subjects: subjectsSelected, updatedAt: Timestamp.now(), updatedBy: currentUser ? currentUser.uid : null
+      });
+      toast('Teacher updated');
+      closeModal();
+      await loadTeachers(); renderTeachers();
+    } catch(err){
+      console.error('update teacher failed', err);
+      toast('Failed to update teacher');
+    }
+  };
+}
+
+/* Delete teacher (keeps same behavior) */
+async function deleteTeacher(e){
+  const id = e && e.target ? e.target.dataset.id : e;
+  if(!id) return;
+  if(!confirm('Delete teacher?')) return;
+  try {
+    await deleteDoc(doc(db,'teachers', id));
+    toast('Teacher deleted');
+    await loadTeachers(); renderTeachers();
+  } catch(err){
+    console.error('delete teacher failed', err);
+    toast('Failed to delete teacher');
+  }
+}
+
+/* -------------------------
+  Wire buttons (defensive)
+--------------------------*/
+if(typeof openAddTeacher !== 'undefined' && openAddTeacher){
+  openAddTeacher.onclick = openAddTeacherModal;
 }
 
 /** ---------- CLASSES (table view + View modal listing students) ---------- */
@@ -456,6 +500,64 @@ async function openViewClassModal(e){
   modalBody.querySelector('#viewClassClose').onclick = closeModal;
 }
 
+openAddClass.onclick = () => {
+  const subjectOptions = subjectsCache.map(s=>`<option value="${escape(s.name)}">${escape(s.name)}</option>`).join('');
+  showModal('Add Class', `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div><label>Class ID (optional)</label><input id="modalClassId" placeholder="CLS0001" /></div>
+      <div><label>&nbsp;</label></div>
+      <div style="grid-column:1 / -1"><label>Class name</label><input id="modalClassName" placeholder="Grade 4A" /></div>
+      <div style="grid-column:1 / -1"><label>Assign subjects (select multiple)</label>
+        <select id="modalClassSubjects" multiple size="6" style="width:100%">${subjectOptions}</select></div>
+    </div>
+    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
+      <button id="cancelClass" class="btn btn-ghost">Cancel</button>
+      <button id="saveClass" class="btn btn-primary">Save</button>
+    </div>
+  `);
+  modalBody.querySelector('#cancelClass').onclick = closeModal;
+  modalBody.querySelector('#saveClass').onclick = async () => {
+    const name = modalBody.querySelector('#modalClassName').value.trim();
+    let id = modalBody.querySelector('#modalClassId').value.trim();
+    if(!name) return alert('Enter class name');
+    if(!id) id = await generateDefaultId('classes','CLS',4);
+    const chosen = Array.from(modalBody.querySelectorAll('#modalClassSubjects option:checked')).map(o=>o.value);
+    await setDoc(doc(db,'classes',id), { id, name, subjects: chosen });
+    closeModal(); await loadClasses(); renderClasses(); populateClassFilters(); renderStudents();
+  };
+};
+
+function openEditClassModal(e){
+  const id = e && e.target ? e.target.dataset.id : e;
+  const c = classesCache.find(x=>x.id===id);
+  if(!c) return toast && toast('Class not found');
+  const subjectsHtml = subjectsCache.map(s=>`<label style="margin-right:8px"><input type="checkbox" value="${escape(s.name)}" ${c.subjects?.includes(s.name)?'checked':''} /> ${escape(s.name)}</label>`).join('');
+  showModal('Edit Class', `
+    <div style="display:grid;grid-template-columns:1fr;gap:8px">
+      <div><label>Class name</label><input id="modalClassName" value="${escape(c.name)}" /></div>
+      <div><label>Assign subjects</label><div id="modalClassSubjects">${subjectsHtml || '<div class="muted">No subjects yet</div>'}</div></div>
+    </div>
+    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
+      <button id="cancelClass" class="btn btn-ghost">Cancel</button>
+      <button id="saveClass" class="btn btn-primary">Save</button>
+    </div>
+  `);
+  modalBody.querySelector('#cancelClass').onclick = closeModal;
+  modalBody.querySelector('#saveClass').onclick = async () => {
+    const name = modalBody.querySelector('#modalClassName').value.trim();
+    const chosen = Array.from(modalBody.querySelectorAll('#modalClassSubjects input[type=checkbox]:checked')).map(i=>i.value);
+    if(!name) return alert('Enter name');
+    await updateDoc(doc(db,'classes',id), { name, subjects: chosen });
+    closeModal(); await loadClasses(); renderClasses(); populateClassFilters(); renderStudents();
+  };
+}
+
+async function deleteClass(e){
+  const id = e.target.dataset.id;
+  if(!confirm('Delete class?')) return;
+  await deleteDoc(doc(db,'classes',id));
+  await loadClasses(); renderClasses(); populateClassFilters(); renderStudents();
+}
 /** ---------- SUBJECTS (table view + View modal) ---------- */
 function renderSubjects(){
   if(!subjectsList) return;
@@ -528,9 +630,59 @@ function openViewSubjectModal(e){
   modalBody.querySelector('#viewSubClose').onclick = closeModal;
 }
 
-/* -------------------------
-   End of new render & view helpers
----------------------------*/
+
+/* ---------- Subjects add/edit (default SUB0001) ---------- */
+openAddSubject && (openAddSubject.onclick = () => {
+  showModal('Add Subject', `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div><label>Subject ID (optional)</label><input id="modalSubId" placeholder="SUB0001" /></div>
+      <div>&nbsp;</div>
+      <div style="grid-column:1 / -1"><label>Subject name</label><input id="modalSubName" placeholder="Mathematics" /></div>
+    </div>
+    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
+      <button id="cancelSub" class="btn btn-ghost">Cancel</button>
+      <button id="saveSub" class="btn btn-primary">Save</button>
+    </div>
+  `);
+  modalBody.querySelector('#cancelSub').onclick = closeModal;
+  modalBody.querySelector('#saveSub').onclick = async () => {
+    let id = modalBody.querySelector('#modalSubId').value.trim();
+    const name = modalBody.querySelector('#modalSubName').value.trim();
+    if(!name) return alert('Name required');
+    if(!id) id = await generateDefaultId('subjects','SUB',4); // SUB0001 style
+    await setDoc(doc(db,'subjects', id), { id, name });
+    closeModal(); await loadSubjects(); renderSubjects(); populateClassFilters();
+  };
+});
+
+function openEditSubjectModal(e){
+  const id = e && e.target ? e.target.dataset.id : e;
+  const s = subjectsCache.find(x=>x.id===id);
+  if(!s) return toast && toast('Subject not found');
+  showModal('Edit Subject', `
+    <div><label>Subject name</label><input id="modalSubName" value="${escape(s.name)}" /></div>
+    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
+      <button id="cancelSub" class="btn btn-ghost">Cancel</button>
+      <button id="saveSub" class="btn btn-primary">Save</button>
+    </div>
+  `);
+  modalBody.querySelector('#cancelSub').onclick = closeModal;
+  modalBody.querySelector('#saveSub').onclick = async () => {
+    const name = modalBody.querySelector('#modalSubName').value.trim();
+    if(!name) return alert('Name required');
+    await updateDoc(doc(db,'subjects',id), { name });
+    closeModal(); await loadSubjects(); renderSubjects(); populateClassFilters();
+  };
+}
+
+
+async function deleteSubject(e){
+  const id = e.target.dataset.id;
+  if(!confirm('Delete subject?')) return;
+  await deleteDoc(doc(db,'subjects',id));
+  await loadSubjects(); renderSubjects(); populateClassFilters();
+}
+
 
 function renderExams(){
   if(!examsList) return;
@@ -620,173 +772,219 @@ teachersSearch && (teachersSearch.oninput = renderTeachers);
 teachersSubjectFilter && (teachersSubjectFilter.onchange = renderTeachers);
 
 
-/* -------------------------------------
-   Classes CRUD (kept same)
---------------------------------------*/
-openAddClass.onclick = () => {
-  const subjectOptions = subjectsCache.map(s=>`<option value="${escape(s.name)}">${escape(s.name)}</option>`).join('');
-  showModal('Add Class', `
-    <label>Class ID (optional)</label><input id="modalClassId" placeholder="CLS0001" />
-    <label>Class name</label><input id="modalClassName" placeholder="Grade 4A" />
-    <label>Assign subjects (select multiple)</label>
-    <select id="modalClassSubjects" multiple size="6" style="width:100%">${subjectOptions}</select>
-    <div style="margin-top:12px"><button id="saveClass" class="btn btn-primary">Save</button> <button id="cancelClass" class="btn btn-ghost">Cancel</button></div>
-  `);
-  document.getElementById('saveClass').onclick = async () => {
-    const name = document.getElementById('modalClassName').value.trim();
-    let id = document.getElementById('modalClassId').value.trim();
-    if(!name) return alert('Enter class name');
-    if(!id) id = await generateDefaultId('classes','CLS',4);
-    const chosen = Array.from(modalBody.querySelectorAll('#modalClassSubjects option:checked')).map(o=>o.value);
-    await setDoc(doc(db,'classes',id), { id, name, subjects: chosen });
-    closeModal(); await loadClasses(); renderClasses(); populateClassFilters(); renderStudents();
-  };
-  document.getElementById('cancelClass').onclick = closeModal;
-};
 
-function openEditClassModal(e){
-  const id = e.target.dataset.id;
-  const c = classesCache.find(x=>x.id===id);
-  const subjectsHtml = subjectsCache.map(s=>`<label style="margin-right:8px"><input type="checkbox" value="${escape(s.name)}" ${c.subjects?.includes(s.name)?'checked':''} /> ${escape(s.name)}</label>`).join('');
-  showModal('Edit Class', `
-    <label>Class name</label><input id="modalClassName" value="${escape(c.name)}" />
-    <label>Assign subjects</label><div id="modalClassSubjects">${subjectsHtml || '<div class="muted">No subjects yet</div>'}</div>
-    <div style="margin-top:12px"><button id="saveClass" class="btn btn-primary">Save</button> <button id="cancelClass" class="btn btn-ghost">Cancel</button></div>
-  `);
-  document.getElementById('saveClass').onclick = async () => {
-    const name = document.getElementById('modalClassName').value.trim();
-    const chosen = Array.from(modalBody.querySelectorAll('#modalClassSubjects input[type=checkbox]:checked')).map(i=>i.value);
-    if(!name) return alert('Enter name');
-    await updateDoc(doc(db,'classes',id), { name, subjects: chosen });
-    closeModal(); await loadClasses(); renderClasses(); populateClassFilters(); renderStudents();
-  };
-  document.getElementById('cancelClass').onclick = closeModal;
+
+/** async renderStudents (awaits exam totals when the filter is set) */
+
+
+/** view student modal (keeps existing fields; adds Edit/Delete actions) */
+async function renderStudents(){
+  if(!studentsList) return;
+  const q = (studentsSearch && studentsSearch.value||'').trim().toLowerCase();
+  const classFilterVal = (studentsClassFilter && studentsClassFilter.value) || '';
+  const examFilter = (studentsExamForTotals && studentsExamForTotals.value) || '';
+
+  // If an exam totals filter is chosen, ensure totals are loaded before rendering
+  if(examFilter && typeof loadExamTotalsForExam === 'function'){
+    try { await loadExamTotalsForExam(examFilter); } catch(e){ console.warn('loadExamTotalsForExam failed', e); }
+  }
+
+  let filtered = (studentsCache || []).filter(s=>{
+    if(classFilterVal && s.classId !== classFilterVal) return false;
+    if(!q) return true;
+    return (s.fullName||'').toLowerCase().includes(q) || (s.phone||'').toLowerCase().includes(q) || (s.studentId||'').toLowerCase().includes(q);
+  });
+
+  const total = filtered.length;
+  let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <strong>Total students: ${total}</strong>
+      <div class="muted">Columns: No, ID, Name, Parent, Class, Total</div>
+    </div>`;
+
+  html += `<div style="overflow:auto"><table style="width:100%;border-collapse:collapse">
+    <thead>
+      <tr style="text-align:left;border-bottom:1px solid #e6eef8">
+        <th style="padding:8px;width:48px">No</th>
+        <th style="padding:8px;width:140px">ID</th>
+        <th style="padding:8px">Name</th>
+        <th style="padding:8px;width:160px">Parent</th>
+        <th style="padding:8px;width:120px">Class</th>
+        <th style="padding:8px;width:100px">Total</th>
+        <th style="padding:8px;width:220px">Actions</th>
+      </tr>
+    </thead><tbody>`;
+
+  filtered.forEach((s, idx) => {
+    const sid = escape(s.studentId || s.id || '');
+    const parent = escape(s.parentPhone || s.motherName || '—');
+    const cls = escape(s.classId || '—');
+    let totalDisplay = '—';
+    if(examFilter && examTotalsCache[examFilter] && examTotalsCache[examFilter][s.studentId]) {
+      totalDisplay = escape(String(examTotalsCache[examFilter][s.studentId].total || '—'));
+    }
+    html += `<tr style="border-bottom:1px solid #f1f5f9">
+      <td style="padding:8px;vertical-align:middle">${idx+1}</td>
+      <td style="padding:8px;vertical-align:middle">${sid}</td>
+      <td style="padding:8px;vertical-align:middle">${escape(s.fullName||'')}</td>
+      <td style="padding:8px;vertical-align:middle">${parent}</td>
+      <td style="padding:8px;vertical-align:middle">${cls}</td>
+      <td style="padding:8px;vertical-align:middle">${totalDisplay}</td>
+      <td style="padding:8px;vertical-align:middle">
+        <button class="btn btn-ghost btn-sm view-stu" data-id="${escape(s.studentId||s.id||'')}">View</button>
+        <button class="btn btn-ghost btn-sm edit-stu" data-id="${escape(s.studentId||s.id||'')}">Edit</button>
+        <button class="btn btn-danger btn-sm del-stu" data-id="${escape(s.studentId||s.id||'')}">${s.status==='deleted'?'Unblock':'Delete'}</button>
+      </td>
+    </tr>`;
+  });
+
+  html += `</tbody></table></div>`;
+  studentsList.innerHTML = html;
+
+  // wire actions
+  studentsList.querySelectorAll('.view-stu').forEach(b=> b.addEventListener('click', openViewStudentModal));
+  studentsList.querySelectorAll('.edit-stu').forEach(b=> b.addEventListener('click', openEditStudentModal));
+  studentsList.querySelectorAll('.del-stu').forEach(b=> b.addEventListener('click', deleteOrUnblockStudent));
 }
-async function deleteClass(e){
-  const id = e.target.dataset.id;
-  if(!confirm('Delete class?')) return;
-  await deleteDoc(doc(db,'classes',id));
-  await loadClasses(); renderClasses(); populateClassFilters(); renderStudents();
-}
+async function openViewStudentModal(e){
+  const id = (e && e.target) ? e.target.dataset.id : e;
+  if(!id) return;
+  let s = studentsCache.find(x => x.studentId === id || x.id === id);
+  if(!s && typeof getDoc === 'function'){
+    try {
+      const snap = await getDoc(doc(db,'students', id));
+      if(snap.exists()) s = { id: snap.id, ...snap.data() };
+    } catch(err){ console.error('load student for view failed', err); }
+  }
+  if(!s) return toast && toast('Student not found');
 
-/* -------------------------------------
-   Subjects CRUD (no max field in admin)
--------------------------------------*/
-openAddSubject && (openAddSubject.onclick = () => {
-  showModal('Add Subject', `
-    <label>Subject ID (optional)</label><input id="modalSubId" placeholder="SUB000001" />
-    <label>Subject name</label><input id="modalSubName" placeholder="Mathematics" />
-    <div style="margin-top:12px"><button id="saveSub" class="btn btn-primary">Save</button> <button id="cancelSub" class="btn btn-ghost">Cancel</button></div>
-  `);
-  document.getElementById('saveSub').onclick = async () => {
-    let id = document.getElementById('modalSubId').value.trim();
-    const name = document.getElementById('modalSubName').value.trim();
-    if(!name) return alert('Name required');
-    if(!id) id = await generateDefaultId('subjects','SUB',6);
-    await setDoc(doc(db,'subjects', id), { id, name }); // no max stored here
-    closeModal(); await loadSubjects(); renderSubjects(); populateClassFilters();
+  const html = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div><strong>ID</strong><div class="muted">${escape(s.studentId||s.id||'')}</div></div>
+      <div><strong>Name</strong><div class="muted">${escape(s.fullName||'')}</div></div>
+      <div><strong>Mother</strong><div class="muted">${escape(s.motherName||'')}</div></div>
+      <div><strong>Phone</strong><div class="muted">${escape(s.phone||'')}</div></div>
+      <div><strong>Parent phone</strong><div class="muted">${escape(s.parentPhone||'')}</div></div>
+      <div><strong>Age</strong><div class="muted">${escape(String(s.age||'—'))}</div></div>
+      <div><strong>Gender</strong><div class="muted">${escape(s.gender||'—')}</div></div>
+      <div><strong>Fee</strong><div class="muted">${typeof s.fee !== 'undefined' ? escape(String(s.fee)) : '—'}</div></div>
+      <div style="grid-column:1 / -1"><strong>Class</strong><div class="muted">${escape(s.classId||'—')}</div></div>
+      <div style="grid-column:1 / -1"><strong>Status</strong><div class="muted">${escape(s.status||'active')}</div></div>
+    </div>
+    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn btn-ghost" id="viewStuEdit">Edit</button>
+      <button class="btn btn-danger" id="viewStuDel">${s.status==='deleted' ? 'Unblock' : 'Delete'}</button>
+      <button class="btn btn-primary" id="viewStuClose">Close</button>
+    </div>
+  `;
+  showModal(`${escape(s.fullName||'Student')}`, html);
+
+  document.getElementById('viewStuClose').onclick = closeModal;
+  document.getElementById('viewStuEdit').onclick = () => {
+    closeModal();
+    // call edit modal using dataset pattern your other functions expect
+    openEditStudentModal({ target:{ dataset:{ id: s.studentId || s.id } } });
   };
-  document.getElementById('cancelSub').onclick = closeModal;
-});
-
-function openEditSubjectModal(e){
-  const id = e.target.dataset.id;
-  const s = subjectsCache.find(x=>x.id===id);
-  showModal('Edit Subject', `
-    <label>Subject name</label><input id="modalSubName" value="${escape(s.name)}" />
-    <div style="margin-top:12px"><button id="saveSub" class="btn btn-primary">Save</button> <button id="cancelSub" class="btn btn-ghost">Cancel</button></div>
-  `);
-  document.getElementById('saveSub').onclick = async () => {
-    const name = document.getElementById('modalSubName').value.trim();
-    if(!name) return alert('Name required');
-    await updateDoc(doc(db,'subjects',id), { name });
-    closeModal(); await loadSubjects(); renderSubjects(); populateClassFilters();
+  document.getElementById('viewStuDel').onclick = async () => {
+    // toggle delete/unblock
+    if(s.status === 'deleted'){
+      await updateDoc(doc(db,'students', s.studentId), { status:'active' });
+      await setDoc(doc(db,'studentsLatest', s.studentId), { blocked:false }, { merge:true });
+      await loadStudents(); renderStudents(); toast(`${s.fullName} unblocked`);
+      closeModal();
+      return;
+    }
+    if(!confirm('Delete student? This will mark student as deleted and block public access.')) return;
+    await updateDoc(doc(db,'students', s.studentId), { status:'deleted' });
+    await setDoc(doc(db,'studentsLatest', s.studentId), { blocked:true, blockMessage:'You are fired' }, { merge:true });
+    await loadStudents(); renderStudents(); toast(`${s.fullName} deleted and blocked`);
+    closeModal();
   };
-  document.getElementById('cancelSub').onclick = closeModal;
-}
-async function deleteSubject(e){
-  const id = e.target.dataset.id;
-  if(!confirm('Delete subject?')) return;
-  await deleteDoc(doc(db,'subjects',id));
-  await loadSubjects(); renderSubjects(); populateClassFilters();
 }
 
-
-/* -------------------------------------
-   Students CRUD (with parentPhone, fee, age, gender)
--------------------------------------*/
+/* ---------- Students create/edit (styling improved, logic preserved) ---------- */
 openAddStudent && (openAddStudent.onclick = () => {
   const options = classesCache.map(c=>`<option value="${escape(c.name)}">${escape(c.name)}</option>`).join('');
   showModal('Add Student', `
-    <label>Student ID</label><input id="stuId" placeholder="12345" />
-    <label>Full name</label><input id="stuName" />
-    <label>Mother's name (Ina Hooyo)</label><input id="stuMother" placeholder="Faadum Abdi Ahmed" />
-    <label>Phone</label><input id="stuPhone" />
-    <label>Parent phone</label><input id="stuParentPhone" />
-    <label>Age</label><input id="stuAge" type="number" min="3" max="30" />
-    <label>Gender</label>
-    <select id="stuGender"><option value="">Select gender</option><option value="Male">Male</option><option value="Female">Female</option></select>
-    <label>Fee</label><input id="stuFee" type="number" min="0" />
-    <label>Class</label><select id="stuClass"><option value="">Select class</option>${options}</select>
-    <div style="margin-top:12px"><button id="saveStu" class="btn btn-primary">Save</button> <button id="cancelStu" class="btn btn-ghost">Cancel</button></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div><label>Student ID</label><input id="stuId" placeholder="e.g. 12345" /></div>
+      <div><label>Class</label><select id="stuClass"><option value="">Select class</option>${options}</select></div>
+      <div style="grid-column:1 / -1"><label>Full name</label><input id="stuName" /></div>
+      <div><label>Mother's name</label><input id="stuMother" placeholder="Faadum Abdi Ahmed" /></div>
+      <div><label>Phone</label><input id="stuPhone" /></div>
+      <div><label>Parent phone</label><input id="stuParentPhone" /></div>
+      <div><label>Age</label><input id="stuAge" type="number" min="3" max="30" /></div>
+      <div><label>Gender</label><select id="stuGender"><option value="">Select</option><option value="Male">Male</option><option value="Female">Female</option></select></div>
+      <div style="grid-column:1 / -1"><label>Fee</label><input id="stuFee" type="number" min="0" /></div>
+    </div>
+    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
+      <button id="cancelStu" class="btn btn-ghost">Cancel</button>
+      <button id="saveStu" class="btn btn-primary">Save</button>
+    </div>
   `);
-  document.getElementById('saveStu').onclick = async () => {
-    let id = document.getElementById('stuId').value.trim();
-    const name = document.getElementById('stuName').value.trim();
-    const mother = document.getElementById('stuMother').value.trim();
-    const phone = document.getElementById('stuPhone').value.trim();
-    const parentPhone = document.getElementById('stuParentPhone').value.trim();
-    const age = Number(document.getElementById('stuAge').value) || null;
-    const gender = (document.getElementById('stuGender').value || null);
-    const fee = document.getElementById('stuFee').value ? Number(document.getElementById('stuFee').value) : null;
-    const classId = document.getElementById('stuClass').value;
+
+  modalBody.querySelector('#cancelStu').onclick = closeModal;
+  modalBody.querySelector('#saveStu').onclick = async () => {
+    let id = modalBody.querySelector('#stuId').value.trim();
+    const name = modalBody.querySelector('#stuName').value.trim();
+    const mother = modalBody.querySelector('#stuMother').value.trim();
+    const phone = modalBody.querySelector('#stuPhone').value.trim();
+    const parentPhone = modalBody.querySelector('#stuParentPhone').value.trim();
+    const age = Number(modalBody.querySelector('#stuAge').value) || null;
+    const gender = (modalBody.querySelector('#stuGender').value || null);
+    const fee = modalBody.querySelector('#stuFee').value ? Number(modalBody.querySelector('#stuFee').value) : null;
+    const classId = modalBody.querySelector('#stuClass').value;
     if(!name) return alert('Name required');
     if(gender && !['Male','Female'].includes(gender)) return alert('Gender must be Male or Female');
     if(!id) id = await generateDefaultId('students','STD',9);
     await setDoc(doc(db,'students',id), { studentId:id, fullName:name, motherName: mother || '', phone, parentPhone: parentPhone || '', age, gender: gender || null, fee: fee, classId, status:'active' });
     closeModal(); await loadStudents(); renderStudents(); toast(`${name} created`);
   };
-  document.getElementById('cancelStu').onclick = closeModal;
 });
 
+/* openEditStudentModal expects event-like parameter with dataset.id */
 function openEditStudentModal(e){
-  const id = e.target.dataset.id;
+  const id = e && e.target ? e.target.dataset.id : e;
   const s = studentsCache.find(x=>x.studentId===id || x.id===id);
+  if(!s) return toast && toast('Student not found');
   const options = classesCache.map(c=>`<option value="${escape(c.name)}" ${c.name===s.classId?'selected':''}>${escape(c.name)}</option>`).join('');
   showModal('Edit Student', `
-    <label>Student ID</label><input id="stuId" value="${escape(s.studentId)}" disabled />
-    <label>Full name</label><input id="stuName" value="${escape(s.fullName)}" />
-    <label>Mother's name (Ina Hooyo)</label><input id="stuMother" value="${escape(s.motherName||'')}" />
-    <label>Phone</label><input id="stuPhone" value="${escape(s.phone||'')}" />
-    <label>Parent phone</label><input id="stuParentPhone" value="${escape(s.parentPhone||'')}" />
-    <label>Age</label><input id="stuAge" type="number" value="${escape(String(s.age||''))}" />
-    <label>Gender</label>
-    <select id="stuGender"><option value="">Select gender</option><option value="Male" ${s.gender==='Male'?'selected':''}>Male</option><option value="Female" ${s.gender==='Female'?'selected':''}>Female</option></select>
-    <label>Fee</label><input id="stuFee" type="number" value="${escape(String(s.fee||''))}" />
-    <label>Class</label><select id="stuClass"><option value="">Select class</option>${options}</select>
-    <div style="margin-top:12px"><button id="saveStu" class="btn btn-primary">Save</button> <button id="addResult" class="btn btn-ghost">Add/Edit Result</button> <button id="cancelStu" class="btn btn-ghost">Cancel</button></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div><label>Student ID</label><input id="stuId" value="${escape(s.studentId)}" disabled /></div>
+      <div><label>Class</label><select id="stuClass"><option value="">Select class</option>${options}</select></div>
+      <div style="grid-column:1 / -1"><label>Full name</label><input id="stuName" value="${escape(s.fullName)}" /></div>
+      <div><label>Mother's name</label><input id="stuMother" value="${escape(s.motherName||'')}" /></div>
+      <div><label>Phone</label><input id="stuPhone" value="${escape(s.phone||'')}" /></div>
+      <div><label>Parent phone</label><input id="stuParentPhone" value="${escape(s.parentPhone||'')}" /></div>
+      <div><label>Age</label><input id="stuAge" type="number" value="${escape(String(s.age||''))}" /></div>
+      <div><label>Gender</label><select id="stuGender"><option value="">Select</option><option value="Male" ${s.gender==='Male'?'selected':''}>Male</option><option value="Female" ${s.gender==='Female'?'selected':''}>Female</option></select></div>
+      <div style="grid-column:1 / -1"><label>Fee</label><input id="stuFee" type="number" value="${escape(String(s.fee||''))}" /></div>
+    </div>
+    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
+      <button id="cancelStu" class="btn btn-ghost">Cancel</button>
+      <button id="addResult" class="btn btn-ghost">Add/Edit Result</button>
+      <button id="saveStu" class="btn btn-primary">Save</button>
+    </div>
   `);
-  document.getElementById('saveStu').onclick = async () => {
-    const name = document.getElementById('stuName').value.trim();
-    const mother = document.getElementById('stuMother').value.trim();
-    const phone = document.getElementById('stuPhone').value.trim();
-    const parentPhone = document.getElementById('stuParentPhone').value.trim();
-    const age = Number(document.getElementById('stuAge').value) || null;
-    const gender = (document.getElementById('stuGender').value || null);
-    const fee = document.getElementById('stuFee').value ? Number(document.getElementById('stuFee').value) : null;
-    const classId = document.getElementById('stuClass').value;
+
+  modalBody.querySelector('#cancelStu').onclick = closeModal;
+  modalBody.querySelector('#addResult').onclick = async () => { closeModal(); await openStudentResultModalFor(s); };
+
+  modalBody.querySelector('#saveStu').onclick = async () => {
+    const name = modalBody.querySelector('#stuName').value.trim();
+    const mother = modalBody.querySelector('#stuMother').value.trim();
+    const phone = modalBody.querySelector('#stuPhone').value.trim();
+    const parentPhone = modalBody.querySelector('#stuParentPhone').value.trim();
+    const age = Number(modalBody.querySelector('#stuAge').value) || null;
+    const gender = (modalBody.querySelector('#stuGender').value || null);
+    const fee = modalBody.querySelector('#stuFee').value ? Number(modalBody.querySelector('#stuFee').value) : null;
+    const classId = modalBody.querySelector('#stuClass').value;
     if(!name) return alert('Name required');
     if(gender && !['Male','Female'].includes(gender)) return alert('Gender must be Male or Female');
     await updateDoc(doc(db,'students',s.studentId), { fullName:name, motherName: mother || '', phone, parentPhone: parentPhone || '', age, gender: gender || null, fee: fee, classId });
     closeModal(); await loadStudents(); renderStudents(); toast(`${name} updated`);
   };
-  document.getElementById('addResult').onclick = async () => {
-    const student = s;
-    closeModal();
-    await openStudentResultModalFor(student);
-  };
-  document.getElementById('cancelStu').onclick = closeModal;
 }
+
 async function deleteOrUnblockStudent(e){
   const id = e.target.dataset.id;
   const s = studentsCache.find(x=>x.studentId===id || x.id===id);
@@ -804,155 +1002,10 @@ async function deleteOrUnblockStudent(e){
 }
 
 
-/* ---------- Ensure teachers subject/class filter is populated ---------- */
-function populateTeachersSubjectFilter(){
-  // ensure subjectsCache and classesCache are available
-  if(teachersSubjectFilter){
-    teachersSubjectFilter.innerHTML = '<option value="">All subjects</option>';
-    for(const s of (subjectsCache || [])){
-      const opt = document.createElement('option');
-      opt.value = s.name;
-      opt.textContent = s.name;
-      teachersSubjectFilter.appendChild(opt);
-    }
-  }
-  // no dedicated teachersClassFilter element in your snippet, but ensure classes are available for teacher modals
-  // (class options will be read from classesCache when opening create/edit teacher modal)
-}
 
-/* ---------- Add Teacher - open modal and save ---------- */
-function openAddTeacherModal(){
-  // defensive: if openAddTeacher element exists, wire it (done below). This function only opens modal UI.
-  const classOptions = (classesCache || []).map(c => `<option value="${escape(c.name)}">${escape(c.name)}</option>`).join('');
-  const subjectOptions = (subjectsCache || []).map(s => `<option value="${escape(s.name)}">${escape(s.name)}</option>`).join('');
 
-  showModal('Add Teacher', `
-    <label>Full name</label><input id="teacherName" />
-    <label>Phone</label><input id="teacherPhone" />
-    <label>Parent phone</label><input id="teacherParentPhone" />
-    <label>Salary</label><input id="teacherSalary" type="number" min="0" />
-    <label>Assign classes (select multiple)</label>
-    <select id="teacherClasses" multiple size="6" style="width:100%">${classOptions}</select>
-    <label>Assign subjects (select multiple)</label>
-    <select id="teacherSubjects" multiple size="6" style="width:100%">${subjectOptions}</select>
-    <div style="margin-top:12px"><button id="saveTeacher" class="btn btn-primary">Save</button> <button id="cancelTeacher" class="btn btn-ghost">Cancel</button></div>
-  `);
 
-  // handlers
-  modalBody.querySelector('#cancelTeacher').onclick = closeModal;
-  modalBody.querySelector('#saveTeacher').onclick = async () => {
-    const name = (modalBody.querySelector('#teacherName').value || '').trim();
-    const phone = (modalBody.querySelector('#teacherPhone').value || '').trim();
-    const parentPhone = (modalBody.querySelector('#teacherParentPhone').value || '').trim();
-    const salaryVal = modalBody.querySelector('#teacherSalary').value;
-    const salary = salaryVal ? Number(salaryVal) : null;
-    const classesSelected = Array.from(modalBody.querySelectorAll('#teacherClasses option:checked')).map(o => o.value);
-    const subjectsSelected = Array.from(modalBody.querySelectorAll('#teacherSubjects option:checked')).map(o => o.value);
 
-    if(!name) return toast('Teacher name is required');
-    // create teacher record
-    const payload = {
-      fullName: name,
-      phone: phone || '',
-      parentPhone: parentPhone || '',
-      salary: salary,
-      classes: classesSelected,
-      subjects: subjectsSelected,
-      createdAt: Timestamp.now(),
-      createdBy: currentUser ? currentUser.uid : null
-    };
-    try {
-      const ref = await addDoc(collection(db,'teachers'), payload);
-      toast('Teacher created');
-      closeModal();
-      await loadTeachers(); renderTeachers();
-    } catch(err){
-      console.error('create teacher failed', err);
-      toast('Failed to create teacher');
-    }
-  };
-}
-
-/* ---------- Edit Teacher modal ---------- */
-async function openEditTeacherModal(e){
-  const id = e && e.target ? e.target.dataset.id : e;
-  if(!id) return;
-  // fetch teacher doc (prefer cached)
-  let t = teachersCache.find(x => x.id === id);
-  if(!t){
-    try {
-      const snap = await getDoc(doc(db,'teachers', id));
-      if(!snap.exists()) return toast('Teacher not found');
-      t = { id: snap.id, ...snap.data() };
-    } catch(err){ console.error(err); return toast('Failed to load teacher'); }
-  }
-
-  const classOptions = (classesCache || []).map(c => `<option value="${escape(c.name)}" ${ (t.classes||[]).includes(c.name) ? 'selected' : '' }>${escape(c.name)}</option>`).join('');
-  const subjectOptions = (subjectsCache || []).map(s => `<option value="${escape(s.name)}" ${ (t.subjects||[]).includes(s.name) ? 'selected' : '' }>${escape(s.name)}</option>`).join('');
-
-  showModal('Edit Teacher', `
-    <label>Full name</label><input id="teacherName" value="${escape(t.fullName||'')}" />
-    <label>Phone</label><input id="teacherPhone" value="${escape(t.phone||'')}" />
-    <label>Parent phone</label><input id="teacherParentPhone" value="${escape(t.parentPhone||'')}" />
-    <label>Salary</label><input id="teacherSalary" type="number" min="0" value="${escape(String(t.salary||''))}" />
-    <label>Assign classes (select multiple)</label>
-    <select id="teacherClasses" multiple size="6" style="width:100%">${classOptions}</select>
-    <label>Assign subjects (select multiple)</label>
-    <select id="teacherSubjects" multiple size="6" style="width:100%">${subjectOptions}</select>
-    <div style="margin-top:12px"><button id="updateTeacher" class="btn btn-primary">Save</button> <button id="cancelTeacher" class="btn btn-ghost">Cancel</button></div>
-  `);
-
-  modalBody.querySelector('#cancelTeacher').onclick = closeModal;
-  modalBody.querySelector('#updateTeacher').onclick = async () => {
-    const name = (modalBody.querySelector('#teacherName').value || '').trim();
-    const phone = (modalBody.querySelector('#teacherPhone').value || '').trim();
-    const parentPhone = (modalBody.querySelector('#teacherParentPhone').value || '').trim();
-    const salaryVal = modalBody.querySelector('#teacherSalary').value;
-    const salary = salaryVal ? Number(salaryVal) : null;
-    const classesSelected = Array.from(modalBody.querySelectorAll('#teacherClasses option:checked')).map(o => o.value);
-    const subjectsSelected = Array.from(modalBody.querySelectorAll('#teacherSubjects option:checked')).map(o => o.value);
-
-    if(!name) return toast('Teacher name is required');
-    try {
-      await updateDoc(doc(db,'teachers', id), {
-        fullName: name,
-        phone: phone || '',
-        parentPhone: parentPhone || '',
-        salary: salary,
-        classes: classesSelected,
-        subjects: subjectsSelected,
-        updatedAt: Timestamp.now(),
-        updatedBy: currentUser ? currentUser.uid : null
-      });
-      toast('Teacher updated');
-      closeModal();
-      await loadTeachers(); renderTeachers();
-    } catch(err){
-      console.error('update teacher failed', err);
-      toast('Failed to update teacher');
-    }
-  };
-}
-
-/* ---------- Delete teacher ---------- */
-async function deleteTeacher(e){
-  const id = e && e.target ? e.target.dataset.id : e;
-  if(!id) return;
-  if(!confirm('Delete teacher?')) return;
-  try {
-    await deleteDoc(doc(db,'teachers', id));
-    toast('Teacher deleted');
-    await loadTeachers(); renderTeachers();
-  } catch(err){
-    console.error('delete teacher failed', err);
-    toast('Failed to delete teacher');
-  }
-}
-
-/* ---------- Wire openAddTeacher button (defensive) ---------- */
-if(typeof openAddTeacher !== 'undefined' && openAddTeacher){
-  openAddTeacher.onclick = openAddTeacherModal;
-}
 /* -------------------------------------
    Exam open / add results / publish
 -------------------------------------*/
