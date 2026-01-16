@@ -922,11 +922,64 @@ function showStudentViewModal(item){
 }
 
 /* ---------- renderLeaderboard (complete & responsive) ---------- */
+function appendOrShowMyRow(me, isPlaceholder){
+  const tr = document.createElement('tr');
+  tr.className = 'me-row';
+  const rankCell = `<div class="rank-badge">${escapeHtml(String(me.rank || '—'))}</div>`;
+  const idMasked = maskId(me.studentId || '');
+  const points = escapeHtml(String(me.points || 0));
+  const nameHtml = `<div class="student-full">${escapeHtml(me.studentName || '—')}</div>`;
+  const classHtml = `<div class="class-full">${escapeHtml(me.className || '—')}</div>`;
+
+  // desktop action cell (kept same pattern as main render)
+  let actionHtml = `<div class="actions-wrap">`;
+  actionHtml += `<button class="btn" data-view="${escapeHtml(me.id||'__me')}">View</button>`;
+  if(getVerifiedRole() === 'student' && getVerifiedStudentId() === me.studentId){
+    actionHtml += ` <button class="btn" data-clear="${escapeHtml(me.id||'__me')}">Clear my points</button>`;
+  }
+  if(isAdmin()){
+    actionHtml += ` <button class="btn" data-history="${escapeHtml(me.studentId)}">History</button>`;
+    actionHtml += ` <button class="icon-btn settingsBtn" data-student="${escapeHtml(me.studentId)}" data-scoredoc="${escapeHtml(me.id||'__me')}">⚙</button>`;
+  }
+  actionHtml += `</div>`;
+
+  tr.innerHTML = `
+    <td>${rankCell}</td>
+    <td class="name-cell">${nameHtml}<div class="mobile-id">${escapeHtml(idMasked)}</div></td>
+    <td class="class-cell">${classHtml}</td>
+    <td class="id-mask desktop-only">${escapeHtml(idMasked)}</td>
+    <td class="points-cell"><div class="points-value">${points}</div><div class="points-actions"><button class="more-btn mobile-only" data-student="${escapeHtml(me.studentId)}" data-scoredoc="${escapeHtml(me.id||'__me')}">⋯</button></div></td>
+    <td class="action-cell desktop-only">${actionHtml}</td>
+  `;
+  leaderTbody.appendChild(tr);
+
+  // wire events for this appended row
+  tr.querySelectorAll('button[data-view]').forEach(b => b.onclick = async () => {
+    const id = b.getAttribute('data-view');
+    const item = scoresCache.find(s => s.id === id) || me;
+    if(!item) return toast('Not found'); showStudentViewModal(item);
+  });
+  tr.querySelectorAll('button[data-clear]').forEach(b => b.onclick = async () => {
+    if(!confirm('Clear your points for this competition? This action cannot be undone.')) return;
+    try {
+      const docId = `${currentCompetition.id}_${getVerifiedStudentId()}`;
+      await setDoc(doc(db,'competitionScores', docId), { competitionId: currentCompetition.id, studentId: getVerifiedStudentId(), points: 0, updatedAt: serverTimestamp() }, { merge:true });
+      toast('Your points cleared.'); await loadCompetitionScores();
+    } catch(err){ console.error(err); toast('Failed to clear points'); }
+  });
+  tr.querySelectorAll('.settingsBtn').forEach(b => b.onclick = () => {
+    const s = b.dataset.student; const sd = b.dataset.scoredoc;
+    if(!isAdmin() && !(getVerifiedRole()==='student' && getVerifiedStudentId()===s)) return toast('Only admin or student'); openStudentSettingsModal(s, sd);
+  });
+  tr.querySelectorAll('button[data-history]').forEach(b => b.onclick = async () => { const sid = b.getAttribute('data-history'); closeModal(); await openHistoryModal(sid); });
+  tr.querySelectorAll('.more-btn').forEach(btn => btn.onclick = () => openMoreModalForStudent(btn.getAttribute('data-student'), btn.getAttribute('data-scoredoc')));
+}
+
+/* ---------- renderLeaderboard (main) ---------- */
 async function renderLeaderboard(){
   leaderTbody.innerHTML = '';
   if(!scoresCache || scoresCache.length === 0){
-    leaderTbody.innerHTML = `<tr><td colspan="6" class="small-muted">No scores yet. Be the first —</td></tr>`;
-    return;
+    leaderTbody.innerHTML = `<tr><td colspan="6" class="small-muted">No scores yet. Be the first —</td></tr>`; return;
   }
 
   const { ranked, topRanks } = buildRankedList(scoresCache);
@@ -936,137 +989,74 @@ async function renderLeaderboard(){
   for(const r of primaryRows){
     const tr = document.createElement('tr');
 
-    // rank badge
     const rankCell = `<div class="rank-badge" style="background:${r.rank===1? '#FFD700': r.rank===2? '#C0C0C0' : r.rank===3? '#CD7F32': '#eef6ff'}">${r.rank}</div>`;
-
-    // full name & class
     const fullName = r.studentName || '—';
     const nameHtml = `<div class="student-full">${escapeHtml(fullName)}</div>`;
-
     const fullClass = r.className || '—';
     const classHtml = `<div class="class-full">${escapeHtml(fullClass)}</div>`;
-
-    // id mask and points
     const idMasked = maskId(r.studentId || r.id || '');
     const points = escapeHtml(String(r.points || 0));
 
-    // ACTIONS: we will render actions HTML so desktop has its column; mobile CSS hides it and shows actions inside points cell
     let actionHtml = `<div class="actions-wrap">`;
-    // View always present
     actionHtml += `<button class="btn" data-view="${escapeHtml(r.id)}">View</button>`;
-
     if(admin){
       actionHtml += ` <button class="btn" data-history="${escapeHtml(r.studentId)}">History</button>`;
       actionHtml += ` <button class="icon-btn settingsBtn" data-student="${escapeHtml(r.studentId)}" data-scoredoc="${escapeHtml(r.id)}">⚙</button>`;
     } else {
-      // not admin: if this is verified student, show Clear + a small "more" icon on mobile OR gear for consistency
       if(getVerifiedRole() === 'student' && getVerifiedStudentId() === r.studentId){
         actionHtml += ` <button class="btn" data-clear="${escapeHtml(r.id)}">Clear my points</button>`;
-        // include a small "more" button for mobile-friendly menu — we will also wire a dedicated .moreBtn (mobile)
-        actionHtml += ` <button class="more-btn desktop-only icon-btn" data-student="${escapeHtml(r.studentId)}" data-scoredoc="${escapeHtml(r.id)}">⋯</button>`;
-      } else {
-        // other visitors: show only View, but provide mobile "more" (that opens a modal with view only)
-        actionHtml += ` <button class="more-btn desktop-only icon-btn" data-student="${escapeHtml(r.studentId)}" data-scoredoc="${escapeHtml(r.id)}" data-visitor="1">⋯</button>`;
       }
     }
     actionHtml += `</div>`;
 
-    // For mobile also include a compact classic "more" button (visible on mobile only via CSS if you prefer).
-    // We will render a mobile .moreBtn inside the points-actions area so mobile can open the modal.
+    // mobile-only 'more' button rendered into points column (desktop actions are in action column)
     const mobileMoreBtn = `<button class="more-btn mobile-only" data-student="${escapeHtml(r.studentId)}" data-scoredoc="${escapeHtml(r.id)}">⋯</button>`;
 
     tr.innerHTML = `
       <td>${rankCell}</td>
-
-      <td class="name-cell">
-        ${nameHtml}
-        <div class="mobile-id">${escapeHtml(idMasked)}</div>
-      </td>
-
+      <td class="name-cell">${nameHtml}<div class="mobile-id">${escapeHtml(idMasked)}</div></td>
       <td class="class-cell">${classHtml}</td>
-
       <td class="id-mask desktop-only">${escapeHtml(idMasked)}</td>
-
-      <td class="points-cell">
-        <div class="points-value">${points}</div>
-        <div class="points-actions">
-          ${actionHtml}
-          ${mobileMoreBtn}
-        </div>
-      </td>
-
+      <td class="points-cell"><div class="points-value">${points}</div><div class="points-actions">${mobileMoreBtn}</div></td>
       <td class="action-cell desktop-only">${actionHtml}</td>
     `;
-
     leaderTbody.appendChild(tr);
   }
 
-  // --- wiring: view / clear / history / settings / more-button ---
+  // --- wiring ---
+  leaderTbody.querySelectorAll('button[data-view]').forEach(b => { b.onclick = async () => {
+    const id = b.getAttribute('data-view'); const item = scoresCache.find(s=>s.id===id);
+    if(!item) return toast('Not found'); showStudentViewModal(item);
+  }; });
 
-  // VIEW
-  leaderTbody.querySelectorAll('button[data-view]').forEach(b => {
-    b.onclick = async () => {
-      const id = b.getAttribute('data-view');
-      const item = scoresCache.find(s => s.id === id);
-      if(!item) return toast('Not found');
-      showStudentViewModal(item);
-    };
-  });
+  leaderTbody.querySelectorAll('button[data-clear]').forEach(b => { b.onclick = async () => {
+    if(!confirm('Clear your points for this competition? This action cannot be undone.')) return;
+    try { const docId = `${currentCompetition.id}_${getVerifiedStudentId()}`; await setDoc(doc(db,'competitionScores', docId), { competitionId: currentCompetition.id, studentId: getVerifiedStudentId(), points: 0, updatedAt: serverTimestamp() }, { merge:true }); toast('Your points cleared.'); await loadCompetitionScores(); }
+    catch(err){ console.error(err); toast('Failed to clear points'); }
+  }; });
 
-  // CLEAR (by data-clear)
-  leaderTbody.querySelectorAll('button[data-clear]').forEach(b => {
-    b.onclick = async () => {
-      if(!confirm('Clear your points for this competition? This action cannot be undone.')) return;
-      try {
-        const docId = `${currentCompetition.id}_${getVerifiedStudentId()}`;
-        await setDoc(doc(db,'competitionScores', docId), { competitionId: currentCompetition.id, studentId: getVerifiedStudentId(), points: 0, updatedAt: serverTimestamp() }, { merge:true });
-        toast('Your points cleared.');
-        await loadCompetitionScores();
-      } catch(err){ console.error(err); toast('Failed to clear points'); }
-    };
-  });
+  leaderTbody.querySelectorAll('button[data-history]').forEach(b => { b.onclick = async () => { const sid = b.getAttribute('data-history'); closeModal(); await openHistoryModal(sid); }; });
 
-  // HISTORY (admin)
-  leaderTbody.querySelectorAll('button[data-history]').forEach(b => {
-    b.onclick = async () => {
-      const sid = b.getAttribute('data-history');
-      closeModal();
-      await openHistoryModal(sid);
-    };
-  });
+  leaderTbody.querySelectorAll('.settingsBtn').forEach(b => { b.onclick = () => {
+    const studentId = b.dataset.student; const scoreDocId = b.dataset.scoredoc;
+    if(!isAdmin() && !(getVerifiedRole()==='student' && getVerifiedStudentId()===studentId)) return toast('Only admin or the student may access settings');
+    openStudentSettingsModal(studentId, scoreDocId);
+  }; });
 
-  // SETTINGS (gear) for admin/student
-  leaderTbody.querySelectorAll('.settingsBtn').forEach(b => {
-    b.onclick = async () => {
-      const studentId = b.dataset.student;
-      const scoreDocId = b.dataset.scoredoc;
-      if(!isAdmin() && !(getVerifiedRole() === 'student' && getVerifiedStudentId() === studentId)) return toast('Only admin or the student may access settings');
-      openStudentSettingsModal(studentId, scoreDocId);
-    };
-  });
+  leaderTbody.querySelectorAll('.more-btn').forEach(btn => { btn.onclick = () => {
+    const studentId = btn.getAttribute('data-student'); const scoreDocId = btn.getAttribute('data-scoredoc');
+    openMoreModalForStudent(studentId, scoreDocId);
+  }; });
 
-  // MORE BUTTONS (mobile): open a modal with appropriate options depending on user role
-  leaderTbody.querySelectorAll('.more-btn').forEach(btn => {
-    btn.onclick = (ev) => {
-      const studentId = btn.getAttribute('data-student');
-      const scoreDocId = btn.getAttribute('data-scoredoc');
-      const visitorFlag = btn.getAttribute('data-visitor');
-      openMoreModalForStudent(studentId, scoreDocId, !!visitorFlag);
-    };
-  });
-
-  // show verified student's own row if missing
+  // ensure verified student visible if not in top list
   const verifiedSid = getVerifiedStudentId();
   if(verifiedSid){
     const { ranked } = buildRankedList(scoresCache);
     const me = ranked.find(r => r.studentId === verifiedSid);
-    const topShown = admin ? ranked : buildRankedList(scoresCache).topRanks;
+    const topShown = isAdmin() ? ranked : buildRankedList(scoresCache).topRanks;
     const isDisplayed = topShown.some(r => r.studentId === verifiedSid);
-    if(!isDisplayed && me){
-      appendOrShowMyRow(me, false);
-    } else if(!isDisplayed && !me){
-      appendOrShowMyRow({ rank: '—', studentName: getVerifiedStudentName() || verifiedSid, className: '—', studentId: verifiedSid, points: 0 }, true);
-    }
+    if(!isDisplayed && me) appendOrShowMyRow(me, false);
+    else if(!isDisplayed && !me) appendOrShowMyRow({ rank:'—', studentName:getVerifiedStudentName()||verifiedSid, className:'—', studentId: verifiedSid, points:0 }, true);
   }
 }
 
