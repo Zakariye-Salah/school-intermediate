@@ -488,7 +488,6 @@ async function attemptAdminVerifyAuto(){
   } catch(e){ console.error(e); applyVerifiedUIState(); }
 }
 // Show student verify modal (user-entered ID + BIN). If BIN missing, ask to create one.
-// Show student verify modal (user-entered ID + BIN). If BIN missing, ask to create one.
 // Accepts optional prefillId (string).
 function showStudentVerifyModal(prefillId = ''){
   showModalInner(`<div>
@@ -934,12 +933,34 @@ async function renderLeaderboard(){
     }
 
     // single, final innerHTML assignment for the row
-    tr.innerHTML = `<td>${rankCell}</td>
-                    <td class="name-cell">${nameHtml}</td>
-                    <td class="class-cell">${classHtml}</td>
-                    <td class="id-mask">${idMasked}</td>
-                    <td><strong>${points}</strong></td>
-                    <td>${actionHtml}</td>`;
+// single, final innerHTML assignment for the row (mobile-friendly)
+tr.innerHTML = `
+  <td>${rankCell}</td>
+
+  <!-- Name cell: includes mobile-only ID under the name -->
+  <td class="name-cell">
+    ${nameHtml}
+    <div class="mobile-id">${escapeHtml(idMasked)}</div>
+  </td>
+
+  <!-- Class cell -->
+  <td class="class-cell">${classHtml}</td>
+
+  <!-- Desktop-only ID column (hidden on mobile via CSS) -->
+  <td class="id-mask desktop-only">${idMasked}</td>
+
+  <!-- Points cell: show points plus mobile-only actions (so users can tap gear on mobile) -->
+  <td>
+    <div class="points-wrap">
+      <div class="points-value"><strong>${points}</strong></div>
+      <div class="mobile-actions">${actionHtml}</div>
+    </div>
+  </td>
+
+  <!-- Desktop-only actions column (hidden on mobile via CSS) -->
+  <td class="action-cell desktop-only">${actionHtml}</td>
+`;
+
 
     leaderTbody.appendChild(tr);
   }
@@ -1668,29 +1689,6 @@ const resultPayload = {
   const newClose = () => { window.removeEventListener('keydown', keyHandler); origClose(); };
   document.getElementById('modalCloseBtn').onclick = newClose;
 }
-///dhamaad
-
-/* ---------- view all scorers (admin) ---------- */
-// viewAllBtn.onclick = async () => {
-//   if(!isAdmin()) return toast('Admin only');
-//   try {
-//     const snap = await getDocs(query(collection(db,'competitionScores'), where('competitionId','==', currentCompetition.id)));
-//     const html = ['<h3>All scorers</h3><div style="max-height:60vh;overflow:auto"><table style="width:100%"><thead><tr><th>Rank</th><th>Name</th><th>Class</th><th>ID</th><th>Points</th></tr></thead><tbody>'];
-//     const arr = [];
-//     snap.forEach(d => arr.push({ id:d.id, ...d.data() }));
-//     arr.sort((a,b) => (b.points||0) - (a.points||0));
-//     let lastPoints = null, rank = 0, idx = 0;
-//     for(const item of arr){
-//       idx++;
-//       if(lastPoints === null || item.points < lastPoints){ rank = idx; lastPoints = item.points; }
-//       html.push(`<tr><td>${rank}</td><td>${escapeHtml(item.studentName||'—')}</td><td>${escapeHtml(item.className||'—')}</td><td>${maskId(item.studentId||'')}</td><td>${item.points||0}</td></tr>`);
-//     }
-//     html.push('</tbody></table></div>');
-//     showModalInner(html.join(''), { title: 'All scorers' });
-//   } catch(err){ console.error(err); toast('Failed to load all scorers'); }
-// };
-
-
 
 /* ---------- admin adjust points modal (existing logic) ---------- */
 async function openAdjustPointsModal(scoreDocId, studentId){
@@ -1742,4 +1740,3 @@ async function getHighestStreakHolder(){
 }
 /* ---------- export minor helpers if you reuse in other files ---------- */
 export { renderCompetitionHeader, loadCompetitionScores, loadCompetitionAndScores, getHighestStreakHolder };
-
