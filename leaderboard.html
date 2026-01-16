@@ -22,15 +22,15 @@
 
     /* table container */
     .table-wrap{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;border-radius:10px;padding:6px;background:linear-gradient(180deg,#fff,#fbfdff);box-sizing:border-box}
-    table.leader{width:100%;border-collapse:collapse;table-layout:auto;min-width:0;font-family:inherit}
+    table.leader{width:100%;border-collapse:collapse;table-layout:fixed;min-width:0;font-family:inherit} /* table-layout:fixed for consistent column alignment */
 
-    /* columns for desktop */
+    /* columns for desktop (colgroup widths) */
     table.leader col.col-rank{width:80px}
-    table.leader col.col-name{width:auto}
-    table.leader col.col-class{width:150px}
-    table.leader col.col-id{width:120px}
-    table.leader col.col-points{width:110px}
-    table.leader col.col-action{width:220px}
+    table.leader col.col-name{width:36%}
+    table.leader col.col-class{width:12%}
+    table.leader col.col-id{width:12%}
+    table.leader col.col-points{width:12%}
+    table.leader col.col-action{width:16%}
 
     /* header / cells */
     table.leader thead th{font-weight:800;color:var(--muted);font-size:13px;padding:10px 8px;text-align:left;border-bottom:1px solid rgba(241,245,249,0.9);white-space:nowrap}
@@ -41,16 +41,20 @@
     .id-mask{font-family:monospace;letter-spacing:0.6px;color:var(--muted);font-size:0.95rem}
 
     /* name/class presentation */
-    .student-full{display:block;white-space:normal;font-weight:900}
+    .student-full{display:block;white-space:normal;font-weight:900;overflow-wrap:break-word;word-break:break-word}
     .class-full{display:block;color:var(--muted);font-weight:800}
     .name-cell .mobile-id{display:none;font-size:0.92rem;color:var(--muted);margin-top:4px;font-weight:700}
 
     /* points and actions */
     .points-cell{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:120px}
     .points-value{font-weight:900}
-    .points-actions{display:flex;gap:8px;align-items:center}
+    .points-actions{display:flex;gap:8px;align-items:center;justify-content:flex-end}
     .actions-wrap{display:flex;gap:8px;align-items:center;flex-wrap:nowrap}
     .actions-wrap .btn{padding:6px 10px;font-size:13px}
+    td.action-cell { /* ensure action column behaves as a table-cell on desktop */
+      display:table-cell;
+      vertical-align:middle;
+    }
 
     /* more button (mobile only) */
     .more-btn{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:8px;border:1px solid rgba(2,6,23,0.06);background:#fff;font-weight:800;cursor:pointer}
@@ -88,6 +92,32 @@
     #modalRoot .modal .modal-body{font-size:14px;color:var(--text);line-height:1.3}
     #modalRoot .modal .modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
 
+    /* Choices styling inside Test modal */
+    .choices { margin-top: 8px; display:block; width:100%; box-sizing:border-box; }
+    .choices label {
+      display:block;
+      width:100%;
+      box-sizing:border-box;
+      background: #ffffff;
+      color: var(--text, #0f172a);
+      border: 1px solid #eef2f6;
+      border-radius: 10px;
+      padding: 10px 12px;
+      margin-bottom: 8px;
+      cursor: pointer;
+      font-weight: 700;
+      font-size: 0.95rem;
+      line-height: 1.25;
+      word-break: break-all; /* break long numbers/strings cleanly */
+      white-space: normal;    /* allow wrapping */
+      overflow-wrap: anywhere;
+      transition: box-shadow .12s ease, transform .06s ease;
+    }
+    .choices label .choice-meta { float: right; font-weight: 900; margin-left: 8px; }
+    .choices label.choice-selected { box-shadow: 0 8px 20px rgba(37,99,235,0.08); }
+    .choices label.choice-correct { background: #ecfdf5; border-color: #bbf7d0; color: #064e3b; }
+    .choices label.choice-wrong { background: #fff1f2; border-color: #fecaca; color: #7f1d1d; }
+
     /* prevent background scroll when modal open (JS should toggle .modal-open on body) */
     body.modal-open{overflow:hidden;height:100%}
 
@@ -105,8 +135,8 @@
       /* show only the more button in the points area */
       .points-actions{gap:6px}
       .actions-wrap{display:none}
-      /* make table layout not push ID into points cell */
-      table.leader { table-layout:auto; }
+      /* Points column still shows numeric points + mobile more */
+      table.leader { table-layout:auto; } /* allow mobile to shrink gracefully */
       #modalRoot .modal { width: 96%; max-height: 90vh; padding:12px; border-radius:10px; }
     }
 
