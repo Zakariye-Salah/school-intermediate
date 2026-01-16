@@ -305,12 +305,35 @@ function startQuestionTimer(matchRef, matchData) {
             // record a missed answer (no score change)
             answered[`${currentIdx}_${q.assignedTo}`] = { selected: null, correct: false, missed: true, at: nowMillis(), playerId: q.assignedTo };
           }
-          t.update(matchRef, { answered, currentIndex: (currentIdx + 1), questionStartEpoch: Date.now(), updatedAt: serverTimestamp() });
+          // t.update(matchRef, { answered, currentIndex: (currentIdx + 1), questionStartEpoch: Date.now(), updatedAt: serverTimestamp() });
+
+          const totalQ = Number(m.totalQuestions || (m.questions ? m.questions.length : 0));
+const next = currentIdx + 1;
+if(next >= totalQ){
+  t.update(matchRef, { answered, currentIndex: totalQ, status: 'finished', finishedAt: serverTimestamp(), questionStartEpoch: Date.now(), updatedAt: serverTimestamp() });
+} else {
+  t.update(matchRef, { answered, currentIndex: next, questionStartEpoch: Date.now(), updatedAt: serverTimestamp() });
+}
+
         });
       } catch (e) { console.warn('auto-advance failed', e); }
     }, remaining * 1000);
   } catch (e) { console.warn('startQuestionTimer failed', e); }
 }
+async function ensureMatchHasGameName(match, matchRef){
+  try {
+    if(match && match.gameName) return;
+    if(!match || !match.gameId || !matchRef) return;
+    const gSnap = await getDoc(doc(db,'games', match.gameId));
+    if(gSnap.exists()){
+      const g = gSnap.data();
+      if(g && (g.name || g.title)){
+        await updateDoc(matchRef, { gameName: g.name || g.title });
+      }
+    }
+  } catch(e){ console.warn('ensureMatchHasGameName failed', e); }
+}
+
 
 
 // improved sound player that prefers audio asset files (you said correct1-12 / wrong1-22 exist)
@@ -415,16 +438,21 @@ async function fillMissingPlayerNames(match, matchRef){
 }
 
 
-function bringModalToFront(){
+function bringModalToFront() {
   try {
     if (typeof matchRoot !== 'undefined' && matchRoot && matchRoot.style && modalRoot && modalRoot.style) {
+      // ensure match root has a baseline zIndex
+      if (!matchRoot.style.zIndex) matchRoot.style.zIndex = '1000';
       const matchZ = parseInt(getComputedStyle(matchRoot).zIndex || '1000', 10) || 1000;
-      modalRoot.style.zIndex = (matchZ + 10).toString();
+      modalRoot.style.zIndex = (matchZ + 20).toString();
+      // small safety for modal backdrop and inner children
+      modalRoot.classList && modalRoot.classList.add('modal-front');
     } else if (modalRoot && modalRoot.style) {
       modalRoot.style.zIndex = '99999';
     }
-  } catch(e){}
+  } catch (e) { console.warn('bringModalToFront failed', e); }
 }
+
 
 // ---------- Helpers: pick questions, sounds, match chat ----------
 
@@ -512,6 +540,31 @@ function watchMyActiveMatch() {
     });
   }, err => console.warn('watchMyActiveMatch error', err));
 }
+async function processPendingReveal(matchRef, matchData){
+  try {
+    if(!matchRef || !matchData) return;
+    const awaiting = matchData.awaitingReveal;
+    if(!awaiting) return;
+    const now = Date.now();
+    if(now < (awaiting.revealUntil || 0)) return; // not yet
+    // attempt to advance the index (one client will win the transaction)
+    await runTransaction(db, async (t) => {
+      const snap = await t.get(matchRef);
+      if(!snap.exists()) return;
+      const m = snap.data();
+      // if already advanced or awaitingReveal changed, cancel
+      if (!m.awaitingReveal || m.awaitingReveal.revealUntil !== awaiting.revealUntil) return;
+      const next = awaiting.advanceTo;
+      const total = Number(m.totalQuestions || (m.questions ? m.questions.length : 0));
+      if(next >= total){
+        t.update(matchRef, { currentIndex: total, status: 'finished', finishedAt: serverTimestamp(), awaitingReveal: null, updatedAt: serverTimestamp() });
+      } else {
+        t.update(matchRef, { currentIndex: next, questionStartEpoch: Date.now(), awaitingReveal: null, updatedAt: serverTimestamp() });
+      }
+    });
+  } catch(e){ console.warn('processPendingReveal failed', e); }
+}
+
 
 
 
@@ -1681,6 +1734,17 @@ loadGames().catch(()=>{});
 
 
 
+function buildQuestionOptionsForTotal(total){
+  const opts = new Set();
+  opts.add(total);
+  if(total >= 70) opts.add(Math.floor(total * 0.7));
+  if(total >= 50) opts.add(Math.floor(total * 0.5));
+  if(total >= 20) opts.add(20);
+  opts.add(10);
+  // produce sorted unique array descending and ensure values >=1
+  return Array.from(opts).map(n=>Math.max(1,Math.floor(n))).sort((a,b)=>b-a);
+}
+
 /* ---------- new game modal (unchanged except titles uses local sets) ---------- */
 async function onNewGameClick(){
   const vrole = getVerifiedRole();
@@ -1689,6 +1753,34 @@ async function onNewGameClick(){
 
   const titlesSnap = await loadAvailableTitles(); // now prefers local sets
   const titlesOptions = (titlesSnap || []).map(t => `<label style="display:block;margin-bottom:6px"><input type="checkbox" class="titleCheckbox" value="${escapeHtml(t)}"> ${escapeHtml(t)}</label>`).join('');
+
+  // after you showModal(...)
+function updateNumQuestionsOptions(){
+  // compute combined total from localSetsCache (fallback to large number)
+  let total = 0;
+  const checked = Array.from(document.querySelectorAll('.titleCheckbox')).filter(c=>c.checked).map(c=>c.value);
+  if(checked.length === 0){
+    // default: sum first set or 100
+    total = (localSetsCache && localSetsCache[0] && Array.isArray(localSetsCache[0].questions)) ? localSetsCache[0].questions.length : 100;
+  } else {
+    for(const t of checked){
+      // try matching localSetsCache names and count questions
+      const s = (localSetsCache || []).find(x => (x.title||x.id||'').toString().toLowerCase() === t.toString().toLowerCase());
+      if(s && Array.isArray(s.questions)) total += s.questions.length;
+      else total += 0;
+    }
+  }
+  const opts = buildQuestionOptionsForTotal(total);
+  const sel = document.getElementById('numQuestions');
+  if(!sel) return;
+  sel.innerHTML = opts.map(o=>`<option value="${o}">${o}</option>`).join('');
+  // default select top (largest)
+  if(opts.length) sel.value = opts[0];
+}
+
+// wire checkboxes
+document.querySelectorAll('.titleCheckbox').forEach(cb => cb.onchange = updateNumQuestionsOptions);
+updateNumQuestionsOptions();
 
   const html = `
   <div style="display:flex;flex-direction:column;gap:8px">
@@ -1928,6 +2020,15 @@ async function pickQuestionsForTitles(titles, count){
   return out.slice(0, count).map((q, i) => ({ ...q, _idx:i, timeLimit: q.timeLimit || 15 }));
 }
 
+// helper: shuffle array and return mapping
+function shuffleWithIndexes(arr){
+  const idxs = arr.map((_,i)=>i);
+  for(let i=idxs.length-1;i>0;i--){
+    const j = Math.floor(Math.random()*(i+1));
+    [idxs[i], idxs[j]] = [idxs[j], idxs[i]];
+  }
+  return idxs;
+}
 
 
 /* ---------- small utility ---------- */
@@ -2483,6 +2584,30 @@ async function startMatchForGame(gameId, opts = { silent: false }) {
     // pick questions (this returns exactly `numQuestions` items)
     const questions = await pickQuestionsForTitles(titles, numQuestions);
 
+
+    // shuffle choices for *each question* and remap correct index(es)
+// this ensures the same shuffled order is stored in DB so both players see identical options
+for (let qi = 0; qi < questions.length; qi++){
+  const q = questions[qi];
+  const origChoices = Array.isArray(q.choices) ? q.choices.slice() : [];
+  if(origChoices.length <= 1) {
+    q.choices = origChoices;
+    q.correct = Array.isArray(q.correct) ? q.correct.map(Number) : [Number(q.correct || 0)];
+    continue;
+  }
+  const newOrder = shuffleWithIndexes(origChoices);
+  const newChoices = newOrder.map(i => origChoices[i]);
+  // map old correct(s) indices into new shuffled indexes
+  const origCorrectArr = Array.isArray(q.correct) ? q.correct.map(Number) : [Number(q.correct || 0)];
+  const newCorrect = [];
+  for(const origIdx of origCorrectArr){
+    const newIdx = newOrder.findIndex(x => x === origIdx);
+    if(newIdx >= 0) newCorrect.push(newIdx);
+  }
+  q.choices = newChoices;
+  q.correct = newCorrect.length ? newCorrect : [0];
+}
+
     // assign each question to players round-robin using the snapshot players
     const playersList = Array.isArray(gPre.players) ? gPre.players.map(p => p.playerId) : [];
     if (playersList.length === 0) throw new Error('No players');
@@ -2593,6 +2718,21 @@ async function openMatchById(matchId){
         const data = snap.data();
         currentMatchState = data;
         renderMatchUI(data, matchRef);
+         // after renderMatchUI(data, matchRef) inside snapshot callback
+         processPendingReveal(matchRef, data).catch(()=>{});
+         ensureMatchHasGameName(data, matchRef).catch(()=>{});
+         // finalize if client sees index >= totalQuestions
+try {
+  const curIdx = Number(data.currentIndex || 0);
+  const totalQ = Number(data.totalQuestions || (data.questions ? data.questions.length : 0));
+  if(totalQ > 0 && curIdx >= totalQ && (data.status !== 'finished')){
+    // try to mark finished (idempotent)
+    updateDoc(matchRef, { status:'finished', finishedAt: serverTimestamp(), updatedAt: serverTimestamp() }).catch(()=>{});
+  }
+  // process reveal as well
+  processPendingReveal(matchRef, data).catch(()=>{});
+} catch(e){ console.warn(e); }
+
       }, err => {
         console.warn('match onSnapshot error', err);
         // try a few times to recover (transient Listen errors)
@@ -2804,20 +2944,26 @@ function renderMatchUI(match, matchRef){
 
   // feedback area under choices
   body.innerHTML = `
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-      <div style="display:flex;gap:12px;align-items:center">${playerHtml}</div>
-      <div style="text-align:right">
-        <div class="timer" id="matchTimer">--s</div>
-        ${assignedHtml}
-        <div class="small-muted">Stake: ${match.stake || 0} • Model: ${match.scoringModel || 'perQuestion'}</div>
-      </div>
+  <div style="display:flex;gap:12px;align-items:center;margin-bottom:8px">
+    <div style="flex:1;display:flex;gap:12px;align-items:center">${playerHtml}</div>
+    <div style="text-align:right;min-width:120px">
+      <div id="matchProgressTop" class="small-muted">Q${currentIndex+1}/${totalQuestions}</div>
+      <div class="timer" id="matchTimer" style="font-weight:700">--s</div>
     </div>
-    <div style="margin-top:8px">${qHeader}</div>
-    <div style="margin-top:8px" id="choicesWrap">${choiceHtml}</div>
-        <div id="matchFeedback" style="margin-top:10px;min-height:28px"></div>
-    <div id="matchProgress" style="margin-top:6px" class="small-muted">Q${currentIndex+1}/${totalQuestions}</div>
+  </div>
 
-  `;
+  <div style="margin-top:8px">${qHeader}</div>
+  <div style="margin-top:8px" id="choicesWrap">${choiceHtml}</div>
+
+  <div id="choiceMeta" style="margin-top:10px;display:flex;justify-content:space-between;align-items:center">
+    <div id="assignedHtmlWrap">${assignedHtml}</div>
+    <div class="small-muted" id="stakeModel">Stake: ${match.stake || 0} • Model: ${match.scoringModel || 'perQuestion'}</div>
+  </div>
+
+  <div id="matchFeedback" style="margin-top:10px;min-height:28px"></div>
+  <div id="matchProgress" style="margin-top:6px" class="small-muted">Q${currentIndex+1}/${totalQuestions}</div>
+`;
+
 
   // after DOM injection: allow avatar click to open profile
   body.querySelectorAll('[data-playerid]').forEach(el => {
@@ -2838,6 +2984,10 @@ function renderMatchUI(match, matchRef){
   // wire choices:
   body.querySelectorAll('.choice').forEach(ch => {
     ch.onclick = async () => {
+      // at beginning of ch.onclick
+      clearMatchTimers();
+      ch.style.pointerEvents = 'none';
+
       const choiceIdx = Number(ch.getAttribute('data-choice'));
       const pid = getVerifiedStudentId();
       if(!pid) { toast('Verify as student to play'); return; }
@@ -2848,30 +2998,43 @@ function renderMatchUI(match, matchRef){
       try {
         ch.style.pointerEvents = 'none';
         // run transaction: read -> compute -> write
-        await runTransaction(db, async (t) => {
-          const snap = await t.get(matchRef);
-          if(!snap.exists()) throw new Error('match missing');
-          const m = snap.data();
-          if(m.status !== 'inprogress') throw new Error('not in progress');
-          const currentIdx = m.currentIndex || 0;
-          if(currentIdx !== currentIndex) throw new Error('question changed; try again');
-          const answered = m.answered || {};
-          if(answered[`${currentIdx}_${pid}`]) throw new Error('You already answered this question');
-          const qobj = m.questions[currentIdx];
-          const correctArr = Array.isArray(qobj.correct) ? qobj.correct.map(Number) : [Number(qobj.correct)];
-          const isCorrect = correctArr.includes(choiceIdx);
-          const players = m.players || [];
-          const pIdx = players.findIndex(p => String(p.playerId) === String(pid));
-          if(pIdx === -1) throw new Error('You are not part of this match');
-          const delta = isCorrect ? 2 : (m.wrongPenalty === 'sub1' ? -1 : 0);
-          players[pIdx].score = Math.max(0, (players[pIdx].score || 0) + delta);
-          const logs = m.logs || [];
-          logs.push({ type:'answer', playerId: pid, choice: choiceIdx, correct: isCorrect, delta, at: nowMillis() });
-          answered[`${currentIdx}_${pid}`] = { selected: choiceIdx, correct: isCorrect, at: nowMillis(), playerId: pid };
-          let newIndex = currentIdx;
-          if (isCorrect) newIndex = currentIdx + 1;
-          t.update(matchRef, { players, logs, answered, currentIndex: newIndex, questionStartEpoch: (newIndex !== currentIdx) ? Date.now() : (m.questionStartEpoch || Date.now()), updatedAt: serverTimestamp() });
-        });
+await runTransaction(db, async (t) => {
+  const snap = await t.get(matchRef);
+  if(!snap.exists()) throw new Error('match missing');
+  const m = snap.data();
+  if(m.status !== 'inprogress') throw new Error('not in progress');
+  const currentIdx = m.currentIndex || 0;
+  if(currentIdx !== currentIndex) throw new Error('question changed; try again');
+  const answered = m.answered || {};
+  if(answered[`${currentIdx}_${pid}`]) throw new Error('You already answered this question');
+  const qobj = m.questions[currentIdx];
+  const correctArr = Array.isArray(qobj.correct) ? qobj.correct.map(Number) : [Number(qobj.correct || 0)];
+  const isCorrect = correctArr.includes(choiceIdx);
+  const players = m.players || [];
+  const pIdx = players.findIndex(p => String(p.playerId) === String(pid));
+  if(pIdx === -1) throw new Error('You are not part of this match');
+  const delta = isCorrect ? 2 : (m.wrongPenalty === 'sub1' ? -1 : 0);
+  players[pIdx].score = Math.max(0, (players[pIdx].score || 0) + delta);
+  const logs = m.logs || [];
+  logs.push({ type:'answer', playerId: pid, choice: choiceIdx, correct: isCorrect, delta, at: nowMillis() });
+  answered[`${currentIdx}_${pid}`] = { selected: choiceIdx, correct: isCorrect, at: nowMillis(), playerId: pid };
+
+  // If correct -> request reveal/advance after 2s. Do NOT immediately bump currentIndex.
+  if(isCorrect){
+    const nextIndex = currentIdx + 1;
+    const revealUntil = Date.now() + 2000; // 2 seconds for everyone to see highlight
+    t.update(matchRef, {
+      players, logs, answered,
+      // keep currentIndex unchanged — clients will call processPendingReveal when revealUntil passes
+      awaitingReveal: { advanceTo: nextIndex, revealUntil },
+      updatedAt: serverTimestamp()
+    });
+  } else {
+    // wrong: write answered only, no immediate advance
+    t.update(matchRef, { players, logs, answered, updatedAt: serverTimestamp() });
+  }
+});
+
 
         // transaction committed — fetch fresh doc so we can update UI immediately
         const freshSnap = await getDoc(matchRef);
@@ -3149,13 +3312,26 @@ async function simulateBotForMatch(match, matchRef){
         const logs = m.logs || [];
         logs.push({ type:'answer', playerId: bot.id, choice: chosen, correct, at: nowMillis() });
       // compute next index and finish if last
-const nextIdx = (m.currentIndex || 0) + 1;
+// const nextIdx = (m.currentIndex || 0) + 1;
+// const totalQ = Number(m.totalQuestions || (m.questions ? m.questions.length : 0));
+// if (nextIdx >= totalQ) {
+//   t.update(matchRef, { players, logs, currentIndex: totalQ, status: 'finished', finishedAt: serverTimestamp(), updatedAt: serverTimestamp() });
+// } else {
+//   t.update(matchRef, { players, logs, currentIndex: nextIdx, updatedAt: serverTimestamp() });
+// }
+
+// after computing 'correct' and updating players & logs
+const currentIdx = m.currentIndex || 0;
+const nextIdx = currentIdx + 1;
 const totalQ = Number(m.totalQuestions || (m.questions ? m.questions.length : 0));
-if (nextIdx >= totalQ) {
-  t.update(matchRef, { players, logs, currentIndex: totalQ, status: 'finished', finishedAt: serverTimestamp(), updatedAt: serverTimestamp() });
+if (correct) {
+  const revealUntil = Date.now() + 1000 + Math.floor(Math.random()*1500); // bot reveal shorter
+  t.update(matchRef, { players, logs, awaitingReveal: { advanceTo: nextIdx, revealUntil }, updatedAt: serverTimestamp() });
 } else {
-  t.update(matchRef, { players, logs, currentIndex: nextIdx, updatedAt: serverTimestamp() });
+  // wrong: write players/logs only
+  t.update(matchRef, { players, logs, updatedAt: serverTimestamp() });
 }
+
 
 
       });
