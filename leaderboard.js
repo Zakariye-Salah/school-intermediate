@@ -822,76 +822,127 @@ function shortDisplay(str, len = 5) {
   return s.slice(0, len) + ' *';
 }
 
-/* ---------- modal helpers (replace existing implementations) ---------- */
-
-/* ---------- Name/Class toggle handler (collapsed 5 chars, expand on click) ---------- */
+/* ---------- Disable old toggle handler (we no longer collapse/shorten names) ----------
+   If you previously had an attachToggleHandler() I recommend removing or disabling it.
+   If you can't remove it, keep it but make it return immediately so it does nothing:
+*/
 (function attachToggleHandler() {
-  const tbody = document.getElementById('leaderTbody');
-  if (!tbody) return;
-  if (tbody._hasToggleHandler) return;
-  tbody._hasToggleHandler = true;
-
-  tbody.addEventListener('click', (ev) => {
-    const anchor = ev.target.closest('.student-toggle, .class-toggle');
-    if (!anchor) return;
-    ev.preventDefault();
-    const full = anchor.dataset.full || '';
-    const strongEl = anchor.querySelector('strong');
-
-    // collapse if expanded
-    if (anchor.dataset.expanded === '1' || anchor.classList.contains('expanded')) {
-      anchor.dataset.expanded = '0';
-      anchor.classList.remove('expanded');
-      if (strongEl) strongEl.textContent = shortDisplay(full, 5);
-      else anchor.textContent = shortDisplay(full, 5);
-      return;
-    }
-
-    // collapse any other expanded (single-open behavior)
-    const tbodyEl = anchor.closest('#leaderTbody');
-    if (tbodyEl) {
-      const other = tbodyEl.querySelector('[data-expanded="1"], .expanded');
-      if (other && other !== anchor) {
-        other.dataset.expanded = '0';
-        other.classList.remove('expanded');
-        const otherFull = other.dataset.full || '';
-        const oStrong = other.querySelector('strong');
-        if (oStrong) oStrong.textContent = shortDisplay(otherFull, 5);
-      }
-    }
-
-    // expand clicked
-    anchor.dataset.expanded = '1';
-    anchor.classList.add('expanded');
-    if (strongEl) strongEl.textContent = full;
-    else anchor.textContent = full;
-
-    // ensure row visible on small screens
-    const tr = anchor.closest('tr');
-    if (tr) tr.scrollIntoView({ behavior:'smooth', block:'center' });
-  });
+  // intentionally do nothing — names are shown in full now
+  return;
 })();
 
-/* ---------- helper: ensure all existing name/class anchors are collapsed + short text ----------
-   Call this after you render the leaderboard table rows.
+/* ---------- ensureShortNames() replacement: no-op (we show full names) ---------- */
+function ensureShortNames(){
+  // intentionally left blank: we want full student names and full class names visible
+}
+
+/* ---------- appendOrShowMyRow(me, isPlaceholder) ----------
+   If you have your own version keep it; otherwise replace with this one.
 */
-function ensureShortNames() {
-  const tbody = document.getElementById('leaderTbody');
-  if (!tbody) return;
-  tbody.querySelectorAll('.student-toggle, .class-toggle').forEach(a => {
-    const full = a.dataset.full || (a.textContent || '').trim();
-    a.dataset.full = full;
-    a.dataset.expanded = '0';
-    a.classList.remove('expanded');
-    const strong = a.querySelector('strong');
-    if (strong) strong.textContent = shortDisplay(full, 5);
-    else a.textContent = shortDisplay(full, 5);
+function appendOrShowMyRow(me, isPlaceholder){
+  // create a highlighted row at the bottom to show the verified student if not in top list
+  const tr = document.createElement('tr');
+  tr.className = 'me-row';
+
+  const rankCell = `<div class="rank-badge">${escapeHtml(String(me.rank || '—'))}</div>`;
+  const idMasked = maskId(me.studentId || '');
+  const points = escapeHtml(String(me.points || 0));
+  const nameHtml = `<div class="student-full">${escapeHtml(me.studentName || '—')}</div>`;
+  const classHtml = `<div class="class-full">${escapeHtml(me.className || '—')}</div>`;
+
+  let actionHtml = `<div class="actions-wrap">`;
+  actionHtml += `<button class="btn" data-view="${escapeHtml(me.id||'__me')}">View</button>`;
+  if(getVerifiedRole() === 'student' && getVerifiedStudentId() === me.studentId){
+    actionHtml += ` <button class="btn clear-my" data-clear="${escapeHtml(me.id||'__me')}">Clear my points</button>`;
+    actionHtml += ` <button class="icon-btn settingsBtn" data-student="${escapeHtml(me.studentId)}" data-scoredoc="${escapeHtml(me.id||'__me')}">⚙</button>`;
+  } else if(isAdmin()){
+    actionHtml += ` <button class="icon-btn settingsBtn" data-student="${escapeHtml(me.studentId)}" data-scoredoc="${escapeHtml(me.id||'__me')}">⚙</button>`;
+    actionHtml += ` <button class="btn" data-history="${escapeHtml(me.studentId)}">History</button>`;
+  }
+  actionHtml += `</div>`;
+
+  tr.innerHTML = `
+    <td>${rankCell}</td>
+
+    <td class="name-cell">
+      ${nameHtml}
+      <div class="mobile-id">${escapeHtml(idMasked)}</div>
+    </td>
+
+    <td class="class-cell">${classHtml}</td>
+
+    <td class="id-mask desktop-only">${escapeHtml(idMasked)}</td>
+
+    <td class="points-cell">
+      <div class="points-value">${points}</div>
+      <div class="points-actions">${actionHtml}</div>
+    </td>
+
+    <td class="action-cell desktop-only">${actionHtml}</td>
+  `;
+
+  leaderTbody.appendChild(tr);
+
+  // wire buttons for the appended row
+  // (we reuse the same event wiring used in renderLeaderboard below by calling its small wiring functions)
+  // but to be robust, attach minimal event listeners here too:
+  tr.querySelectorAll('button[data-view]').forEach(b => b.onclick = async () => {
+    const id = b.getAttribute('data-view');
+    const item = scoresCache.find(s => s.id === id) || me;
+    if(!item) return toast('Not found');
+    const canAdmin = isAdmin();
+    const html = `<div>
+      <h3 style="margin-top:0">${escapeHtml(item.studentName || '—')}</h3>
+      <div class="small-muted">Class: <strong>${escapeHtml(item.className || item.class || item.classId || '—')}</strong></div>
+      <div style="margin-top:8px">Points: <strong>${escapeHtml(String(item.points || 0))}</strong></div>
+      <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
+        ${canAdmin ? `<button id="modalHistoryBtn" class="btn">View history</button>` : ''}
+        ${canAdmin ? `<button id="modalAdminSettingsBtn" class="btn">Settings</button>` : ''}
+        <button id="modalCloseLocal" class="btn">Close</button>
+      </div>
+    </div>`;
+    showModalInner(html, { title: 'Student' });
+    const histBtn = document.getElementById('modalHistoryBtn');
+    if(histBtn) histBtn.onclick = async () => { closeModal(); await openHistoryModal(item.studentId); };
+    const adminBtn = document.getElementById('modalAdminSettingsBtn');
+    if(adminBtn) adminBtn.onclick = () => { if(!isAdmin()){ toast('Only admin'); return; } closeModal(); openStudentSettingsModal(item.studentId, item.id); };
+    const closeLocal = document.getElementById('modalCloseLocal');
+    if(closeLocal) closeLocal.onclick = () => closeModal();
+  });
+
+  tr.querySelectorAll('button[data-clear]').forEach(b => {
+    b.onclick = async () => {
+      if(!confirm('Clear your points for this competition? This action cannot be undone.')) return;
+      try {
+        const docId = `${currentCompetition.id}_${getVerifiedStudentId()}`;
+        await setDoc(doc(db,'competitionScores', docId), { competitionId: currentCompetition.id, studentId: getVerifiedStudentId(), points: 0, updatedAt: serverTimestamp() }, { merge:true });
+        toast('Your points cleared.');
+        await loadCompetitionScores();
+      } catch(err){ console.error(err); toast('Failed to clear points'); }
+    };
+  });
+
+  tr.querySelectorAll('.settingsBtn').forEach(b => {
+    b.onclick = async () => {
+      const studentId = b.dataset.student;
+      const scoreDocId = b.dataset.scoredoc;
+      if(!isAdmin() && !(getVerifiedRole() === 'student' && getVerifiedStudentId() === studentId)) return toast('Only admin or the student may access settings');
+      openStudentSettingsModal(studentId, scoreDocId);
+    };
+  });
+
+  tr.querySelectorAll('button[data-history]').forEach(b => {
+    b.onclick = async () => { const sid = b.getAttribute('data-history'); closeModal(); await openHistoryModal(sid); };
   });
 }
 
-/* ---------- render leaderboard (async) ---------- */
+/* ---------- renderLeaderboard (complete) ----------
+   Replace your existing renderLeaderboard() with this function.
+*/
 async function renderLeaderboard(){
+  // clear existing content
   leaderTbody.innerHTML = '';
+
   if(!scoresCache || scoresCache.length === 0){
     leaderTbody.innerHTML = `<tr><td colspan="6" class="small-muted">No scores yet. Be the first —</td></tr>`;
     return;
@@ -900,76 +951,67 @@ async function renderLeaderboard(){
   const { ranked, topRanks } = buildRankedList(scoresCache);
   const vrole = getVerifiedRole();
   const admin = isAdmin();
-
   const primaryRows = admin ? (adminShowAll ? ranked : topRanks) : topRanks;
 
+  // build rows
   for(const r of primaryRows){
     const tr = document.createElement('tr');
 
     // rank badge HTML
     const rankCell = `<div class="rank-badge" style="background:${r.rank===1? '#FFD700': r.rank===2? '#C0C0C0' : r.rank===3? '#CD7F32': '#eef6ff'}">${r.rank}</div>`;
 
-    // Name: show first 5 chars + " *" by default, clickable to expand
+    // Full name & class (no shorting / no toggles)
     const fullName = r.studentName || '—';
-    const shortName = shortDisplay(fullName, 5);
-    const nameHtml = `<a href="#" class="student-toggle" data-full="${escapeHtml(fullName)}" data-expanded="0"><strong>${escapeHtml(shortName)}</strong></a>`;
+    const nameHtml = `<div class="student-full">${escapeHtml(fullName)}</div>`;
 
-    // Class: same behaviour as name
     const fullClass = r.className || '—';
-    const shortClass = shortDisplay(fullClass, 5);
-    const classHtml = `<a href="#" class="class-toggle" data-full="${escapeHtml(fullClass)}" data-expanded="0"><strong>${escapeHtml(shortClass)}</strong></a>`;
+    const classHtml = `<div class="class-full">${escapeHtml(fullClass)}</div>`;
 
-    // compute id mask, points and action BEFORE updating innerHTML
+    // ID mask, points
     const idMasked = maskId(r.studentId || r.id || '');
     const points = escapeHtml(String(r.points || 0));
 
-    let actionHtml = `<button class="btn" data-view="${escapeHtml(r.id)}">View</button>`;
+    // Build action HTML (we show these in points cell on mobile; desktop will have actions column visible)
+    let actionHtml = `<div class="actions-wrap">`;
+    actionHtml += `<button class="btn" data-view="${escapeHtml(r.id)}">View</button>`;
+
     if(admin){
-      actionHtml += ` <button class="btn settingsBtn" data-student="${escapeHtml(r.studentId)}" data-scoredoc="${escapeHtml(r.id)}">⚙</button>`;
+      actionHtml += ` <button class="btn" data-history="${escapeHtml(r.studentId)}">History</button>`;
+      actionHtml += ` <button class="icon-btn settingsBtn" data-student="${escapeHtml(r.studentId)}" data-scoredoc="${escapeHtml(r.id)}">⚙</button>`;
     } else {
       if(getVerifiedRole() === 'student' && getVerifiedStudentId() === r.studentId){
-        actionHtml += ` <button class="btn" id="clearMyPointsBtn">Clear my points</button>`;
+        actionHtml += ` <button class="btn" data-clear="${escapeHtml(r.id)}">Clear my points</button>`;
+        actionHtml += ` <button class="icon-btn settingsBtn" data-student="${escapeHtml(r.studentId)}" data-scoredoc="${escapeHtml(r.id)}">⚙</button>`;
       }
     }
+    actionHtml += `</div>`;
 
-    // single, final innerHTML assignment for the row
-// single, final innerHTML assignment for the row (mobile-friendly)
-tr.innerHTML = `
-  <td>${rankCell}</td>
+    // final row HTML: keep desktop columns intact, mobile CSS should hide id/action columns and show id under name & actions in points cell
+    tr.innerHTML = `
+      <td>${rankCell}</td>
 
-  <!-- Name cell: includes mobile-only ID under the name -->
-  <td class="name-cell">
-    ${nameHtml}
-    <div class="mobile-id">${escapeHtml(idMasked)}</div>
-  </td>
+      <td class="name-cell">
+        ${nameHtml}
+        <div class="mobile-id">${escapeHtml(idMasked)}</div>
+      </td>
 
-  <!-- Class cell -->
-  <td class="class-cell">${classHtml}</td>
+      <td class="class-cell">${classHtml}</td>
 
-  <!-- Desktop-only ID column (hidden on mobile via CSS) -->
-  <td class="id-mask desktop-only">${idMasked}</td>
+      <td class="id-mask desktop-only">${escapeHtml(idMasked)}</td>
 
-  <!-- Points cell: show points plus mobile-only actions (so users can tap gear on mobile) -->
-  <td>
-    <div class="points-wrap">
-      <div class="points-value"><strong>${points}</strong></div>
-      <div class="mobile-actions">${actionHtml}</div>
-    </div>
-  </td>
+      <td class="points-cell">
+        <div class="points-value">${points}</div>
+        <div class="points-actions">${actionHtml}</div>
+      </td>
 
-  <!-- Desktop-only actions column (hidden on mobile via CSS) -->
-  <td class="action-cell desktop-only">${actionHtml}</td>
-`;
-
+      <td class="action-cell desktop-only">${actionHtml}</td>
+    `;
 
     leaderTbody.appendChild(tr);
   }
 
-  // rest of your original logic for adminShowAll section and wiring remains unchanged
-  // (I assume you keep the existing block that appends remaining rows, wires buttons, highlight, etc.)
-  // If needed paste the remaining code below this point (unchanged from your previous file).
+  // --- wiring (view / clear / settings / history) ---
 
-  // --- wiring (same as before) ---
   // wire view buttons
   leaderTbody.querySelectorAll('button[data-view]').forEach(b => {
     b.onclick = async () => {
@@ -978,7 +1020,6 @@ tr.innerHTML = `
       if(!item) return toast('Not found');
 
       const canAdmin = isAdmin();
-      // now include history button only if admin
       const html = `<div>
         <h3 style="margin-top:0">${escapeHtml(item.studentName || '—')}</h3>
         <div class="small-muted">Class: <strong>${escapeHtml(item.className || item.class || item.classId || '—')}</strong></div>
@@ -1009,10 +1050,9 @@ tr.innerHTML = `
     };
   });
 
-  // wire clear my points if present
-  const clearBtn = document.getElementById('clearMyPointsBtn');
-  if(clearBtn){
-    clearBtn.onclick = async () => {
+  // wire clear-my buttons (by data-clear)
+  leaderTbody.querySelectorAll('button[data-clear]').forEach(b => {
+    b.onclick = async () => {
       if(!confirm('Clear your points for this competition? This action cannot be undone.')) return;
       try {
         const docId = `${currentCompetition.id}_${getVerifiedStudentId()}`;
@@ -1021,14 +1061,23 @@ tr.innerHTML = `
         await loadCompetitionScores();
       } catch(err){ console.error(err); toast('Failed to clear points'); }
     };
-  }
+  });
 
-  // wire settings gear for admin
+  // wire history buttons
+  leaderTbody.querySelectorAll('button[data-history]').forEach(b => {
+    b.onclick = async () => {
+      const sid = b.getAttribute('data-history');
+      closeModal();
+      await openHistoryModal(sid);
+    };
+  });
+
+  // wire settings gear for admin/student
   leaderTbody.querySelectorAll('.settingsBtn').forEach(b => {
     b.onclick = async () => {
       const studentId = b.dataset.student;
       const scoreDocId = b.dataset.scoredoc;
-      if(!isAdmin()) return toast('Only admin may access settings');
+      if(!isAdmin() && !(getVerifiedRole() === 'student' && getVerifiedStudentId() === studentId)) return toast('Only admin or the student may access settings');
       openStudentSettingsModal(studentId, scoreDocId);
     };
   });
@@ -1273,23 +1322,7 @@ function highlightRowForStudent(studentId){
   }
 }
 // helper: append or update a "Your rank" row at the bottom of the table
-function appendOrShowMyRow(me, isEmpty){
-  // remove existing my-rank row
-  const old = document.getElementById('myRankRow');
-  if(old) old.remove();
 
-  const tr = document.createElement('tr');
-  tr.id = 'myRankRow';
-  tr.style.background = '#f7fbff';
-  const rankCell = `<div class="rank-badge">${escapeHtml(String(me.rank || '—'))}</div>`;
-  const name = `<strong>${escapeHtml(me.studentName || sessionStorage.getItem('verifiedStudentName') || '—')}</strong>`;
-  const className = escapeHtml(me.className || '—');
-  const idMasked = maskId(me.studentId || '');
-  const points = escapeHtml(String(me.points || 0));
-  tr.innerHTML = `<td>${rankCell}</td><td>${name}</td><td>${className}</td><td>${idMasked}</td><td><strong>${points}</strong></td><td class="small-muted">Your rank</td>`;
-  leaderTbody.appendChild(tr);
-  tr.scrollIntoView({ behavior:'smooth', block:'center' });
-}
 /* ---------- Test-yourself (kept disabled until verified student) ---------- */
 /* The test flow you already have is preserved; we hook testYourselfBtn to check verification first */
 toggleBgBtn.onclick = () => { const on = !SoundManager.bgEnabled; SoundManager.setBgEnabled(on); toggleBgBtn.textContent = `BG Sound: ${on? 'ON':'OFF'}`; };
