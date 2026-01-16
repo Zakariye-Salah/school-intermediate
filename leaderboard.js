@@ -1439,6 +1439,7 @@ if (viewAllBtn) {
 }
 /* ---------- openTestModal (improved: breakdown, +3 popup, retry skipped) ---------- */
 
+/* ---------- openTestModal (fixed: retry skipped works + sound cleanup) ---------- */
 function openTestModal(set){
   // prepare questions: shuffle choices and remap correct indexes
   const questions = (set.questions || []).map((q, idx) => {
@@ -1460,6 +1461,9 @@ function openTestModal(set){
     currentStreak: 0, runHighest: 0, timeoutId: null, timerSec: 20,
     highestHolder: null, pointsGained: 0
   };
+
+  // Track if modal started background music so we can stop it when modal closed
+  let modalStartedBg = false;
 
   // Modal header: breakdown / totals / highest / points appear under title (good for mobile)
   const headerHtml = [];
@@ -1507,6 +1511,9 @@ function openTestModal(set){
 
   showModalInner(html, { title: 'Test' });
 
+  // After modal added to DOM, ensure nothing outside retains focus (fixes aria-hidden focus warnings)
+  try { if(document.activeElement && document.activeElement !== document.body) document.activeElement.blur(); } catch(e){/* ignore */ }
+
   // wire BG / FX toggles
   (function wireModalSoundToggles(){
     const bgBtn = document.getElementById('toggleModalBgBtn');
@@ -1514,9 +1521,23 @@ function openTestModal(set){
     if(!bgBtn || !fxBtn) return;
     bgBtn.textContent = `BG: ${SoundManager.bgEnabled ? 'ON' : 'OFF'}`;
     fxBtn.textContent = `FX: ${SoundManager.effectsEnabled ? 'ON' : 'OFF'}`;
-    bgBtn.onclick = () => { const newOn = !SoundManager.bgEnabled; SoundManager.setBgEnabled(newOn); bgBtn.textContent = `BG: ${newOn ? 'ON' : 'OFF'}`; };
-    fxBtn.onclick = () => { const newOn = !SoundManager.effectsEnabled; SoundManager.setEffectsEnabled(newOn); fxBtn.textContent = `FX: ${newOn ? 'ON' : 'OFF'}`; };
-    if(SoundManager.bgEnabled) SoundManager.setBgEnabled(true);
+    bgBtn.onclick = () => {
+      const newOn = !SoundManager.bgEnabled;
+      SoundManager.setBgEnabled(newOn);
+      bgBtn.textContent = `BG: ${newOn ? 'ON' : 'OFF'}`;
+    };
+    fxBtn.onclick = () => {
+      const newOn = !SoundManager.effectsEnabled;
+      SoundManager.setEffectsEnabled(newOn);
+      fxBtn.textContent = `FX: ${newOn ? 'ON' : 'OFF'}`;
+    };
+
+    // If bg already enabled, note that modal started it (so we can stop it on close)
+    if(SoundManager.bgEnabled){
+      modalStartedBg = true;
+      // ensure it is actually playing
+      SoundManager.setBgEnabled(true);
+    }
   })();
 
   // populate highest now
@@ -1537,7 +1558,6 @@ function openTestModal(set){
     popup.className = 'plus-popup';
     popup.textContent = text;
     modalBox.appendChild(popup);
-    // force reflow then animate
     requestAnimationFrame(()=> {
       popup.style.opacity = '1';
       popup.style.transform = 'translate(-50%, -120%) scale(1.05)';
@@ -1667,8 +1687,14 @@ function openTestModal(set){
 
   document.getElementById('testPrev').onclick = goPrev;
   document.getElementById('testNext').onclick = goNext;
-  document.getElementById('testCancel').onclick = () => { if(confirm('Cancel test? Progress will be lost.')) closeModal(); };
 
+  // Cancel: stop any timers, stop BG started by modal, cleanup handlers and close
+  document.getElementById('testCancel').onclick = () => {
+    if(!confirm('Cancel test? Progress will be lost.')) return;
+    cleanupAndClose();
+  };
+
+  // Small in-modal skip/retry dialog helper
   function showSkipRetryModal(count, onRetry, onFinish){
     const html = `
       <div style="padding:12px;max-width:360px">
@@ -1685,81 +1711,35 @@ function openTestModal(set){
       </div>
     `;
     showModalInner(html, { title: 'Skipped questions' });
-  
-    document.getElementById('skipRetryBtn').onclick = () => {
+
+    // Make sure focus is moved inside modal to avoid aria-hidden focus errors
+    try { const b = document.getElementById('skipRetryBtn'); if(b) b.focus(); } catch(e){}
+
+    const retryEl = document.getElementById('skipRetryBtn');
+    const finishEl = document.getElementById('skipFinishBtn');
+
+    if(retryEl) retryEl.onclick = () => {
       closeModal();
       onRetry();
     };
-    document.getElementById('skipFinishBtn').onclick = () => {
+    if(finishEl) finishEl.onclick = () => {
       closeModal();
       onFinish();
     };
   }
-  
+
+  // Finish & save (actual DB writes)
   async function finishAndSave(){
-    const correct = state.correctCount;
-    const incorrect = state.incorrect;
-    const skipped = state.skipped + state.questions.filter((_,i)=> state.answers[i] === null).length;
-    const total = state.questions.length;
-    const scoreDelta = state.pointsGained;
-  
-    // ⬇️ KEEP YOUR EXISTING "Saving results" CODE HERE
-    // (everything you already wrote after confirm)
-  }
-  
-  // Finish handler: if there are skipped (unanswered) items, ask to retry them first
-  document.getElementById('testFinish').onclick = async () => {
+    // stop any per-question timer
     if(state.timeoutId){ clearInterval(state.timeoutId); state.timeoutId = null; }
-    finishAndSave();
-    const unansweredIdx = state.questions.map((_,i)=> i).filter(i => state.answers[i] === null);
-    if(unansweredIdx.length > 0){
-      showSkipRetryModal(
-        unansweredIdx.length,
-    
-        // YES → retry skipped questions
-        () => {
-          const newQs = unansweredIdx.map(i => {
-            const old = state.questions[i];
-            const orig = old.choices.map((c, idx) => ({ text: c.text, origIndex: idx }));
-            shuffleArray(orig);
-    
-            const origCorrect = Array.isArray(old.correct) ? old.correct.map(Number) : [Number(old.correct)];
-            const newCorrect = [];
-            orig.forEach((cNew, newPos) => {
-              if(origCorrect.includes(cNew.origIndex)) newCorrect.push(newPos);
-            });
-    
-            return {
-              ...old,
-              choices: orig.map(c => ({ text: c.text })),
-              correct: newCorrect
-            };
-          });
-    
-          shuffleArray(newQs);
-          state.questions = newQs;
-          state.answers = Array(newQs.length).fill(null);
-          state.index = 0;
-          state.skipped = 0;
-          renderQuestion();
-        },
-    
-        // NO → finish test
-        async () => {
-          finishAndSave(); // see note below
-        }
-      );
-      return;
-    }
-    
 
-    // proceed to compute stats and save
     const correct = state.correctCount;
     const incorrect = state.incorrect;
     const skipped = state.skipped + state.questions.filter((_,i)=> state.answers[i] === null).length;
     const total = state.questions.length;
-    const scoreDelta = state.pointsGained; // we've been tracking pointsGained live
+    const scoreDelta = state.pointsGained; // tracked live
 
+    // show saving indicator immediately
     showModalInner(`<div style="padding:12px"><h3>Saving results</h3><div style="margin-top:10px">Please wait <span class="loading-dots"><span>•</span><span style="animation-delay:.12s">•</span><span style="animation-delay:.24s">•</span></span></div></div>`, { title: 'Saving' });
 
     try {
@@ -1801,26 +1781,98 @@ function openTestModal(set){
         <div style="margin-top:10px" class="small-muted">Highest streak this server: <strong>${holderText}</strong></div>
         <div style="text-align:right;margin-top:12px"><button id="summaryClose" class="btn btn-primary">Close</button></div>
       </div>`, { title: 'Summary' });
-      document.getElementById('summaryClose').onclick = () => { closeModal(); };
+      document.getElementById('summaryClose').onclick = () => { cleanupAndClose(); };
     } catch(err){
       console.error(err);
       showModalInner(`<div style="padding:12px"><h3>Error</h3><div class="small-muted" style="margin-top:8px">Failed to save results. Try again later.</div><div style="text-align:right;margin-top:12px"><button id="errClose" class="btn">Close</button></div></div>`, { title: 'Error' });
-      document.getElementById('errClose').onclick = () => closeModal();
+      const errClose = document.getElementById('errClose');
+      if(errClose) errClose.onclick = () => cleanupAndClose();
     }
+  }
+
+  // Finish button click — check unanswered first, then either retry or finish
+  document.getElementById('testFinish').onclick = async () => {
+    // stop per-question timer until we decide
+    if(state.timeoutId){ clearInterval(state.timeoutId); state.timeoutId = null; }
+
+    const unansweredIdx = state.questions.map((_,i)=> i).filter(i => state.answers[i] === null);
+    if(unansweredIdx.length > 0){
+      // show in-modal retry/finish dialog
+      showSkipRetryModal(
+        unansweredIdx.length,
+
+        // YES → retry skipped questions (build a new randomized set from unanswered)
+        () => {
+          const newQs = unansweredIdx.map(i => {
+            const old = state.questions[i];
+            // reconstruct orig with original correct mapping using the text values
+            const orig = Array.isArray(old.choices) ? old.choices.map((c, idx) => ({ text: c.text, origIndex: idx })) : [];
+            shuffleArray(orig);
+            const origCorrect = Array.isArray(old.correct) ? old.correct.map(Number) : [Number(old.correct)];
+            // Because we shuffled original choices when first creating q, origIndex corresponds to current index,
+            // we need to map correct indexes relative to this new orig order.
+            const newCorrect = [];
+            orig.forEach((cNew, newPos) => {
+              if(origCorrect.includes(cNew.origIndex)) newCorrect.push(newPos);
+            });
+            return {
+              ...old,
+              choices: orig.map(c => ({ text: c.text })),
+              correct: newCorrect
+            };
+          });
+
+          shuffleArray(newQs);
+          // reset state to only the newQs (retry pass)
+          state.questions = newQs;
+          state.answers = Array(newQs.length).fill(null);
+          state.index = 0;
+          state.correctCount = 0;
+          state.incorrect = 0;
+          state.skipped = 0;
+          state.currentStreak = 0;
+          state.runHighest = 0;
+          state.pointsGained = 0;
+          const pg = document.getElementById('pointsGained'); if(pg) pg.textContent = state.pointsGained;
+          renderQuestion();
+        },
+
+        // NO → finish test & save
+        async () => {
+          await finishAndSave();
+        }
+      );
+      return;
+    }
+
+    // no unanswered — proceed to finish and save
+    await finishAndSave();
   };
 
   // keyboard nav
   window.addEventListener('keydown', keyHandler);
   function keyHandler(e){ if(e.key === 'ArrowLeft') goPrev(); if(e.key === 'ArrowRight') goNext(); }
 
-  // cleanup when modal closed via close button
-  const origClose = closeModal;
-  const newClose = () => { window.removeEventListener('keydown', keyHandler); origClose(); };
-  const modalCloseBtn = document.getElementById('modalCloseBtn');
-  if(modalCloseBtn) modalCloseBtn.onclick = newClose;
+  // cleanup helper used on cancel/close/summary-close
+  function cleanupAndClose(){
+    // clear timer
+    if(state.timeoutId){ clearInterval(state.timeoutId); state.timeoutId = null; }
+    // remove key handler
+    window.removeEventListener('keydown', keyHandler);
+    // if modal started background music, stop it
+    try { if(modalStartedBg) SoundManager.setBgEnabled(false); } catch(e){/* ignore */ }
+    // finally close modal
+    closeModal();
+  }
 
+  // ensure modal close button also cleans up
+  const modalCloseBtn = document.getElementById('modalCloseBtn');
+  if(modalCloseBtn) modalCloseBtn.onclick = () => { cleanupAndClose(); };
+
+  // render first
   renderQuestion();
 }
+
 
 
 
