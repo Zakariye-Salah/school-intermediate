@@ -891,8 +891,13 @@ function openMoreModalForStudent(studentId, scoreDocId){
   const settingsBtn = `<button id="mm_settings" class="btn">Settings</button>`;
 
   let html = `<div style="display:flex;flex-direction:column;gap:10px;padding:6px">`;
-  html += `<div style="font-weight:800;margin-bottom:6px">${escapeHtml(studentId || '')}</div>`;
-  html += viewBtn;
+  const isMe = getVerifiedRole() === 'student' && getVerifiedStudentId() === studentId;
+  const displayId = isMe ? studentId : maskId(studentId);
+  
+  html += `<div style="font-weight:800;margin-bottom:6px">
+    Student ID: ${escapeHtml(displayId || '—')}
+  </div>`;
+    html += viewBtn;
   if(admin) html += historyBtn + settingsBtn;
   else if(me) html += clearBtn;
   html += `<div style="text-align:right;margin-top:6px"><button id="mm_close" class="btn">Close</button></div>`;
