@@ -1669,36 +1669,89 @@ function openTestModal(set){
   document.getElementById('testNext').onclick = goNext;
   document.getElementById('testCancel').onclick = () => { if(confirm('Cancel test? Progress will be lost.')) closeModal(); };
 
+  function showSkipRetryModal(count, onRetry, onFinish){
+    const html = `
+      <div style="padding:12px;max-width:360px">
+        <h3 style="margin:0 0 8px 0">Unanswered questions</h3>
+        <div class="small-muted">
+          You skipped <strong>${count}</strong> question${count > 1 ? 's' : ''}.
+          Do you want to answer them now?
+        </div>
+  
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+          <button id="skipFinishBtn" class="btn">Finish test</button>
+          <button id="skipRetryBtn" class="btn btn-primary">Retry skipped</button>
+        </div>
+      </div>
+    `;
+    showModalInner(html, { title: 'Skipped questions' });
+  
+    document.getElementById('skipRetryBtn').onclick = () => {
+      closeModal();
+      onRetry();
+    };
+    document.getElementById('skipFinishBtn').onclick = () => {
+      closeModal();
+      onFinish();
+    };
+  }
+  
+  async function finishAndSave(){
+    const correct = state.correctCount;
+    const incorrect = state.incorrect;
+    const skipped = state.skipped + state.questions.filter((_,i)=> state.answers[i] === null).length;
+    const total = state.questions.length;
+    const scoreDelta = state.pointsGained;
+  
+    // ⬇️ KEEP YOUR EXISTING "Saving results" CODE HERE
+    // (everything you already wrote after confirm)
+  }
+  
   // Finish handler: if there are skipped (unanswered) items, ask to retry them first
   document.getElementById('testFinish').onclick = async () => {
     if(state.timeoutId){ clearInterval(state.timeoutId); state.timeoutId = null; }
-
+    finishAndSave();
     const unansweredIdx = state.questions.map((_,i)=> i).filter(i => state.answers[i] === null);
     if(unansweredIdx.length > 0){
-      // prompt user
-      const retry = confirm(`You have ${unansweredIdx.length} unanswered question(s). Retry them now? (Yes → retry skipped questions randomly. No → finish and save.)`);
-      if(retry){
-        // build new question list from unanswered, shuffle questions and their choices
-        const newQs = unansweredIdx.map(i => {
-          const old = state.questions[i];
-          const orig = Array.isArray(old.choices) ? old.choices.map((c, idx) => ({ text: c.text || String(c), origIndex: idx })) : [];
-          shuffleArray(orig);
-          const origCorrect = Array.isArray(old.correct) ? old.correct.map(Number) : [Number(old.correct)];
-          const newCorrect = [];
-          orig.forEach((cNew, newPos) => { if(origCorrect.includes(cNew.origIndex)) newCorrect.push(newPos); });
-          return { ...old, choices: orig.map(c=>({ text: c.text })), correct: newCorrect };
-        });
-        shuffleArray(newQs);
-        // replace state.questions with the new set; reset answers for this pass
-        state.questions = newQs;
-        state.answers = Array(newQs.length).fill(null);
-        state.index = 0;
-        state.skipped = 0; // reset skipped for the retry pass
-        renderQuestion();
-        return;
-      }
-      // else proceed to finish & save
+      showSkipRetryModal(
+        unansweredIdx.length,
+    
+        // YES → retry skipped questions
+        () => {
+          const newQs = unansweredIdx.map(i => {
+            const old = state.questions[i];
+            const orig = old.choices.map((c, idx) => ({ text: c.text, origIndex: idx }));
+            shuffleArray(orig);
+    
+            const origCorrect = Array.isArray(old.correct) ? old.correct.map(Number) : [Number(old.correct)];
+            const newCorrect = [];
+            orig.forEach((cNew, newPos) => {
+              if(origCorrect.includes(cNew.origIndex)) newCorrect.push(newPos);
+            });
+    
+            return {
+              ...old,
+              choices: orig.map(c => ({ text: c.text })),
+              correct: newCorrect
+            };
+          });
+    
+          shuffleArray(newQs);
+          state.questions = newQs;
+          state.answers = Array(newQs.length).fill(null);
+          state.index = 0;
+          state.skipped = 0;
+          renderQuestion();
+        },
+    
+        // NO → finish test
+        async () => {
+          finishAndSave(); // see note below
+        }
+      );
+      return;
     }
+    
 
     // proceed to compute stats and save
     const correct = state.correctCount;
