@@ -211,6 +211,32 @@ table.leader td > *{max-width:100%;overflow:hidden;text-overflow:ellipsis}
   display:block !important;
 }
 
+/* desktop-only / mobile-only helpers (default desktop) */
+.desktop-only { display: inline; }
+.mobile-only { display: none; }
+
+/* On small screens: hide standalone ID & action columns and show mobile variants */
+@media (max-width: 720px) {
+  /* hide the standalone ID and action columns */
+  col.col-id, col.col-action { display: none; }
+  th.col-id, th.col-action, td.id-mask, td .action-cell { display: none !important; }
+
+  /* header label swap */
+  .desktop-only { display: none !important; }
+  .mobile-only { display: inline !important; }
+
+  /* show masked id under name */
+  .name-cell .mobile-id { display:block; font-size:0.88rem; color:var(--muted); margin-top:4px; font-weight:700; }
+
+  /* move actions into points cell (visible only on mobile) */
+  .mobile-actions { display:inline-flex; gap:6px; margin-left:8px; vertical-align:middle; }
+  .points-wrap { display:flex; align-items:center; justify-content:space-between; gap:8px; width:100%; }
+  .points-wrap .points-value { font-weight:900; }
+}
+
+/* default desktop state for these helpers */
+.name-cell .mobile-id { display:none; }
+.mobile-actions { display:none; }
 
 </style>
 </head>
@@ -277,13 +303,17 @@ table.leader td > *{max-width:100%;overflow:hidden;text-overflow:ellipsis}
     <thead>
       <tr>
         <th class="col-rank">Rank</th>
-        <th class="col-name">Name</th>
+        <th class="col-name">
+          <span class="desktop-only">Name</span>
+          <span class="mobile-only">Name / ID</span>
+        </th>
         <th class="col-class">Class</th>
-        <th class="col-id">ID</th>
+        <th class="col-id desktop-only">ID</th>
         <th class="col-points">Points</th>
-        <th class="col-action">Action</th>
+        <th class="col-action desktop-only">Action</th>
       </tr>
     </thead>
+    
     <tbody id="leaderTbody">
       <tr><td colspan="6" class="small-muted">Loading…</td></tr>
     </tbody>
@@ -303,4 +333,5 @@ table.leader td > *{max-width:100%;overflow:hidden;text-overflow:ellipsis}
   <script type="module" src="leaderboard.js"></script>
 </body>
 </html>
+
 
