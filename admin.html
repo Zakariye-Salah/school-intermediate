@@ -4,35 +4,59 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Admin — School</title>
-  <style>
-    :root{font-family:system-ui,Segoe UI,Roboto,Arial;}
-    body{margin:0;padding:18px;background:#f8fafc;color:#0f172a}
-    header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
-    .brand{font-weight:700;font-size:18px}
-    .tabs{display:flex;gap:8px;margin-bottom:12px}
-    .tab{padding:8px 12px;border-radius:8px;border:none;background:#e6eef8;cursor:pointer}
-    .tab.active{background:#0ea5e9;color:white}
-    .page{display:none;background:white;padding:12px;border-radius:8px;box-shadow:0 6px 16px rgba(15,23,42,0.06)}
-    .page-header{display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
-    input[type=text], input[type=date], input[type=number], select{padding:8px;border-radius:6px;border:1px solid #e6eef8}
-    .btn{padding:8px 10px;border-radius:6px;border:none;cursor:pointer}
-    .btn-primary{background:#0ea5e9;color:white}
-    .btn-ghost{background:#f3f4f6}
-    .row{display:flex;justify-content:space-between;padding:10px;border-bottom:1px solid #f1f5f9}
+<!-- admin-mobile-styles -->
+<style>
+  :root{
+    --bg:#f8fafc; --card:#fff; --muted:#6b7280; --primary:#0ea5e9; --danger:#ef4444; --radius:12px;
+  }
+  /* page */
+  body{ margin:0; padding:18px; font-family:Inter,system-ui,Segoe UI,Roboto,Arial; background:var(--bg); color:#0f172a; -webkit-font-smoothing:antialiased }
+  header{ display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:14px }
+  .brand{ font-weight:800; font-size:18px }
+  /* swipeable tabs */
+  .tabs{ display:flex; gap:8px; overflow-x:auto; -webkit-overflow-scrolling:touch; padding-bottom:6px; scrollbar-width:none; }
+  .tabs::-webkit-scrollbar{ display:none; }
+  .tab{ flex:0 0 auto; padding:8px 12px; border-radius:12px; background:#e6eef8; border:none; cursor:pointer; font-weight:800; white-space:nowrap }
+  .tab.active{ background:var(--primary); color:#fff; box-shadow:0 8px 22px rgba(11,116,255,0.12) }
 
-    /* Modal */
-    #modalBackdrop{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(2,6,23,0.45);z-index:60}
-    #modal{background:white;padding:12px;border-radius:8px;max-width:880px;width:94%;box-shadow:0 12px 40px rgba(2,6,23,.3)}
-    #modalTitle{font-weight:700;margin-bottom:8px}
-    #modalBody{max-height:60vh;overflow:auto}
-    #modalClose{position:absolute;right:18px;top:18px;background:#ef4444;color:white;border-radius:6px;padding:6px;border:none}
+  main{ margin-top:8px }
+  .page{ display:none; background:var(--card); padding:12px; border-radius:var(--radius); box-shadow:0 8px 28px rgba(2,6,23,0.04) }
+  .page.active{ display:block }
 
-    /* Toast */
-    #toast{position:fixed;right:18px;bottom:18px;background:#111827;color:white;padding:10px;border-radius:8px;display:none}
+  .page-header{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:12px }
+  .page-header input, .page-header select { padding:8px 10px; border-radius:8px; border:1px solid #e6eef8; min-width:120px }
+  .btn{ padding:8px 10px; border-radius:8px; border:none; cursor:pointer; font-weight:800 }
+  .btn-primary{ background:var(--primary); color:#fff }
+  .btn-ghost{ background:#f3f4f6 }
 
-    /* Small helpers */
-    .muted{color:#6b7280}
-  </style>
+  /* compact mobile row */
+  .list-row{ display:flex; align-items:center; justify-content:space-between; gap:10px; background:linear-gradient(180deg,#fff,#fbfdff);
+    padding:10px; border-radius:10px; margin-bottom:10px; border:1px solid rgba(2,6,23,0.03); box-shadow:0 6px 18px rgba(2,6,23,0.03) }
+  .row-left{ display:flex; gap:10px; align-items:center; min-width:0 }
+  .no-badge{ min-width:36px; text-align:center; font-weight:900; color:var(--muted) }
+  .id{ font-family:monospace; font-weight:800; min-width:86px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
+  .title{ font-weight:900; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:220px }
+  .sub{ color:var(--muted); font-weight:700; font-size:0.92rem }
+  .more-btn{ background:transparent; border:1px solid rgba(2,6,23,0.06); padding:8px 10px; border-radius:8px; cursor:pointer; font-weight:900 }
+
+  /* desktop: keep table display (hide mobile rows) */
+  @media(min-width:821px){
+    .list-row{ display:none; }
+    table.admin-table{ width:100%; border-collapse:collapse; }
+    table.admin-table th, table.admin-table td { padding:10px; border-bottom:1px solid #eef2f9; text-align:left }
+  }
+
+  /* modal */
+  #modalBackdrop{ position:fixed; inset:0; display:none; align-items:flex-end; justify-content:center; background:rgba(2,6,23,0.45); z-index:60; padding:12px; }
+  #modal{ background:#fff; padding:14px; border-radius:12px; width:100%; max-width:920px; box-shadow:0 16px 48px rgba(2,6,23,0.35); position:relative }
+  #modalTitle{ font-weight:800; margin-bottom:8px }
+  #modalBody{ max-height:68vh; overflow:auto }
+  #modalClose{ position:absolute; right:12px; top:12px; background:var(--danger); color:#fff; border-radius:8px; padding:6px; border:none; cursor:pointer }
+  .modal-actions{ display:flex; gap:8px; justify-content:flex-end; margin-top:12px; flex-wrap:wrap }
+  .muted{ color:var(--muted) }
+  .pill{ display:inline-block; padding:4px 8px; border-radius:999px; background:#f1f5f9; font-weight:800; color:var(--muted); font-size:.85rem }
+</style>
+
 </head>
 <body>
   <header>
