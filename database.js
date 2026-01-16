@@ -144,6 +144,7 @@ async function loadTeachers(){
   } catch(err){ teachersCache = []; console.warn('loadTeachers failed', err); }
 }
 
+function isMobileViewport(){ return window.matchMedia && window.matchMedia('(max-width:768px)').matches; }
 /* populate helpers */
 function populateClassFilters(){
   studentsClassFilter && (studentsClassFilter.innerHTML = '<option value="">All classes</option>');
@@ -177,10 +178,47 @@ function countStudentsInClass(className){
 }
 
 /** ---------- TEACHERS (table view + View modal) ---------- */
+
 function renderTeachers(){
   if(!teachersList) return;
-  // summary + table
   const total = (teachersCache || []).length;
+
+  if(isMobileViewport()){
+    let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <strong>Total teachers: ${total}</strong>
+      <div class="muted">Mobile: tap View</div>
+    </div><div id="teachersMobileList">`;
+    const q = (teachersSearch && teachersSearch.value||'').trim().toLowerCase();
+    const subjFilter = (teachersSubjectFilter && teachersSubjectFilter.value) || '';
+    let list = (teachersCache || []).slice();
+    list = list.filter(t => {
+      if(subjFilter && (!(t.subjects || []).includes(subjFilter))) return false;
+      if(!q) return true;
+      return (t.fullName||'').toLowerCase().includes(q) || (t.phone||'').toLowerCase().includes(q) || (t.id||'').toLowerCase().includes(q);
+    });
+
+    list.forEach((t, idx) => {
+      const id = escape(t.id || t.teacherId || '');
+      const name = escape(t.fullName || '');
+      html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px;border-bottom:1px solid #f1f5f9">
+        <div style="display:flex;gap:12px;align-items:center">
+          <div style="min-width:28px;text-align:center;font-weight:700">${idx+1}</div>
+          <div style="min-width:90px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${id}</div>
+          <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${name}</div>
+        </div>
+        <div><button class="btn btn-ghost btn-sm mobile-teacher-view" data-id="${escape(t.id||t.teacherId||'')}">View</button></div>
+      </div>`;
+    });
+    html += `</div>`;
+    teachersList.innerHTML = html;
+
+    teachersList.querySelectorAll('.mobile-teacher-view').forEach(b=>{
+      b.onclick = (ev) => openViewTeacherModal({ target:{ dataset:{ id: ev.currentTarget.dataset.id } }});
+    });
+    return;
+  }
+
+  // desktop table (unchanged)
   let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
       <strong>Total teachers: ${total}</strong>
       <div class="muted">Showing ID, Name, Salary — click View for more</div>
@@ -225,26 +263,23 @@ function renderTeachers(){
   html += `</tbody></table></div>`;
   teachersList.innerHTML = html;
 
-  // wire actions
   teachersList.querySelectorAll('.view-teacher').forEach(b => b.onclick = openViewTeacherModal);
   teachersList.querySelectorAll('.edit-teacher').forEach(b => b.onclick = openEditTeacherModal);
   teachersList.querySelectorAll('.del-teacher').forEach(b => b.onclick = deleteTeacher);
 }
 
-/** shows full teacher info in modal */
 async function openViewTeacherModal(e){
-  const id = e && e.target ? e.target.dataset.id : e;
+  const id = (e && e.target) ? e.target.dataset.id : (e && e.dataset ? e.dataset.id : e);
   if(!id) return;
-  // try cached, then DB
   let t = teachersCache.find(x => (x.id === id) || (x.teacherId === id) );
-  if(!t){
+  if(!t && typeof getDoc === 'function'){
     try {
       const snap = await getDoc(doc(db,'teachers', id));
       if(snap.exists()) t = { id: snap.id, ...snap.data() };
     } catch(err){ console.error('load teacher for view failed', err); }
   }
   if(!t) return toast('Teacher not found');
-  // format classes & subjects
+
   const classesText = (t.classes && t.classes.length) ? t.classes.join(', ') : 'No classes';
   const subsText = (t.subjects && t.subjects.length) ? t.subjects.join(', ') : 'No subjects';
   const html = `
@@ -258,10 +293,24 @@ async function openViewTeacherModal(e){
       <div style="grid-column:1 / -1"><strong>Classes</strong><div class="muted">${escape(classesText)}</div></div>
       <div style="grid-column:1 / -1"><strong>Subjects</strong><div class="muted">${escape(subsText)}</div></div>
     </div>
-    <div style="margin-top:12px"><button class="btn btn-ghost" id="viewTeacherClose">Close</button></div>
+    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn btn-ghost" id="viewTeacherClose">Close</button>
+      <button class="btn btn-ghost" id="viewTeacherEdit">Edit</button>
+      <button class="btn btn-danger" id="viewTeacherDel">Delete</button>
+    </div>
   `;
   showModal(`${escape(t.fullName||'')} — Teacher`, html);
+
   modalBody.querySelector('#viewTeacherClose').onclick = closeModal;
+  modalBody.querySelector('#viewTeacherEdit').onclick = () => {
+    closeModal();
+    openEditTeacherModal({ target:{ dataset:{ id: t.id || t.teacherId } }});
+  };
+  modalBody.querySelector('#viewTeacherDel').onclick = async () => {
+    if(!confirm('Delete teacher?')) return;
+    await deleteTeacher({ target:{ dataset:{ id: t.id || t.teacherId } }});
+    closeModal();
+  };
 }
 
 /* ---------- Ensure teachers subject/class filter is populated ---------- */
@@ -425,6 +474,32 @@ function renderClasses(){
   });
 
   const total = list.length;
+
+  if(isMobileViewport()){
+    let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <strong>Total classes: ${total}</strong>
+      <div class="muted">Mobile: tap View</div>
+    </div><div id="classesMobileList">`;
+    list.forEach((c, idx) => {
+      const name = escape(c.name || '');
+      html += `<div class="mobile-row" style="display:flex;justify-content:space-between;align-items:center;padding:10px;border-bottom:1px solid #f1f5f9">
+        <div style="display:flex;gap:12px;align-items:center">
+          <div style="min-width:28px;text-align:center;font-weight:700">${idx+1}</div>
+          <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${name}</div>
+        </div>
+        <div><button class="btn btn-ghost btn-sm mobile-class-view" data-id="${escape(c.id||c.name||'')}">View</button></div>
+      </div>`;
+    });
+    html += `</div>`;
+    classesList.innerHTML = html;
+
+    classesList.querySelectorAll('.mobile-class-view').forEach(b => {
+      b.onclick = (ev) => openViewClassModal({ target: { dataset: { id: ev.currentTarget.dataset.id } } });
+    });
+    return;
+  }
+
+  // desktop original table
   let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
       <strong>Total classes: ${total}</strong>
       <div class="muted">Columns: No, ID, Name, Total students</div>
@@ -461,22 +536,18 @@ function renderClasses(){
   html += `</tbody></table></div>`;
   classesList.innerHTML = html;
 
-  // wire actions
   classesList.querySelectorAll('.view-class').forEach(b=> b.onclick = openViewClassModal);
   classesList.querySelectorAll('.edit-class').forEach(b=> b.onclick = openEditClassModal);
   classesList.querySelectorAll('.del-class').forEach(b=> b.onclick = deleteClass);
 }
 
-/** view class -> show list of students in that class */
 async function openViewClassModal(e){
-  const id = e && e.target ? e.target.dataset.id : e;
+  const id = (e && e.target) ? e.target.dataset.id : (e && e.dataset ? e.dataset.id : e);
   if(!id) return;
   const c = classesCache.find(x => x.id === id || x.name === id);
   if(!c) return toast('Class not found');
 
-  // students assigned to this class
   const assigned = (studentsCache || []).filter(s => (s.classId || '') === (c.name || c.id || ''));
-
   let studentsHtml = '<div class="muted">No students</div>';
   if(assigned.length){
     studentsHtml = `<table style="width:100%;border-collapse:collapse">
@@ -494,10 +565,24 @@ async function openViewClassModal(e){
       <div style="grid-column:1 / -1"><strong>Subjects</strong><div class="muted">${escape((c.subjects||[]).join(', ') || 'No subjects')}</div></div>
       <div style="grid-column:1 / -1"><strong>Assigned students (${assigned.length})</strong>${studentsHtml}</div>
     </div>
-    <div style="margin-top:12px"><button class="btn btn-ghost" id="viewClassClose">Close</button></div>
+    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn btn-ghost" id="viewClassClose">Close</button>
+      <button class="btn btn-ghost" id="viewClassEdit">Edit</button>
+      <button class="btn btn-danger" id="viewClassDel">Delete</button>
+    </div>
   `;
   showModal(`Class — ${escape(c.name||'')}`, html);
+
   modalBody.querySelector('#viewClassClose').onclick = closeModal;
+  modalBody.querySelector('#viewClassEdit').onclick = () => {
+    closeModal();
+    openEditClassModal({ target:{ dataset:{ id: c.id } } });
+  };
+  modalBody.querySelector('#viewClassDel').onclick = async () => {
+    if(!confirm('Delete class?')) return;
+    await deleteClass({ target: { dataset: { id: c.id } } });
+    closeModal();
+  };
 }
 
 openAddClass.onclick = () => {
@@ -569,6 +654,31 @@ function renderSubjects(){
   });
 
   const total = list.length;
+
+  if(isMobileViewport()){
+    let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <strong>Total subjects: ${total}</strong>
+      <div class="muted">Mobile: tap View</div>
+    </div><div id="subjectsMobileList">`;
+    list.forEach((s, idx) => {
+      html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px;border-bottom:1px solid #f1f5f9">
+        <div style="display:flex;gap:12px;align-items:center">
+          <div style="min-width:28px;text-align:center;font-weight:700">${idx+1}</div>
+          <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escape(s.name||'')}</div>
+        </div>
+        <div><button class="btn btn-ghost btn-sm mobile-sub-view" data-id="${escape(s.id||s.name||'')}">View</button></div>
+      </div>`;
+    });
+    html += `</div>`;
+    subjectsList.innerHTML = html;
+
+    subjectsList.querySelectorAll('.mobile-sub-view').forEach(b => {
+      b.onclick = (ev) => openViewSubjectModal({ target:{ dataset:{ id: ev.currentTarget.dataset.id } }});
+    });
+    return;
+  }
+
+  // desktop table (unchanged)
   let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
       <strong>Total subjects: ${total}</strong>
       <div class="muted">Columns: No, ID, Subject</div>
@@ -602,20 +712,17 @@ function renderSubjects(){
   html += `</tbody></table></div>`;
   subjectsList.innerHTML = html;
 
-  // wire actions
   subjectsList.querySelectorAll('.view-sub').forEach(b=> b.onclick = openViewSubjectModal);
   subjectsList.querySelectorAll('.edit-sub').forEach(b=> b.onclick = openEditSubjectModal);
   subjectsList.querySelectorAll('.del-sub').forEach(b=> b.onclick = deleteSubject);
 }
 
-/** view subject -> show how many classes include it (and which) */
 function openViewSubjectModal(e){
-  const id = e && e.target ? e.target.dataset.id : e;
+  const id = (e && e.target) ? e.target.dataset.id : (e && e.dataset ? e.dataset.id : e);
   if(!id) return;
   const s = subjectsCache.find(x => x.id === id || x.name === id);
   if(!s) return toast('Subject not found');
 
-  // classes including this subject
   const includedIn = (classesCache || []).filter(c => Array.isArray(c.subjects) && c.subjects.includes(s.name || s.id));
   const classesHtml = includedIn.length ? `<div class="muted">${includedIn.map(c => escape(c.name)).join(', ')}</div>` : `<div class="muted">Not part of any class</div>`;
   const html = `
@@ -624,12 +731,25 @@ function openViewSubjectModal(e){
       <div><strong>Subject</strong><div class="muted">${escape(s.name||'')}</div></div>
       <div style="grid-column:1 / -1"><strong>Used in classes (${includedIn.length})</strong>${classesHtml}</div>
     </div>
-    <div style="margin-top:12px"><button class="btn btn-ghost" id="viewSubClose">Close</button></div>
+    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn btn-ghost" id="viewSubClose">Close</button>
+      <button class="btn btn-ghost" id="viewSubEdit">Edit</button>
+      <button class="btn btn-danger" id="viewSubDel">Delete</button>
+    </div>
   `;
   showModal(`Subject — ${escape(s.name||'')}`, html);
-  modalBody.querySelector('#viewSubClose').onclick = closeModal;
-}
 
+  modalBody.querySelector('#viewSubClose').onclick = closeModal;
+  modalBody.querySelector('#viewSubEdit').onclick = () => {
+    closeModal();
+    openEditSubjectModal({ target:{ dataset:{ id: s.id } }});
+  };
+  modalBody.querySelector('#viewSubDel').onclick = async () => {
+    if(!confirm('Delete subject?')) return;
+    await deleteSubject({ target:{ dataset:{ id: s.id } }});
+    closeModal();
+  };
+}
 
 /* ---------- Subjects add/edit (default SUB0001) ---------- */
 openAddSubject && (openAddSubject.onclick = () => {
@@ -778,13 +898,13 @@ teachersSubjectFilter && (teachersSubjectFilter.onchange = renderTeachers);
 
 
 /** view student modal (keeps existing fields; adds Edit/Delete actions) */
+
 async function renderStudents(){
   if(!studentsList) return;
   const q = (studentsSearch && studentsSearch.value||'').trim().toLowerCase();
   const classFilterVal = (studentsClassFilter && studentsClassFilter.value) || '';
   const examFilter = (studentsExamForTotals && studentsExamForTotals.value) || '';
 
-  // If an exam totals filter is chosen, ensure totals are loaded before rendering
   if(examFilter && typeof loadExamTotalsForExam === 'function'){
     try { await loadExamTotalsForExam(examFilter); } catch(e){ console.warn('loadExamTotalsForExam failed', e); }
   }
@@ -796,6 +916,36 @@ async function renderStudents(){
   });
 
   const total = filtered.length;
+
+  // mobile: compact list
+  if(isMobileViewport()){
+    let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <strong>Total students: ${total}</strong>
+        <div class="muted">Mobile view: tap "More" to open student</div>
+      </div><div id="studentsMobileList">`;
+    filtered.forEach((s, idx) => {
+      const sid = escape(s.studentId || s.id || '');
+      const name = escape(s.fullName || '');
+      html += `<div class="mobile-row" style="display:flex;justify-content:space-between;align-items:center;padding:10px;border-bottom:1px solid #f1f5f9">
+        <div style="display:flex;gap:10px;align-items:center">
+          <div style="min-width:28px;text-align:center;font-weight:700">${idx+1}</div>
+          <div style="min-width:90px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${sid}</div>
+          <div style="min-width:120px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${name}</div>
+        </div>
+        <div><button class="btn btn-ghost btn-sm mobile-more" data-id="${escape(s.studentId||s.id||'')}">More</button></div>
+      </div>`;
+    });
+    html += `</div>`;
+    studentsList.innerHTML = html;
+
+    // wire "More" buttons to open view modal
+    studentsList.querySelectorAll('.mobile-more').forEach(b => {
+      b.onclick = (ev) => openViewStudentModal({ target: { dataset: { id: ev.currentTarget.dataset.id } } });
+    });
+    return;
+  }
+
+  // desktop: keep original table layout
   let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
       <strong>Total students: ${total}</strong>
       <div class="muted">Columns: No, ID, Name, Parent, Class, Total</div>
@@ -840,13 +990,14 @@ async function renderStudents(){
   html += `</tbody></table></div>`;
   studentsList.innerHTML = html;
 
-  // wire actions
+  // desktop wiring
   studentsList.querySelectorAll('.view-stu').forEach(b=> b.addEventListener('click', openViewStudentModal));
   studentsList.querySelectorAll('.edit-stu').forEach(b=> b.addEventListener('click', openEditStudentModal));
   studentsList.querySelectorAll('.del-stu').forEach(b=> b.addEventListener('click', deleteOrUnblockStudent));
 }
+
 async function openViewStudentModal(e){
-  const id = (e && e.target) ? e.target.dataset.id : e;
+  const id = (e && e.target) ? e.target.dataset.id : (e && e.dataset ? e.dataset.id : e);
   if(!id) return;
   let s = studentsCache.find(x => x.studentId === id || x.id === id);
   if(!s && typeof getDoc === 'function'){
@@ -881,11 +1032,9 @@ async function openViewStudentModal(e){
   document.getElementById('viewStuClose').onclick = closeModal;
   document.getElementById('viewStuEdit').onclick = () => {
     closeModal();
-    // call edit modal using dataset pattern your other functions expect
     openEditStudentModal({ target:{ dataset:{ id: s.studentId || s.id } } });
   };
   document.getElementById('viewStuDel').onclick = async () => {
-    // toggle delete/unblock
     if(s.status === 'deleted'){
       await updateDoc(doc(db,'students', s.studentId), { status:'active' });
       await setDoc(doc(db,'studentsLatest', s.studentId), { blocked:false }, { merge:true });
@@ -900,6 +1049,7 @@ async function openViewStudentModal(e){
     closeModal();
   };
 }
+
 
 /* ---------- Students create/edit (styling improved, logic preserved) ---------- */
 openAddStudent && (openAddStudent.onclick = () => {
