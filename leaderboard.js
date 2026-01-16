@@ -1345,7 +1345,8 @@ function showSetsSelectionModal(sets){
   };
 }
 
-/* ---------- testYourselfBtn click (auto random, no selection modal) ---------- */
+/* ---------- testYourselfBtn click (show set selection then start randomized test) ---------- */
+
 testYourselfBtn.onclick = async () => {
   const vrole = getVerifiedRole();
   if(isAdmin()){
@@ -1363,23 +1364,67 @@ testYourselfBtn.onclick = async () => {
     const sets = await loadAvailableSets();
     if(!sets || sets.length === 0) return toast('No test sets available.');
 
-    // combine all sets into one pool and shuffle (random questions, random choices)
-    let pool = [];
-    for(const s of sets){
-      const qarr = (s.questions || []).map(q => ({ ...q, _setTitle: s.title || s.id }));
-      pool = pool.concat(qarr);
-    }
-    if(pool.length === 0) return toast('No questions found.');
-    shuffleArray(pool);
+    // Build selection modal content (no random toggle — random chosen by default)
+    // Build breakdown string and total questions
+    const breakdownParts = sets.map(s => {
+      const cnt = Array.isArray(s.questions) ? s.questions.length : (s.count||0);
+      return `${escapeHtml(s.title || s.id || 'Set')} (${cnt})`;
+    });
+    const totalQs = sets.reduce((acc, s) => acc + (Array.isArray(s.questions) ? s.questions.length : (s.count||0)), 0);
 
-    // attach combined title and open test modal
-    const combinedTitle = sets.map(s => s.title || s.id).join(' + ');
-    openTestModal({ id: 'combined_'+Date.now(), title: combinedTitle, questions: pool });
+    const html = ['<div style="max-height:60vh;overflow:auto;padding-top:6px">'];
+    html.push(`<div style="margin-bottom:8px"><strong>Select sets to include</strong></div>`);
+    html.push(`<div style="margin-bottom:8px"><div class="small-muted">${breakdownParts.join(' + ')}</div></div>`);
+    html.push(`<div style="margin-bottom:12px" class="small-muted">Questions: ${totalQs}</div>`);
+    sets.forEach((s, idx) => {
+      const cnt = Array.isArray(s.questions) ? s.questions.length : (s.count||0);
+      html.push(`<div style="margin-bottom:6px"><label><input type="checkbox" class="setCheckbox" data-idx="${idx}" ${idx===0? 'checked':''}/> <strong>${escapeHtml(s.title||s.id||'Set')}</strong> — <span class="small-muted">${cnt} questions</span></label></div>`);
+    });
+    html.push('</div>');
+    html.push('<div style="text-align:right;margin-top:12px"><button id="cancelSets" class="btn">Cancel</button> <button id="startSets" class="btn btn-primary">Start test</button></div>');
+
+    showModalInner(html.join(''), { title: 'Choose tests' });
+
+    document.getElementById('cancelSets').onclick = () => closeModal();
+    document.getElementById('startSets').onclick = () => {
+      const chosenIdx = Array.from(document.querySelectorAll('.setCheckbox')).filter(cb => cb.checked).map(cb => Number(cb.dataset.idx));
+      if(chosenIdx.length === 0) return alert('Select at least one set');
+      closeModal();
+
+      // prepare chosen sets pool: shuffle questions inside each chosen set, then interleave
+      const chosenSets = chosenIdx.map(i => sets[i]);
+      // Build combined title and breakdown
+      const combinedParts = chosenSets.map(s => `${s.title || s.id} (${(Array.isArray(s.questions) ? s.questions.length : (s.count||0))})`);
+      const combinedTitle = combinedParts.join(' + ');
+      const total = chosenSets.reduce((acc,s) => acc + (Array.isArray(s.questions) ? s.questions.length : (s.count||0)), 0);
+
+      // Interleave / combine: shuffle within each set, then interleave round-robin
+      const poolPerSet = chosenSets.map(s => {
+        const qarr = (s.questions || []).map(q => ({ ...q, _setTitle: s.title || s.id }));
+        shuffleArray(qarr);
+        return qarr;
+      });
+      const interleaved = [];
+      let taken = true;
+      while(taken){
+        taken = false;
+        for(let i=0;i<poolPerSet.length;i++){
+          if(poolPerSet[i].length > 0){
+            interleaved.push(poolPerSet[i].shift());
+            taken = true;
+          }
+        }
+      }
+
+      // pass breakdown + totalQuestions to openTestModal so it can render them under the title
+      openTestModal({ id: 'combined_'+Date.now(), title: combinedTitle, questions: interleaved, breakdown: combinedTitle, totalQuestions: total });
+    };
   } catch(err){
     console.error(err);
     toast('Failed to load tests');
   }
 };
+
 
 
 
@@ -1392,123 +1437,131 @@ if (viewAllBtn) {
     renderLeaderboard();
   };
 }
+/* ---------- openTestModal (improved: breakdown, +3 popup, retry skipped) ---------- */
 
-/* ---------- openTestModal (improved) ---------- */
 function openTestModal(set){
-  // Build questions with shuffled choices (preserve correct mapping)
+  // prepare questions: shuffle choices and remap correct indexes
   const questions = (set.questions || []).map((q, idx) => {
     const orig = Array.isArray(q.choices) ? q.choices.map((c,i) => ({ text: typeof c === 'string' ? c : (c.text||String(c)), origIndex: i })) : [];
-    // shuffle choices
     shuffleArray(orig);
-    // map original correct index(s) -> new positions
     const origCorrect = Array.isArray(q.correct) ? q.correct.map(Number) : [Number(q.correct)];
     const newCorrect = [];
     orig.forEach((c, newPos) => { if(origCorrect.includes(c.origIndex)) newCorrect.push(newPos); });
     return { ...q, choices: orig.map(c => ({ text: c.text })), correct: newCorrect, _idx: idx };
   });
-  // shuffle order of questions themselves
-  shuffleArray(questions);
+  shuffleArray(questions); // questions order random
 
   const state = {
-    setId: set.id, setTitle: set.title || 'Test', questions,
+    setId: set.id, setTitle: set.title || 'Test',
+    breakdown: set.breakdown || null, totalQuestions: set.totalQuestions || questions.length,
+    questions,
     index: 0, answers: Array(questions.length).fill(null),
     correctCount: 0, skipped: 0, incorrect: 0,
     currentStreak: 0, runHighest: 0, timeoutId: null, timerSec: 20,
-    highestHolder: null,
-    pointsGained: 0
+    highestHolder: null, pointsGained: 0
   };
 
-  // modal HTML (includes small style snippets for requested colors)
+  // Modal header: breakdown / totals / highest / points appear under title (good for mobile)
+  const headerHtml = [];
+  headerHtml.push(`<div style="padding:6px 0">`);
+  headerHtml.push(`<div style="margin-bottom:6px"><strong>${escapeHtml(state.setTitle)}</strong></div>`);
+  if(state.breakdown){
+    headerHtml.push(`<div class="small-muted" id="setBreakdown">${escapeHtml(state.breakdown)}</div>`);
+  }
+  headerHtml.push(`<div class="small-muted" id="testSub">Questions: ${state.totalQuestions}</div>`);
+  headerHtml.push(`<div style="margin-top:8px" id="underTitleMeta"><div>Highest: <strong id="modalHighest">—</strong></div><div style="margin-top:4px">Points gained: <strong id="pointsGained" class="points-counter">0</strong></div></div>`);
+  headerHtml.push(`</div>`);
+
   const html = [
     `<style>
       .test-time-left{font-weight:800;color:#c92a2a} /* red bold */
-      .test-correct-text{font-weight:800;color: #0b9d58} /* green bold */
+      .test-correct-text{font-weight:800;color:#0b9d58} /* green bold */
       .test-explanation{font-weight:800;color:#0b67c9} /* blue bold */
       .q-progress{color:#0b67c9;font-weight:800} /* blue */
       .streak-current{color:#0b67c9;font-weight:700} /* blue */
       .run-highest{color:#0bbf5a;font-weight:800} /* green */
-      .highest-label{color:#c92a2a;font-weight:700} /* red */
       .loading-dots{display:inline-block}
       .loading-dots span{animation:loadingDots 1s linear infinite;display:inline-block}
       @keyframes loadingDots{0%{opacity:.2}50%{opacity:1}100%{opacity:.2}}
       .points-counter{font-weight:900}
+      .plus-popup { position: absolute; left:50%; top:45%; transform: translate(-50%, -50%); font-weight:900; font-size:28px; pointer-events:none; opacity:0; transition: transform .6s ease, opacity .6s; color:#0b67c9; }
     </style>`,
-    `<div style="padding:6px 0">
-       <div id="testHeader" style="display:flex;justify-content:space-between;align-items:center;gap:16px">
-         <div><strong>${escapeHtml(state.setTitle)}</strong><div class="small-muted" id="testSub">Questions: ${state.questions.length}</div></div>
-         <div style="text-align:right">
-           <div class="small-muted" id="testRight">Highest: —</div>
-           <div style="margin-top:6px">Points gained: <span id="pointsGained" class="points-counter">0</span></div>
-         </div>
-       </div>
-     </div>`
-  ];
-
-  html.push(`<div id="testContainer" style="margin-top:12px;"></div>`);
-  html.push(`<div class="test-footer" style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:10px">
-    <div style="display:flex;gap:8px;align-items:center">
-      <button id="toggleModalBgBtn" class="btn">BG: OFF</button>
-      <button id="toggleModalFxBtn" class="btn">FX: ON</button>
-    </div>
-    <div style="display:flex;flex-direction:column;align-items:flex-end">
-      <div class="stats-line"><span id="qProgress" class="q-progress"></span> &middot; <span id="streakInfo"><span class="streak-current">Current streak: x0</span> • <span class="run-highest">This run highest: 0</span></span></div>
-      <div style="margin-top:8px">
-        <button id="testPrev" class="btn">← Prev</button>
-        <button id="testNext" class="btn">Next →</button>
-        <button id="testFinish" class="btn btn-primary">Finish</button>
-        <button id="testCancel" class="btn">Cancel</button>
+    `<div id="testHeaderWrapper">${headerHtml.join('')}</div>`,
+    `<div id="testContainer" style="margin-top:12px;position:relative;"></div>`,
+    `<div class="test-footer" style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:10px">
+      <div style="display:flex;gap:8px;align-items:center">
+        <button id="toggleModalBgBtn" class="btn">BG: OFF</button>
+        <button id="toggleModalFxBtn" class="btn">FX: ON</button>
       </div>
-    </div>
-  </div>`);
+      <div style="display:flex;flex-direction:column;align-items:flex-end">
+        <div class="stats-line"><span id="qProgress" class="q-progress"></span> &middot; <span id="streakInfo"><span class="streak-current">Current streak: x0</span> • <span class="run-highest">This run highest: 0</span></span></div>
+        <div style="margin-top:8px">
+          <button id="testPrev" class="btn">← Prev</button>
+          <button id="testNext" class="btn">Next →</button>
+          <button id="testFinish" class="btn btn-primary">Finish</button>
+          <button id="testCancel" class="btn">Cancel</button>
+        </div>
+      </div>
+    </div>`
+  ].join('');
 
-  showModalInner(html.join(''), { title: 'Test' });
+  showModalInner(html, { title: 'Test' });
 
-  // wire modal toggle buttons
+  // wire BG / FX toggles
   (function wireModalSoundToggles(){
     const bgBtn = document.getElementById('toggleModalBgBtn');
     const fxBtn = document.getElementById('toggleModalFxBtn');
     if(!bgBtn || !fxBtn) return;
     bgBtn.textContent = `BG: ${SoundManager.bgEnabled ? 'ON' : 'OFF'}`;
     fxBtn.textContent = `FX: ${SoundManager.effectsEnabled ? 'ON' : 'OFF'}`;
-
     bgBtn.onclick = () => { const newOn = !SoundManager.bgEnabled; SoundManager.setBgEnabled(newOn); bgBtn.textContent = `BG: ${newOn ? 'ON' : 'OFF'}`; };
     fxBtn.onclick = () => { const newOn = !SoundManager.effectsEnabled; SoundManager.setEffectsEnabled(newOn); fxBtn.textContent = `FX: ${newOn ? 'ON' : 'OFF'}`; };
-
     if(SoundManager.bgEnabled) SoundManager.setBgEnabled(true);
   })();
 
-  // fetch highest holder then render first question
-  getHighestStreakHolder().then(h => { state.highestHolder = h; renderQuestion(); }).catch(()=>renderQuestion());
+  // populate highest now
+  getHighestStreakHolder().then(h => {
+    state.highestHolder = h;
+    const mh = document.getElementById('modalHighest');
+    if(mh) mh.textContent = h ? `${h.runHighest} • ${h.studentName || h.studentId || '—'}` : (currentCompetition?.highestStreak || 0);
+    renderQuestion();
+  }).catch(()=> renderQuestion());
 
   const testContainer = document.getElementById('testContainer');
 
-  // RENDER a question
-  function renderQuestion(){
-    const headerRight = document.getElementById('testRight');
-    if(headerRight){
-      if(state.highestHolder){
-        headerRight.innerHTML = `Highest: <span class="run-highest">${state.highestHolder.runHighest}</span> • ${escapeHtml(state.highestHolder.studentName || state.highestHolder.studentId || '—')}`;
-      } else {
-        headerRight.textContent = `Highest: ${currentCompetition?.highestStreak || 0}`;
-      }
-    }
+  // helper: show +N popup (center of modal)
+  function showPlusPopup(text){
+    const modalBox = document.querySelector('#modalRoot .modal');
+    if(!modalBox) return;
+    const popup = document.createElement('div');
+    popup.className = 'plus-popup';
+    popup.textContent = text;
+    modalBox.appendChild(popup);
+    // force reflow then animate
+    requestAnimationFrame(()=> {
+      popup.style.opacity = '1';
+      popup.style.transform = 'translate(-50%, -120%) scale(1.05)';
+    });
+    setTimeout(()=> {
+      popup.style.opacity = '0';
+      popup.style.transform = 'translate(-50%, -160%) scale(.95)';
+      setTimeout(()=> popup.remove(), 600);
+    }, 700);
+  }
 
+  function renderQuestion(){
     const q = state.questions[state.index];
     if(!q){ testContainer.innerHTML = '<div class="small-muted">No question</div>'; return; }
+    const qNum = state.index + 1, total = state.questions.length;
+    state.timerSec = q.timeLimit || 20;
 
-    const qNum = state.index + 1;
-    const total = state.questions.length;
-    const timeLimit = q.timeLimit || 20;
-    state.timerSec = timeLimit;
-
-    // choices HTML (q.choices already shuffled during init)
-    const choicesHtml = q.choices.map((c, i) => {
+    // build choices (they were already randomized when creating questions)
+    const choicesHtml = q.choices.map((c,i) => {
       const answered = state.answers[state.index];
       const isSelected = answered && Array.isArray(answered.selected) && answered.selected.includes(i);
       const correctArr = Array.isArray(q.correct) ? q.correct.map(Number) : [Number(q.correct)];
       const isCorrectChoice = correctArr.includes(i);
-      let cls = '';
-      let meta = '';
+      let cls = '', meta = '';
       if(answered){
         if(isCorrectChoice && isSelected){ cls = 'choice-correct choice-selected'; meta = '<span class="choice-meta">✓</span>'; }
         else if(isCorrectChoice && !isSelected){ cls = 'choice-correct'; meta = '<span class="choice-meta">✓</span>'; }
@@ -1525,21 +1578,19 @@ function openTestModal(set){
         <div style="margin-top:8px" id="explanationArea"></div>
       </div>`;
 
-    // click handlers for choices
+    // wire choice clicks
     testContainer.querySelectorAll('.choices label').forEach(lbl => {
       lbl.onclick = () => {
         if(state.answers[state.index] !== null) return;
         const idx = Number(lbl.dataset.choiceIndex || lbl.getAttribute('data-choice-index') || lbl.id.split('_').pop());
-        const isMulti = Array.isArray(q.correct) && q.correct.length > 1;
-        const selected = isMulti ? [idx] : [idx];
+        const selected = [idx]; // single select
         submitAnswer(state.index, selected);
       };
     });
 
-    // progress & streak UI
+    // progress/streak
     const qProgress = document.getElementById('qProgress');
-    if(qProgress) qProgress.innerHTML = `<span class="q-progress">Question ${qNum} / ${total}</span>`;
-
+    if(qProgress) qProgress.textContent = `Question ${qNum} / ${total}`;
     const streakInfo = document.getElementById('streakInfo');
     if(streakInfo) streakInfo.innerHTML = `<span class="streak-current">Current streak: x${state.currentStreak}</span> • <span class="run-highest">${state.runHighest}</span>`;
 
@@ -1547,8 +1598,7 @@ function openTestModal(set){
     if(state.timeoutId) clearInterval(state.timeoutId);
     state.timeoutId = setInterval(() => {
       state.timerSec--;
-      const timeLeft = document.getElementById('timeLeft');
-      if(timeLeft) timeLeft.textContent = state.timerSec;
+      const timeLeft = document.getElementById('timeLeft'); if(timeLeft) timeLeft.textContent = state.timerSec;
       if(state.timerSec <= 0){
         clearInterval(state.timeoutId); state.timeoutId = null;
         if(state.answers[state.index] === null) submitAnswer(state.index, []);
@@ -1557,7 +1607,6 @@ function openTestModal(set){
     }, 1000);
   }
 
-  // submitAnswer: play sounds without awaiting, update UI immediately
   async function submitAnswer(qIndex, selectedIndexes){
     const q = state.questions[qIndex];
     const correctArr = Array.isArray(q.correct) ? q.correct.map(Number) : [Number(q.correct)];
@@ -1568,24 +1617,22 @@ function openTestModal(set){
       state.correctCount++;
       state.currentStreak++;
       state.runHighest = Math.max(state.runHighest, state.currentStreak);
-      // play sound but DO NOT await so UI updates immediately
-      try { SoundManager.playCorrect && SoundManager.playCorrect(); } catch(e){/* ignore */ }
-
-      // update immediate points gained (3 points per correct)
+      try { SoundManager.playCorrect && SoundManager.playCorrect(); } catch(e){}
+      // immediate points update
       state.pointsGained += 3;
-      const pg = document.getElementById('pointsGained');
-      if(pg) pg.textContent = state.pointsGained;
-
+      const pg = document.getElementById('pointsGained'); if(pg) pg.textContent = state.pointsGained;
+      // show +3 popup
+      showPlusPopup('+3');
       if([10,20,30,40,50,60,70,80,90,100].includes(state.currentStreak)){
-        try { SoundManager.playStreak && SoundManager.playStreak(state.currentStreak); } catch(e) {}
+        try { SoundManager.playStreak && SoundManager.playStreak(state.currentStreak); } catch(e){}
       }
     } else {
       if(selectedIndexes.length === 0) state.skipped++; else state.incorrect++;
       state.currentStreak = 0;
-      try { SoundManager.playIncorrect && SoundManager.playIncorrect(); } catch(e) {}
+      try { SoundManager.playIncorrect && SoundManager.playIncorrect(); } catch(e){}
     }
 
-    // show result text & explanation immediately
+    // immediate explanation and marking labels
     const correctText = correctArr.map(i => escapeHtml(q.choices[i]?.text || q.choices[i] || '')).join(', ');
     const explanationArea = document.getElementById('explanationArea');
     if(explanationArea){
@@ -1596,27 +1643,21 @@ function openTestModal(set){
       }
     }
 
-    // mark labels
     state.questions[qIndex].choices.forEach((c,i) => {
       const lbl = document.getElementById(`label_${qIndex}_${i}`);
       if(!lbl) return;
       const isSelected = state.answers[qIndex].selected.includes(i);
       if(correctArr.includes(i)){
-        lbl.classList.add('choice-correct'); lbl.classList.remove('choice-wrong');
-        lbl.innerHTML = `${escapeHtml(c.text||'')}<span class="choice-meta">✓</span>`;
+        lbl.classList.add('choice-correct'); lbl.classList.remove('choice-wrong'); lbl.innerHTML = `${escapeHtml(c.text||'')}<span class="choice-meta">✓</span>`;
       } else if(isSelected){
-        lbl.classList.add('choice-wrong'); lbl.classList.remove('choice-correct');
-        lbl.innerHTML = `${escapeHtml(c.text||'')}<span class="choice-meta">✖</span>`;
+        lbl.classList.add('choice-wrong'); lbl.classList.remove('choice-correct'); lbl.innerHTML = `${escapeHtml(c.text||'')}<span class="choice-meta">✖</span>`;
       } else {
         lbl.innerHTML = `${escapeHtml(c.text||'')}`;
       }
       if(isSelected) lbl.classList.add('choice-selected');
     });
 
-    // clear timer for this question
     if(state.timeoutId){ clearInterval(state.timeoutId); state.timeoutId = null; }
-
-    // update streak UI
     const streakInfo = document.getElementById('streakInfo');
     if(streakInfo) streakInfo.innerHTML = `<span class="streak-current">Current streak: x${state.currentStreak}</span> • <span class="run-highest">${state.runHighest}</span>`;
   }
@@ -1628,33 +1669,55 @@ function openTestModal(set){
   document.getElementById('testNext').onclick = goNext;
   document.getElementById('testCancel').onclick = () => { if(confirm('Cancel test? Progress will be lost.')) closeModal(); };
 
-  // Finish: show immediate summary (loading) then save in background and replace content when done
+  // Finish handler: if there are skipped (unanswered) items, ask to retry them first
   document.getElementById('testFinish').onclick = async () => {
     if(state.timeoutId){ clearInterval(state.timeoutId); state.timeoutId = null; }
 
-    // compute stats
+    const unansweredIdx = state.questions.map((_,i)=> i).filter(i => state.answers[i] === null);
+    if(unansweredIdx.length > 0){
+      // prompt user
+      const retry = confirm(`You have ${unansweredIdx.length} unanswered question(s). Retry them now? (Yes → retry skipped questions randomly. No → finish and save.)`);
+      if(retry){
+        // build new question list from unanswered, shuffle questions and their choices
+        const newQs = unansweredIdx.map(i => {
+          const old = state.questions[i];
+          const orig = Array.isArray(old.choices) ? old.choices.map((c, idx) => ({ text: c.text || String(c), origIndex: idx })) : [];
+          shuffleArray(orig);
+          const origCorrect = Array.isArray(old.correct) ? old.correct.map(Number) : [Number(old.correct)];
+          const newCorrect = [];
+          orig.forEach((cNew, newPos) => { if(origCorrect.includes(cNew.origIndex)) newCorrect.push(newPos); });
+          return { ...old, choices: orig.map(c=>({ text: c.text })), correct: newCorrect };
+        });
+        shuffleArray(newQs);
+        // replace state.questions with the new set; reset answers for this pass
+        state.questions = newQs;
+        state.answers = Array(newQs.length).fill(null);
+        state.index = 0;
+        state.skipped = 0; // reset skipped for the retry pass
+        renderQuestion();
+        return;
+      }
+      // else proceed to finish & save
+    }
+
+    // proceed to compute stats and save
     const correct = state.correctCount;
     const incorrect = state.incorrect;
     const skipped = state.skipped + state.questions.filter((_,i)=> state.answers[i] === null).length;
     const total = state.questions.length;
-    const scoreDelta = correct * 3;
+    const scoreDelta = state.pointsGained; // we've been tracking pointsGained live
 
-    // immediate "saving" modal content with animated dots
     showModalInner(`<div style="padding:12px"><h3>Saving results</h3><div style="margin-top:10px">Please wait <span class="loading-dots"><span>•</span><span style="animation-delay:.12s">•</span><span style="animation-delay:.24s">•</span></span></div></div>`, { title: 'Saving' });
 
     try {
-      // create result payload
       const studentUidForPayload = currentUser?.uid || auth?.currentUser?.uid || null;
       const resultPayload = {
         setId: state.setId, setTitle: state.setTitle, studentUid: studentUidForPayload, studentId: currentStudentId,
         studentName: currentStudentName || '', correct, incorrect, skipped, total, scoreDelta, runHighest: state.runHighest, currentStreak: state.currentStreak,
         createdAt: serverTimestamp()
       };
-
-      // write test result
       await addDoc(collection(db,'testResults'), resultPayload);
 
-      // update competition score in transaction (if verified)
       if(currentCompetition && currentStudentId){
         const scoreDocId = `${currentCompetition.id}_${currentStudentId}`;
         await runTransaction(db, async (t) => {
@@ -1666,17 +1729,14 @@ function openTestModal(set){
         });
       }
 
-      // update competition highest streak if needed
       if(currentCompetition && state.runHighest > (currentCompetition.highestStreak || 0)){
         await updateDoc(doc(db,'competitions', currentCompetition.id), { highestStreak: state.runHighest, highestStreakHolder: currentStudentId || '', highestStreakHolderName: currentStudentName || '', updatedAt: serverTimestamp() });
         currentCompetition.highestStreak = state.runHighest;
       }
 
-      // reload scores
       const holder = await getHighestStreakHolder();
       await loadCompetitionScores();
 
-      // show final summary (replace modal content)
       const holderText = holder ? `${holder.runHighest} — ${escapeHtml(holder.studentName || holder.studentId || '')}` : '—';
       const studentNameHtml = currentStudentName ? ` — ${escapeHtml(currentStudentName)}` : '';
       showModalInner(`<div>
@@ -1696,15 +1756,19 @@ function openTestModal(set){
     }
   };
 
-  // keyboard nav + clean removal on close
+  // keyboard nav
   window.addEventListener('keydown', keyHandler);
   function keyHandler(e){ if(e.key === 'ArrowLeft') goPrev(); if(e.key === 'ArrowRight') goNext(); }
+
   // cleanup when modal closed via close button
   const origClose = closeModal;
   const newClose = () => { window.removeEventListener('keydown', keyHandler); origClose(); };
   const modalCloseBtn = document.getElementById('modalCloseBtn');
   if(modalCloseBtn) modalCloseBtn.onclick = newClose;
+
+  renderQuestion();
 }
+
 
 
 /* ---------- admin adjust points modal (existing logic) ---------- */
