@@ -1046,36 +1046,41 @@ ensureShortNames()
 
 /* ---------- admin student settings modal ---------- */
 function openStudentSettingsModal(studentId, scoreDocId){
-  // admin-only guard
   if(!isAdmin()) { toast('Only admin may access settings'); return; }
 
   showModalInner(`<div>
-    <div style="display:flex;justify-content:space-between;align-items:center">
-      <div><strong>Student: ${escapeHtml(studentId)}</strong><div id="settingsStudentName" class="small-muted"></div></div>
-      <div id="settingsCurrentPoints" class="small-muted" style="text-align:right">Points: —</div>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+      <div style="min-width:0"><strong>Student: ${escapeHtml(studentId)}</strong><div id="settingsStudentName" class="small-muted"></div></div>
+      <div id="settingsCurrentPoints" class="small-muted" style="text-align:right;min-width:120px">Points: —</div>
     </div>
 
     <hr style="margin:8px 0"/>
 
-    <!-- Points adjust area -->
+    <!-- Points adjust area (stacked on narrow screens) -->
     <div id="pointsAdjustArea">
       <label style="font-weight:700">Adjust points</label>
-      <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
-        <button id="ptsDec" class="btn">−</button>
-        <input id="ptsValue" type="number" value="0" class="input-small" style="width:100px;text-align:center"/>
-        <button id="ptsInc" class="btn">+</button>
-        <input id="ptsReason" placeholder="Reason (optional)" style="flex:1;border:1px solid #e6eefc;padding:6px;border-radius:6px" />
-        <button id="applyPoints" class="btn btn-primary">Apply</button>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap">
+        <div style="display:flex;gap:8px;align-items:center">
+          <button id="ptsDec" class="btn">−</button>
+          <input id="ptsValue" type="number" value="0" class="input-small" style="width:100px;text-align:center"/>
+          <button id="ptsInc" class="btn">+</button>
+        </div>
+        <div style="flex-basis:100%;height:0"></div>
+        <div style="width:100%">
+          <input id="ptsReason" placeholder="Reason (optional)" style="width:100%;border:1px solid #e6eefc;padding:8px;border-radius:6px" />
+        </div>
+        <div style="width:100%;display:flex;justify-content:flex-end;margin-top:6px">
+          <button id="applyPoints" class="btn btn-primary">Apply</button>
+        </div>
       </div>
       <div class="small-muted" style="margin-top:6px">Use + / − to increment, then Apply to save (writes history).</div>
     </div>
 
     <hr style="margin:8px 0"/>
 
-    <!-- Reset BIN area (hidden until clicked) -->
     <div id="resetBinArea">
       <label style="font-weight:700">Reset BIN</label>
-      <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
+      <div style="display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap">
         <button id="revealResetBin" class="btn">Reset</button>
         <div id="resetBinInputs" style="display:none;width:100%;margin-left:8px">
           <input id="resetBinValue" class="input-small" placeholder="1234" style="width:120px"/>
@@ -1087,11 +1092,10 @@ function openStudentSettingsModal(studentId, scoreDocId){
 
     <hr style="margin:8px 0"/>
 
-    <!-- Block/Unblock and Save -->
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px">
-      <div>
+    <div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;margin-top:8px;gap:8px">
+      <div style="display:flex;gap:8px;align-items:center">
         <button id="settingsToggleBlock" class="btn">...</button>
-        <span class="small-muted" id="blockedNote" style="margin-left:8px"></span>
+        <span class="small-muted" id="blockedNote"></span>
       </div>
       <div style="display:flex;gap:8px">
         <button id="settingsCancel" class="btn">Cancel</button>
@@ -1102,7 +1106,6 @@ function openStudentSettingsModal(studentId, scoreDocId){
 
   const sRef = doc(db,'students', studentId);
 
-  // Populate existing state
   (async ()=>{
     try {
       const sSnap = await getDoc(sRef);
@@ -1122,7 +1125,6 @@ function openStudentSettingsModal(studentId, scoreDocId){
         toggle.textContent = 'Block';
       }
 
-      // try to fetch current competitionPoints doc if present
       if(scoreDocId){
         const scoreSnap = await getDoc(doc(db,'competitionScores', scoreDocId));
         if(scoreSnap.exists()){
@@ -1137,7 +1139,6 @@ function openStudentSettingsModal(studentId, scoreDocId){
     } catch(e){ console.warn(e); }
   })();
 
-  // Toggle block button flips local desired state
   document.getElementById('settingsToggleBlock').onclick = () => {
     const btn = document.getElementById('settingsToggleBlock');
     btn.dataset.desired = (btn.dataset.desired === 'true') ? 'false' : 'true';
@@ -1145,7 +1146,7 @@ function openStudentSettingsModal(studentId, scoreDocId){
     document.getElementById('blockedNote').textContent = btn.dataset.desired === 'true' ? '' : '';
   };
 
-  // Points increment/decrement wiring
+  // Points handlers
   const ptsInc = document.getElementById('ptsInc');
   const ptsDec = document.getElementById('ptsDec');
   const ptsValue = document.getElementById('ptsValue');
@@ -1175,7 +1176,6 @@ function openStudentSettingsModal(studentId, scoreDocId){
     } catch(err){ console.error(err); alert('Update failed'); }
   };
 
-  // Reveal Reset BIN inputs
   document.getElementById('revealResetBin').onclick = () => {
     document.getElementById('resetBinInputs').style.display = '';
     document.getElementById('resetBinValue').focus();
@@ -1191,7 +1191,6 @@ function openStudentSettingsModal(studentId, scoreDocId){
     } catch(e){ console.error(e); toast('Failed to save BIN'); }
   };
 
-  // Save button (block/unblock + optional other fields)
   document.getElementById('settingsSave').onclick = async () => {
     try {
       if(!isAdmin()) { toast('Only admins'); return; }
@@ -1214,6 +1213,7 @@ function openStudentSettingsModal(studentId, scoreDocId){
 
   document.getElementById('settingsCancel').onclick = () => closeModal();
 }
+
 
 /* ---------- View around me / show your rank inline ---------- */
 viewAroundBtn.onclick = async () => {
@@ -1345,28 +1345,42 @@ function showSetsSelectionModal(sets){
   };
 }
 
+/* ---------- testYourselfBtn click (auto random, no selection modal) ---------- */
 testYourselfBtn.onclick = async () => {
   const vrole = getVerifiedRole();
-  // admin cannot take tests
   if(isAdmin()){
     showModalInner(`<div><div class="small-muted">You are verified as an admin and cannot take tests. If you want to test, create/verify a student account first.</div><div style="text-align:right;margin-top:12px"><button id="adminTestClose" class="btn btn-primary">Close</button></div></div>`, { title: 'Admin — cannot test' });
     document.getElementById('adminTestClose').onclick = () => closeModal();
     return;
   }
   if(vrole !== 'student'){
-    // clearer message + show verify modal
     toast('You are not verified — please verify as a student to take tests.');
     showStudentVerifyModal();
     return;
   }
 
-  // verified student -> load tests
   try {
     const sets = await loadAvailableSets();
     if(!sets || sets.length === 0) return toast('No test sets available.');
-    return showSetsSelectionModal(sets);
-  } catch(err){ console.error(err); toast('Failed to load tests'); }
+
+    // combine all sets into one pool and shuffle (random questions, random choices)
+    let pool = [];
+    for(const s of sets){
+      const qarr = (s.questions || []).map(q => ({ ...q, _setTitle: s.title || s.id }));
+      pool = pool.concat(qarr);
+    }
+    if(pool.length === 0) return toast('No questions found.');
+    shuffleArray(pool);
+
+    // attach combined title and open test modal
+    const combinedTitle = sets.map(s => s.title || s.id).join(' + ');
+    openTestModal({ id: 'combined_'+Date.now(), title: combinedTitle, questions: pool });
+  } catch(err){
+    console.error(err);
+    toast('Failed to load tests');
+  }
 };
+
 
 
 // Toggle "show all scorers" inline under the top list
@@ -1381,11 +1395,18 @@ if (viewAllBtn) {
 
 /* ---------- openTestModal (improved) ---------- */
 function openTestModal(set){
+  // Build questions with shuffled choices (preserve correct mapping)
   const questions = (set.questions || []).map((q, idx) => {
-    const choices = Array.isArray(q.choices) ? q.choices.map(c => ({ text: typeof c === 'string' ? c : (c.text||String(c)) })) : [];
-    const correct = q.correct;
-    return { ...q, choices, correct, _idx: idx };
+    const orig = Array.isArray(q.choices) ? q.choices.map((c,i) => ({ text: typeof c === 'string' ? c : (c.text||String(c)), origIndex: i })) : [];
+    // shuffle choices
+    shuffleArray(orig);
+    // map original correct index(s) -> new positions
+    const origCorrect = Array.isArray(q.correct) ? q.correct.map(Number) : [Number(q.correct)];
+    const newCorrect = [];
+    orig.forEach((c, newPos) => { if(origCorrect.includes(c.origIndex)) newCorrect.push(newPos); });
+    return { ...q, choices: orig.map(c => ({ text: c.text })), correct: newCorrect, _idx: idx };
   });
+  // shuffle order of questions themselves
   shuffleArray(questions);
 
   const state = {
@@ -1393,94 +1414,95 @@ function openTestModal(set){
     index: 0, answers: Array(questions.length).fill(null),
     correctCount: 0, skipped: 0, incorrect: 0,
     currentStreak: 0, runHighest: 0, timeoutId: null, timerSec: 20,
-    highestHolder: null
+    highestHolder: null,
+    pointsGained: 0
   };
 
+  // modal HTML (includes small style snippets for requested colors)
   const html = [
+    `<style>
+      .test-time-left{font-weight:800;color:#c92a2a} /* red bold */
+      .test-correct-text{font-weight:800;color: #0b9d58} /* green bold */
+      .test-explanation{font-weight:800;color:#0b67c9} /* blue bold */
+      .q-progress{color:#0b67c9;font-weight:800} /* blue */
+      .streak-current{color:#0b67c9;font-weight:700} /* blue */
+      .run-highest{color:#0bbf5a;font-weight:800} /* green */
+      .highest-label{color:#c92a2a;font-weight:700} /* red */
+      .loading-dots{display:inline-block}
+      .loading-dots span{animation:loadingDots 1s linear infinite;display:inline-block}
+      @keyframes loadingDots{0%{opacity:.2}50%{opacity:1}100%{opacity:.2}}
+      .points-counter{font-weight:900}
+    </style>`,
     `<div style="padding:6px 0">
-       <div id="testHeader" style="display:flex;justify-content:space-between;align-items:center">
+       <div id="testHeader" style="display:flex;justify-content:space-between;align-items:center;gap:16px">
          <div><strong>${escapeHtml(state.setTitle)}</strong><div class="small-muted" id="testSub">Questions: ${state.questions.length}</div></div>
-         <div class="small-muted" id="testRight">Highest: —</div>
+         <div style="text-align:right">
+           <div class="small-muted" id="testRight">Highest: —</div>
+           <div style="margin-top:6px">Points gained: <span id="pointsGained" class="points-counter">0</span></div>
+         </div>
        </div>
      </div>`
   ];
-  html.push(`<div id="testContainer"></div>`);
-  html.push(`<div class="test-footer" style="display:flex;justify-content:space-between;align-items:center;gap:12px">
-  <div style="display:flex;gap:8px;align-items:center">
-    <button id="toggleModalBgBtn" class="btn">BG: OFF</button>
-    <button id="toggleModalFxBtn" class="btn">FX: ON</button>
-  </div>
-  <div style="display:flex;flex-direction:column;align-items:flex-end">
-    <div class="stats-line"><span id="qProgress"></span> <span id="streakInfo"></span></div>
-    <div style="margin-top:6px"><button id="testPrev" class="btn">← Prev</button> <button id="testNext" class="btn">Next →</button> <button id="testFinish" class="btn btn-primary">Finish</button> <button id="testCancel" class="btn">Cancel</button></div>
-  </div>
-</div>
-`);
 
-  // Insert modal first (DOM elements will exist after this)
+  html.push(`<div id="testContainer" style="margin-top:12px;"></div>`);
+  html.push(`<div class="test-footer" style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:10px">
+    <div style="display:flex;gap:8px;align-items:center">
+      <button id="toggleModalBgBtn" class="btn">BG: OFF</button>
+      <button id="toggleModalFxBtn" class="btn">FX: ON</button>
+    </div>
+    <div style="display:flex;flex-direction:column;align-items:flex-end">
+      <div class="stats-line"><span id="qProgress" class="q-progress"></span> &middot; <span id="streakInfo"><span class="streak-current">Current streak: x0</span> • <span class="run-highest">This run highest: 0</span></span></div>
+      <div style="margin-top:8px">
+        <button id="testPrev" class="btn">← Prev</button>
+        <button id="testNext" class="btn">Next →</button>
+        <button id="testFinish" class="btn btn-primary">Finish</button>
+        <button id="testCancel" class="btn">Cancel</button>
+      </div>
+    </div>
+  </div>`);
+
   showModalInner(html.join(''), { title: 'Test' });
 
-    // ----------------------------
-  // SOUND TOGGLE BUTTONS (modal-level)
-  // ----------------------------
+  // wire modal toggle buttons
   (function wireModalSoundToggles(){
-    // The SoundManager must be imported/available in this file scope.
     const bgBtn = document.getElementById('toggleModalBgBtn');
     const fxBtn = document.getElementById('toggleModalFxBtn');
     if(!bgBtn || !fxBtn) return;
-
-    // initialize labels from current manager state
     bgBtn.textContent = `BG: ${SoundManager.bgEnabled ? 'ON' : 'OFF'}`;
     fxBtn.textContent = `FX: ${SoundManager.effectsEnabled ? 'ON' : 'OFF'}`;
 
-    bgBtn.onclick = () => {
-      const newOn = !SoundManager.bgEnabled;
-      SoundManager.setBgEnabled(newOn);
-      bgBtn.textContent = `BG: ${newOn ? 'ON' : 'OFF'}`;
-    };
+    bgBtn.onclick = () => { const newOn = !SoundManager.bgEnabled; SoundManager.setBgEnabled(newOn); bgBtn.textContent = `BG: ${newOn ? 'ON' : 'OFF'}`; };
+    fxBtn.onclick = () => { const newOn = !SoundManager.effectsEnabled; SoundManager.setEffectsEnabled(newOn); fxBtn.textContent = `FX: ${newOn ? 'ON' : 'OFF'}`; };
 
-    fxBtn.onclick = () => {
-      const newOn = !SoundManager.effectsEnabled;
-      SoundManager.setEffectsEnabled(newOn);
-      fxBtn.textContent = `FX: ${newOn ? 'ON' : 'OFF'}`;
-    };
-
-    // if bg is enabled we start it (safe; may be blocked until user interacts)
     if(SoundManager.bgEnabled) SoundManager.setBgEnabled(true);
   })();
 
-
-  // now it's safe to fetch async data and then render
-  getHighestStreakHolder().then(h => {
-    state.highestHolder = h;
-    // only call renderQuestion AFTER the modal DOM is present
-    renderQuestion();
-  }).catch(()=>{ /* ignore errors */ });
+  // fetch highest holder then render first question
+  getHighestStreakHolder().then(h => { state.highestHolder = h; renderQuestion(); }).catch(()=>renderQuestion());
 
   const testContainer = document.getElementById('testContainer');
 
+  // RENDER a question
   function renderQuestion(){
     const headerRight = document.getElementById('testRight');
-    try {
-      if(headerRight) {
-        if(state.highestHolder){
-          headerRight.textContent = `Highest: ${state.highestHolder.runHighest} • ${state.highestHolder.studentName || state.highestHolder.studentId || '—'}`;
-        } else {
-          headerRight.textContent = `Highest: ${currentCompetition?.highestStreak || 0}`;
-        }
+    if(headerRight){
+      if(state.highestHolder){
+        headerRight.innerHTML = `Highest: <span class="run-highest">${state.highestHolder.runHighest}</span> • ${escapeHtml(state.highestHolder.studentName || state.highestHolder.studentId || '—')}`;
+      } else {
+        headerRight.textContent = `Highest: ${currentCompetition?.highestStreak || 0}`;
       }
-    } catch(e){ /* ignore DOM write errors */ }
-    
+    }
 
     const q = state.questions[state.index];
     if(!q){ testContainer.innerHTML = '<div class="small-muted">No question</div>'; return; }
+
     const qNum = state.index + 1;
     const total = state.questions.length;
     const timeLimit = q.timeLimit || 20;
     state.timerSec = timeLimit;
 
+    // choices HTML (q.choices already shuffled during init)
     const choicesHtml = q.choices.map((c, i) => {
-      // when answered show selected stylings
       const answered = state.answers[state.index];
       const isSelected = answered && Array.isArray(answered.selected) && answered.selected.includes(i);
       const correctArr = Array.isArray(q.correct) ? q.correct.map(Number) : [Number(q.correct)];
@@ -1495,104 +1517,109 @@ function openTestModal(set){
       return `<label class="${cls}" data-choice-index="${i}" id="label_${state.index}_${i}">${escapeHtml(c.text||'')}${meta}</label>`;
     }).join('');
 
-    testContainer.innerHTML = `<div style="margin-bottom:8px"><div style="font-size:1.05rem;margin-bottom:8px">${escapeHtml(q.text)}</div>
-      <div class="choices">${choicesHtml}</div>
-      <div style="margin-top:8px" class="small-muted">Time left: <span id="timeLeft">${state.timerSec}</span>s</div>
-      <div style="margin-top:8px" id="explanationArea"></div></div>`;
+    testContainer.innerHTML = `
+      <div style="margin-bottom:8px">
+        <div style="font-size:1.05rem;margin-bottom:8px">${escapeHtml(q.text)}</div>
+        <div class="choices">${choicesHtml}</div>
+        <div style="margin-top:8px" class="small-muted">Time left: <span id="timeLeft" class="test-time-left">${state.timerSec}</span>s</div>
+        <div style="margin-top:8px" id="explanationArea"></div>
+      </div>`;
 
-    // wire new labels to inputs (we implement click-on-label to submit)
+    // click handlers for choices
     testContainer.querySelectorAll('.choices label').forEach(lbl => {
       lbl.onclick = () => {
-        // ignore if already answered
         if(state.answers[state.index] !== null) return;
         const idx = Number(lbl.dataset.choiceIndex || lbl.getAttribute('data-choice-index') || lbl.id.split('_').pop());
-        // determine if multiple-answer (checkbox) — if q.correct is array length > 1 treat as multi; here we treat as single by default
         const isMulti = Array.isArray(q.correct) && q.correct.length > 1;
-        const selected = isMulti ? [idx] : [idx]; // we only allow single selection via click
+        const selected = isMulti ? [idx] : [idx];
         submitAnswer(state.index, selected);
       };
     });
 
-    // update progress + streak
+    // progress & streak UI
     const qProgress = document.getElementById('qProgress');
-    if(qProgress) qProgress.textContent = `Question ${qNum} / ${total}`;
+    if(qProgress) qProgress.innerHTML = `<span class="q-progress">Question ${qNum} / ${total}</span>`;
+
     const streakInfo = document.getElementById('streakInfo');
-    if(streakInfo) streakInfo.textContent = `Current streak: x${state.currentStreak} • This run highest: ${state.runHighest}`;
+    if(streakInfo) streakInfo.innerHTML = `<span class="streak-current">Current streak: x${state.currentStreak}</span> • <span class="run-highest">${state.runHighest}</span>`;
 
     // timer
     if(state.timeoutId) clearInterval(state.timeoutId);
     state.timeoutId = setInterval(() => {
       state.timerSec--;
       const timeLeft = document.getElementById('timeLeft');
-     if(timeLeft) timeLeft.textContent = state.timerSec;
-
-
+      if(timeLeft) timeLeft.textContent = state.timerSec;
       if(state.timerSec <= 0){
-        clearInterval(state.timeoutId);
-        state.timeoutId = null;
-        if(state.answers[state.index] === null) submitAnswer(state.index, []); // empty
-        // auto move
+        clearInterval(state.timeoutId); state.timeoutId = null;
+        if(state.answers[state.index] === null) submitAnswer(state.index, []);
         setTimeout(()=> goNext(), 350);
       }
     }, 1000);
   }
 
-// change: make submitAnswer async
-async function submitAnswer(qIndex, selectedIndexes){
-  const q = state.questions[qIndex];
-  const correctArr = Array.isArray(q.correct) ? q.correct.map(Number) : [Number(q.correct)];
-  const isCorrect = arraysEqualNoOrder(correctArr.map(String), selectedIndexes.map(String));
-  state.answers[qIndex] = { selected: selectedIndexes, correct: isCorrect, timeLeft: state.timerSec };
+  // submitAnswer: play sounds without awaiting, update UI immediately
+  async function submitAnswer(qIndex, selectedIndexes){
+    const q = state.questions[qIndex];
+    const correctArr = Array.isArray(q.correct) ? q.correct.map(Number) : [Number(q.correct)];
+    const isCorrect = arraysEqualNoOrder(correctArr.map(String), selectedIndexes.map(String));
+    state.answers[qIndex] = { selected: selectedIndexes, correct: isCorrect, timeLeft: state.timerSec };
 
-  if(isCorrect){
-    state.correctCount++;
-    state.currentStreak++;
-    state.runHighest = Math.max(state.runHighest, state.currentStreak);
-    // play sound but make sure errors are swallowed
-    try { await Promise.resolve(SoundManager.playCorrect && SoundManager.playCorrect()); } catch(e) { /* ignore */ }
-
-    if([10,20,30,40,50,60,70,80,90,100].includes(state.currentStreak)){
-      try { await Promise.resolve(SoundManager.playStreak && SoundManager.playStreak(state.currentStreak)); } catch(e) {}
-    }
-  } else {
-    if(selectedIndexes.length === 0) state.skipped++; else state.incorrect++;
-    state.currentStreak = 0;
-    try { await Promise.resolve(SoundManager.playIncorrect && SoundManager.playIncorrect()); } catch(e) { /* ignore */ }
-  }
-
-  // rest of your existing UI update code unchanged...
-  const correctText = correctArr.map(i => escapeHtml(q.choices[i]?.text || q.choices[i] || '')).join(', ');
-  const explanationArea = document.getElementById('explanationArea');
-  if(explanationArea){
     if(isCorrect){
-      explanationArea.innerHTML = `<div style="color:green;font-weight:700">✓ Correct</div><div class="small-muted">${escapeHtml(q.explanation || '')}</div>`;
+      state.correctCount++;
+      state.currentStreak++;
+      state.runHighest = Math.max(state.runHighest, state.currentStreak);
+      // play sound but DO NOT await so UI updates immediately
+      try { SoundManager.playCorrect && SoundManager.playCorrect(); } catch(e){/* ignore */ }
+
+      // update immediate points gained (3 points per correct)
+      state.pointsGained += 3;
+      const pg = document.getElementById('pointsGained');
+      if(pg) pg.textContent = state.pointsGained;
+
+      if([10,20,30,40,50,60,70,80,90,100].includes(state.currentStreak)){
+        try { SoundManager.playStreak && SoundManager.playStreak(state.currentStreak); } catch(e) {}
+      }
     } else {
-      explanationArea.innerHTML = `<div style="color:#d43f3f;font-weight:700">✖ Incorrect</div><div class="small-muted">Correct answer: ${correctText}</div><div class="small-muted" style="margin-top:6px">${escapeHtml(q.explanation || '')}</div>`;
+      if(selectedIndexes.length === 0) state.skipped++; else state.incorrect++;
+      state.currentStreak = 0;
+      try { SoundManager.playIncorrect && SoundManager.playIncorrect(); } catch(e) {}
     }
+
+    // show result text & explanation immediately
+    const correctText = correctArr.map(i => escapeHtml(q.choices[i]?.text || q.choices[i] || '')).join(', ');
+    const explanationArea = document.getElementById('explanationArea');
+    if(explanationArea){
+      if(isCorrect){
+        explanationArea.innerHTML = `<div class="test-correct-text">✓ Correct</div><div class="test-explanation small-muted" style="margin-top:6px">${escapeHtml(q.explanation || '')}</div>`;
+      } else {
+        explanationArea.innerHTML = `<div style="color:#d43f3f;font-weight:700">✖ Incorrect</div><div class="test-correct-text" style="margin-top:6px">Correct answer: <span class="test-correct-text">${correctText}</span></div><div class="test-explanation small-muted" style="margin-top:6px">${escapeHtml(q.explanation || '')}</div>`;
+      }
+    }
+
+    // mark labels
+    state.questions[qIndex].choices.forEach((c,i) => {
+      const lbl = document.getElementById(`label_${qIndex}_${i}`);
+      if(!lbl) return;
+      const isSelected = state.answers[qIndex].selected.includes(i);
+      if(correctArr.includes(i)){
+        lbl.classList.add('choice-correct'); lbl.classList.remove('choice-wrong');
+        lbl.innerHTML = `${escapeHtml(c.text||'')}<span class="choice-meta">✓</span>`;
+      } else if(isSelected){
+        lbl.classList.add('choice-wrong'); lbl.classList.remove('choice-correct');
+        lbl.innerHTML = `${escapeHtml(c.text||'')}<span class="choice-meta">✖</span>`;
+      } else {
+        lbl.innerHTML = `${escapeHtml(c.text||'')}`;
+      }
+      if(isSelected) lbl.classList.add('choice-selected');
+    });
+
+    // clear timer for this question
+    if(state.timeoutId){ clearInterval(state.timeoutId); state.timeoutId = null; }
+
+    // update streak UI
+    const streakInfo = document.getElementById('streakInfo');
+    if(streakInfo) streakInfo.innerHTML = `<span class="streak-current">Current streak: x${state.currentStreak}</span> • <span class="run-highest">${state.runHighest}</span>`;
   }
-  
-  // update labels (your existing code)...
-  state.questions[qIndex].choices.forEach((c,i) => {
-    const lbl = document.getElementById(`label_${qIndex}_${i}`);
-    if(!lbl) return;
-    const isSelected = state.answers[qIndex].selected.includes(i);
-    if(correctArr.includes(i)){
-      lbl.classList.add('choice-correct'); lbl.classList.remove('choice-wrong'); lbl.innerHTML = `${escapeHtml(c.text||'')}<span class="choice-meta">✓</span>`;
-    } else if(isSelected){
-      lbl.classList.add('choice-wrong'); lbl.classList.remove('choice-correct'); lbl.innerHTML = `${escapeHtml(c.text||'')}<span class="choice-meta">✖</span>`;
-    } else {
-      lbl.innerHTML = `${escapeHtml(c.text||'')}`;
-    }
-    if(isSelected) lbl.classList.add('choice-selected');
-  });
-
-  if(state.timeoutId){ clearInterval(state.timeoutId); state.timeoutId = null; }
-
-  const streakInfo = document.getElementById('streakInfo');
-  if(streakInfo) streakInfo.textContent = `Current streak: x${state.currentStreak} • This run highest: ${state.runHighest}`;
-}
-
-
 
   function goPrev(){ if(state.index <= 0) return; state.index--; renderQuestion(); }
   function goNext(){ if(state.index >= state.questions.length - 1) return; state.index++; renderQuestion(); }
@@ -1600,28 +1627,34 @@ async function submitAnswer(qIndex, selectedIndexes){
   document.getElementById('testPrev').onclick = goPrev;
   document.getElementById('testNext').onclick = goNext;
   document.getElementById('testCancel').onclick = () => { if(confirm('Cancel test? Progress will be lost.')) closeModal(); };
+
+  // Finish: show immediate summary (loading) then save in background and replace content when done
   document.getElementById('testFinish').onclick = async () => {
     if(state.timeoutId){ clearInterval(state.timeoutId); state.timeoutId = null; }
+
+    // compute stats
     const correct = state.correctCount;
     const incorrect = state.incorrect;
     const skipped = state.skipped + state.questions.filter((_,i)=> state.answers[i] === null).length;
     const total = state.questions.length;
-    const scoreDelta = correct * 3; // 3 points per correct (user request)
+    const scoreDelta = correct * 3;
 
-    // const studentUidForPayload = (currentUser && currentUser.uid) || (auth && auth.currentUser && auth.currentUser.uid) || null;
+    // immediate "saving" modal content with animated dots
+    showModalInner(`<div style="padding:12px"><h3>Saving results</h3><div style="margin-top:10px">Please wait <span class="loading-dots"><span>•</span><span style="animation-delay:.12s">•</span><span style="animation-delay:.24s">•</span></span></div></div>`, { title: 'Saving' });
 
-    const studentUidForPayload =
-  currentUser?.uid ||
-  auth?.currentUser?.uid ||
-  null;
-
-const resultPayload = {
-  setId: state.setId, setTitle: state.setTitle, studentUid: studentUidForPayload, studentId: currentStudentId,
-      studentName: currentStudentName || '', correct, incorrect, skipped, total, scoreDelta, runHighest: state.runHighest, currentStreak: state.currentStreak,
-      createdAt: serverTimestamp()
-    };
     try {
+      // create result payload
+      const studentUidForPayload = currentUser?.uid || auth?.currentUser?.uid || null;
+      const resultPayload = {
+        setId: state.setId, setTitle: state.setTitle, studentUid: studentUidForPayload, studentId: currentStudentId,
+        studentName: currentStudentName || '', correct, incorrect, skipped, total, scoreDelta, runHighest: state.runHighest, currentStreak: state.currentStreak,
+        createdAt: serverTimestamp()
+      };
+
+      // write test result
       await addDoc(collection(db,'testResults'), resultPayload);
+
+      // update competition score in transaction (if verified)
       if(currentCompetition && currentStudentId){
         const scoreDocId = `${currentCompetition.id}_${currentStudentId}`;
         await runTransaction(db, async (t) => {
@@ -1632,39 +1665,47 @@ const resultPayload = {
           t.set(ref, { competitionId: currentCompetition.id, studentId: currentStudentId, studentName: currentStudentName || '', points: newPoints, updatedAt: serverTimestamp() }, { merge:true });
         });
       }
-      // update competition highest streak if applicable
+
+      // update competition highest streak if needed
       if(currentCompetition && state.runHighest > (currentCompetition.highestStreak || 0)){
         await updateDoc(doc(db,'competitions', currentCompetition.id), { highestStreak: state.runHighest, highestStreakHolder: currentStudentId || '', highestStreakHolderName: currentStudentName || '', updatedAt: serverTimestamp() });
         currentCompetition.highestStreak = state.runHighest;
       }
-      // fetch latest highest holder for display
+
+      // reload scores
       const holder = await getHighestStreakHolder();
       await loadCompetitionScores();
-      // show summary modal (centered, clean)
+
+      // show final summary (replace modal content)
       const holderText = holder ? `${holder.runHighest} — ${escapeHtml(holder.studentName || holder.studentId || '')}` : '—';
-      showModalInner(`<div><h3>Test complete</h3>
-        <div style="margin-top:6px">Correct: <strong>${correct}</strong></div>
-        <div>Incorrect: <strong>${incorrect}</strong></div>
-        <div>Skipped: <strong>${skipped}</strong></div>
-        <div style="margin-top:8px">Points gained: <strong>${scoreDelta}</strong></div>
+      const studentNameHtml = currentStudentName ? ` — ${escapeHtml(currentStudentName)}` : '';
+      showModalInner(`<div>
+        <h3 style="margin-top:0">Test complete${studentNameHtml}</h3>
+        <div style="margin-top:6px;color:#0b9d58">Correct: <strong>${correct}</strong></div>
+        <div style="margin-top:4px;color:#c92a2a">Incorrect: <strong>${incorrect}</strong></div>
+        <div style="margin-top:4px;color:#8b8b8b">Skipped: <strong>${skipped}</strong></div>
+        <div style="margin-top:8px;color:#0b67c9">Points gained: <strong>${scoreDelta}</strong></div>
         <div style="margin-top:10px" class="small-muted">Highest streak this server: <strong>${holderText}</strong></div>
-        <div style="text-align:right;margin-top:12px"><button id="summaryClose" class="btn btn-primary">Close</button></div></div>`, { title: 'Summary' });
+        <div style="text-align:right;margin-top:12px"><button id="summaryClose" class="btn btn-primary">Close</button></div>
+      </div>`, { title: 'Summary' });
       document.getElementById('summaryClose').onclick = () => { closeModal(); };
-    } catch(err){ console.error(err); toast('Saving result failed'); }
+    } catch(err){
+      console.error(err);
+      showModalInner(`<div style="padding:12px"><h3>Error</h3><div class="small-muted" style="margin-top:8px">Failed to save results. Try again later.</div><div style="text-align:right;margin-top:12px"><button id="errClose" class="btn">Close</button></div></div>`, { title: 'Error' });
+      document.getElementById('errClose').onclick = () => closeModal();
+    }
   };
 
-  // keyboard nav
+  // keyboard nav + clean removal on close
   window.addEventListener('keydown', keyHandler);
   function keyHandler(e){ if(e.key === 'ArrowLeft') goPrev(); if(e.key === 'ArrowRight') goNext(); }
-
-  // render first
-  renderQuestion();
-
-  // ensure to cleanup handler on modal close
+  // cleanup when modal closed via close button
   const origClose = closeModal;
   const newClose = () => { window.removeEventListener('keydown', keyHandler); origClose(); };
-  document.getElementById('modalCloseBtn').onclick = newClose;
+  const modalCloseBtn = document.getElementById('modalCloseBtn');
+  if(modalCloseBtn) modalCloseBtn.onclick = newClose;
 }
+
 
 /* ---------- admin adjust points modal (existing logic) ---------- */
 async function openAdjustPointsModal(scoreDocId, studentId){
