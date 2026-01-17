@@ -145,6 +145,12 @@
     .status-pass { background: #16a34a; color: #fff; font-weight: 900; padding: 6px 10px; border-radius: 8px; }
     .status-fail { background: #dc2626; color: #fff; font-weight: 900; padding: 6px 10px; border-radius: 8px; }
 
+    /* cards UI styles */
+.mode-card { transition: box-shadow .18s ease, transform .12s ease; border:1px solid rgba(11,116,255,0.04); }
+.mode-card:hover { transform: translateY(-4px); box-shadow: 0 10px 30px rgba(2,6,23,0.06); }
+#showCardsBtn { display:inline-flex; align-items:center; gap:8px; }
+.remember-wrap input { width:18px; height:18px; }
+
   </style>
 </head>
 <body>
@@ -174,25 +180,49 @@
         </button>
       </div>
    <!-- BEFORE: input + search area -->
-<div style="margin-top:10px;display:flex;gap:10px;align-items:center">
-  <!-- <select id="resultModeSelect" aria-label="Result or Test">
-    <option value="exam">Exam (default)</option>
-    <option value="test">Testing (Leaderboards)</option>
-  </select> -->
+   <div style="margin-top:10px;display:flex;flex-direction:column;gap:10px">
+    <div style="display:flex;gap:10px;align-items:center">
+      <label style="display:flex;align-items:center;gap:8px;font-weight:700">
+        <input id="rememberCheckbox" type="checkbox" />
+        <span style="font-size:0.95rem">Xasuuso qalabkaan (Remember me)</span>
+      </label>
+  
+      <button id="searchBtn" class="btn btn-primary">Raadi</button>
+      <button id="audioToggleBtn" class="btn" title="Toggle audio (default OFF)">🔈 Audio: OFF</button>
+      <div id="message" style="color:#c00;font-weight:700"></div>
+    </div>
+  
+    <!-- Cards row -->
+    <div id="cardsRow" class="card small-card" style="display:flex;gap:12px;flex-wrap:wrap;align-items:center">
+      <button class="mode-card" data-mode="exam" title="View exam results" style="flex:1;min-width:140px;padding:12px;border-radius:12px;border:0;background:#fff;cursor:pointer;display:flex;gap:8px;align-items:center">
+        <!-- Exam SVG -->
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 7h18M7 3h10v4H7zM6 21h12" stroke="#0b74ff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <div style="text-align:left"><div style="font-weight:900">Exams</div><div style="font-size:12px;color:var(--muted)">Ardayga natiijooyinka</div></div>
+      </button>
+  
+      <button class="mode-card" data-mode="payments" title="View payments" style="flex:1;min-width:140px;padding:12px;border-radius:12px;border:0;background:#fff;cursor:pointer;display:flex;gap:8px;align-items:center">
+        <!-- Payments SVG -->
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 7h18v10H3zM7 11h10" stroke="#16a34a" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <div style="text-align:left"><div style="font-weight:900">Payments</div><div style="font-size:12px;color:var(--muted)">Lacag bixinta</div></div>
+      </button>
+  
+      <button class="mode-card" data-mode="attendance" title="View attendance" style="flex:1;min-width:140px;padding:12px;border-radius:12px;border:0;background:#fff;cursor:pointer;display:flex;gap:8px;align-items:center">
+        <!-- Attendance SVG -->
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 2v6M6 10h12M4 20h16" stroke="#f97316" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <div style="text-align:left"><div style="font-weight:900">Attendance</div><div style="font-size:12px;color:var(--muted)">Joogitaanka</div></div>
+      </button>
+  
+      <button class="mode-card" data-mode="test" title="Competition / Leaderboard" style="flex:1;min-width:140px;padding:12px;border-radius:12px;border:0;background:#fff;cursor:pointer;display:flex;gap:8px;align-items:center">
+        <!-- Competition SVG -->
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 2l3 7h7l-5.5 4 2 7L12 17l-6.5 3 2-7L2 9h7l3-7z" stroke="#8b5cf6" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+        <div style="text-align:left"><div style="font-weight:900">Competition</div><div style="font-size:12px;color:var(--muted)">Leaderboard / Tartanka</div></div>
+      </button>
+    </div>
+  
+    <button id="showCardsBtn" class="btn" style="display:none;margin-top:8px">Show me CARDS</button>
+  </div>
+  
 
-
-  <select id="resultModeSelect" aria-label="Result or Test">
-    <option value="exam">Exam (default)</option>
-    <option value="payments">Payments</option>
-    <option value="attendance">Attendance</option>
-    <option value="test">Testing (Leaderboards)</option>
-  </select>
-
-
-  <button id="searchBtn" class="btn btn-primary">Raadi</button>
-  <button id="audioToggleBtn" class="btn" title="Toggle audio (default OFF)">🔈 Audio: OFF</button>
-  <div id="message" style="color:#c00;font-weight:700"></div>
-</div>
     </div>
 
     <div id="resultArea" style="display:none"></div>
