@@ -49,6 +49,67 @@ function hideLoader(){
 /* ---------- small utilities (escape etc.) ---------- */
 function escapeHtml(s){ if(s==null) return ''; return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;"}[c])); }
 
+
+/* ---------- currency + tiny toast helper (paste after escapeHtml) ---------- */
+
+/** cents -> display string with 2 decimals (e.g. 3500 -> "35.00") */
+function c2p(cents){
+  // handle strings/numbers/undefined
+  const n = Number(cents || 0);
+  if (Number.isNaN(n)) return '0.00';
+  return (n / 100).toFixed(2);
+}
+
+/** small toast: shows a temporary message bottom-right */
+function toast(msg, opts = {}) {
+  try {
+    const timeout = typeof opts === 'object' && opts.timeout ? opts.timeout : 3500;
+    // create container once
+    let container = document.getElementById('app-toast-container');
+    if(!container){
+      container = document.createElement('div');
+      container.id = 'app-toast-container';
+      Object.assign(container.style, {
+        position: 'fixed',
+        right: '18px',
+        bottom: '18px',
+        zIndex: 999999,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '8px',
+        alignItems: 'flex-end',
+        pointerEvents: 'none'
+      });
+      document.body.appendChild(container);
+    }
+    const el = document.createElement('div');
+    el.textContent = String(msg || '');
+    Object.assign(el.style, {
+      background: 'rgba(17,24,39,0.95)',
+      color: '#fff',
+      padding: '8px 12px',
+      borderRadius: '8px',
+      boxShadow: '0 6px 18px rgba(0,0,0,0.22)',
+      fontSize: '13px',
+      pointerEvents: 'auto',
+      opacity: '1',
+      transition: 'opacity 300ms ease, transform 300ms ease'
+    });
+    container.appendChild(el);
+    // auto-hide
+    setTimeout(()=> {
+      el.style.opacity = '0';
+      el.style.transform = 'translateY(6px)';
+      setTimeout(()=> { try{ el.remove(); }catch(e){} }, 320);
+    }, timeout);
+    return el;
+  } catch (e) {
+    // fallback: console + alert (non-blocking)
+    console.warn('toast error', e);
+    try { console.log(msg); } catch(e2){}
+  }
+}
+
 /* ---------- Audio / unlock logic ---------- */
 /*
   Notes:
@@ -803,59 +864,404 @@ async function setHeaderStudentNameById(studentId){
   } catch(e){ console.warn('setHeaderStudentNameById failed', e); }
 }
 
-/* ---------- main search click (unchanged flow) ---------- */
-// searchBtn.onclick = async () => {
-//   tryUnlockAudio().catch(()=>{});
+
+/* ---------- helpers required by transactions view (updated) ---------- */
+
+/** Format month label. Accepts:
+ *  - "1-2026" or "01-2026" -> "Jan-2026"
+ *  - "2026-01" or ISO -> "Jan-2026"
+ *  - Date string -> formatted month-year
+ *  - otherwise returns original string
+ */
+function formatMonthLabel(m) {
+  if (!m && m !== 0) return '';
+  const s = String(m).trim();
+  // pattern: 1-2026 or 01-2026
+  const mm1 = s.match(/^(\d{1,2})-(\d{4})$/);
+  if (mm1) {
+    const mon = Number(mm1[1]);
+    const yr = mm1[2];
+    const names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    return (mon >=1 && mon <=12) ? `${names[mon-1]}-${yr}` : s;
+  }
+  // pattern: 2026-01
+  const mm2 = s.match(/^(\d{4})-(\d{1,2})$/);
+  if (mm2) {
+    const yr = mm2[1], mon = Number(mm2[2]);
+    const names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    return (mon >=1 && mon <=12) ? `${names[mon-1]}-${yr}` : s;
+  }
+  // try Date parse
+  const d = new Date(s);
+  if (!isNaN(d.getTime())) {
+    const names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    return `${names[d.getMonth()]}-${d.getFullYear()}`;
+  }
+  return s;
+}
+
+/** Download CSV helper (rows: array of arrays) */
+function downloadCSV(filename, rows) {
+  const csv = rows.map(r => r.map(cell => {
+    if (cell == null) return '';
+    const s = String(cell);
+    if (s.includes('"') || s.includes(',') || s.includes('\n')) {
+      return `"${s.replace(/"/g, '""')}"`;
+    }
+    return s;
+  }).join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+/** Export transactions to PDF using jsPDF+autoTable if available, otherwise returns false
+ *  meta: object with keys to print at top (e.g. { 'Student Name': 'Ali', 'Student ID': 'S001', 'Class': '5A' })
+ *  totals: object with totals to print under the table
+ */
+async function exportTransactionsToPDF(filename, columns, rows, meta = {}, totals = {}) {
+  try {
+    if (!(window.jspdf && window.jspdf.jsPDF)) return false;
+    const { jsPDF } = window.jspdf;
+    const docPdf = new jsPDF({ unit: 'pt', format: 'a4', orientation: 'portrait' });
+    const margin = 20;
+    let y = margin;
+    docPdf.setFontSize(14);
+    docPdf.text('Transactions', margin, y); y += 18;
+
+    // print meta (Student name, ID, class)
+    docPdf.setFontSize(11);
+    Object.keys(meta).forEach(k => {
+      docPdf.text(`${k}: ${meta[k]}`, margin, y);
+      y += 14;
+    });
+    y += 6;
+
+    // build body for autoTable
+    docPdf.autoTable({
+      startY: y,
+      head: [columns],
+      body: rows,
+      styles: { fontSize: 10, cellPadding: 6 },
+      headStyles: { fillColor: [240,240,240], textColor: [20,20,20], fontStyle: 'bold' },
+      margin: { left: margin, right: margin }
+    });
+
+    const afterTableY = docPdf.lastAutoTable ? docPdf.lastAutoTable.finalY + 12 : docPdf.internal.pageSize.getHeight() - 80;
+    docPdf.setFontSize(11);
+
+    // print totals below the table
+    Object.keys(totals).forEach((k) => {
+      docPdf.text(`${k}: ${totals[k]}`, margin, afterTableY + 14 * (Object.keys(totals).indexOf(k) + 1));
+    });
+
+    docPdf.save(filename);
+    return true;
+  } catch(e) {
+    console.warn('PDF export failed', e);
+    return false;
+  }
+}
+
+/* ---------- Updated renderStudentTransactionsModal (desktop table + mobile cards + exports + totals + Reesto Hore) ---------- */
+
+async function renderStudentTransactionsModal(studentId){
+  try{
+    showLoader && showLoader();
+
+    // fetch student info (best-effort)
+    let student = null;
+    try {
+      const sSnap = await getDoc(doc(db,'students', studentId));
+      if(sSnap.exists()) student = sSnap.data();
+    } catch(e){ console.warn('student lookup failed', e); }
+
+    // load transactions
+    const q = query(collection(db,'transactions'), where('target_type','==','student'), where('target_id','==', studentId));
+    const snap = await getDocs(q);
+    const txs = snap.docs.map(d=> ({ id:d.id, ...d.data() })).sort((a,b)=> (b.createdAt?.seconds||0) - (a.createdAt?.seconds||0));
+
+    // compute totals
+    const totalMonthlyPaid = txs.filter(t => (t.type === 'monthly') && !t.is_deleted).reduce((s,t) => s + (t.amount_cents || 0), 0);
+    const totalAllPaid = txs.filter(t => (t.type !== 'adjustment' && !t.is_deleted)).reduce((s,t) => s + (t.amount_cents || 0), 0);
+    const totalReesto = txs.filter(t => (t.type === 'adjustment' || t.type === 'adjust') && !t.is_deleted).reduce((s,t) => s + (t.amount_cents || 0), 0);
+    const currentBalance = (student && (typeof student.balance_cents !== 'undefined')) ? student.balance_cents : null;
+
+    // small inline CSS for mobile cards + badges and theme variables
+    const css = `
+      <style>
+        :root {
+          --tx-badge-pay: #16a34a;
+          --tx-badge-reesto: #0b6bd6;
+          --tx-bg-card: #ffffff;
+          --tx-text: #0f172a;
+          --tx-muted: #6b7280;
+          --tx-btn: #0b74ff;
+        }
+        .tx-header { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; }
+        .tx-actions { display:flex; gap:8px; align-items:center; }
+        .tx-btn { background:var(--tx-btn); color:#fff; border:0; padding:8px 10px; border-radius:8px; font-weight:700; cursor:pointer }
+        .tx-btn.ghost { background:transparent; color:var(--tx-text); border:1px solid rgba(0,0,0,0.06); font-weight:600 }
+        .tx-summary { text-align:right; min-width:180px; }
+        table.tx-table { width:100%; border-collapse:collapse; font-size:14px; background:transparent; color:var(--tx-text) }
+        table.tx-table thead th { text-align:left; padding:10px 8px; color:var(--tx-muted); font-weight:700; }
+        table.tx-table tbody td { padding:10px 8px; vertical-align:top; border-bottom:1px solid #f1f5f9; }
+        .badge-pay { background: rgba(16,163,127,0.08); color: var(--tx-badge-pay); padding:4px 8px; border-radius:999px; font-weight:700; display:inline-block }
+        .badge-reesto { background: rgba(11,107,214,0.08); color: var(--tx-badge-reesto); padding:4px 8px; border-radius:999px; font-weight:700; display:inline-block }
+        .tx-cards { display:none; gap:10px; }
+        .tx-card { border-radius:12px; box-shadow:0 6px 18px rgba(2,6,23,0.06); padding:10px; display:flex; gap:10px; align-items:flex-start; background:var(--tx-bg-card); }
+        .tx-card .left { flex:0 0 46px; display:flex; align-items:center; justify-content:center; }
+        .tx-card .content { flex:1; }
+        .tx-card .row { display:flex; justify-content:space-between; gap:8px; align-items:center; }
+        .tx-card .muted { color:var(--tx-muted); font-size:12px; }
+        .meta-line { font-size:13px; color:var(--tx-muted); }
+        @media (max-width:720px){
+          table.tx-table { display:none; }
+          .tx-cards { display:flex; flex-direction:column; }
+          .tx-summary { text-align:left; width:100%; margin-top:8px; }
+          .tx-header { align-items:flex-start; }
+          .tx-actions { order:2; width:100%; justify-content:flex-start; }
+        }
+      </style>
+    `;
+
+    // header + summary (inline card)
+    const name = (student && (student.fullName || student.name || student.studentName)) ? escapeHtml(student.fullName || student.name || student.studentName) : escapeHtml(studentId);
+    const className = student ? escapeHtml(student.className || student.classId || '') : '';
+
+    // header HTML w/ export & print buttons
+    let html = `${css}<div class="card"><div class="tx-header">
+      <div>
+        <div style="font-weight:900">${name}</div>
+        <div class="meta-line">ID: ${escapeHtml(studentId)} ${className ? ' • Class: ' + className : ''}</div>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end">
+        <div class="tx-summary">
+          <div style="font-weight:800">Total monthly paid: <span style="color:var(--tx-badge-pay)">${c2p(totalMonthlyPaid)}</span></div>
+          <div style="font-weight:700">Total all paid: <span style="color:var(--tx-badge-pay)">${c2p(totalAllPaid)}</span></div>
+          <div style="font-weight:700">Reesto Hore: <span style="color:var(--tx-badge-reesto)">${c2p(totalReesto)}</span></div>
+          <div style="font-weight:700">Current balance: <span style="color:#ef4444">${currentBalance===null? '—' : c2p(currentBalance)}</span></div>
+        </div>
+        <div class="tx-actions" style="margin-top:8px">
+          <button id="exportCsvBtn" class="tx-btn">⬇ CSV</button>
+          <button id="exportPdfBtn" class="tx-btn ghost" title="Export PDF">📄 PDF</button>
+          <button id="printBtn" class="tx-btn ghost" title="Print" style="padding:8px 10px" onclick="window.print()">🖨 Print</button>
+        </div>
+      </div>
+    </div></div>`;
+
+    // table header (no "By" column) and rows
+    html += `<div class="card" style="margin-top:10px;overflow:auto">
+      <table class="tx-table"><thead><tr>
+        <th>Date</th><th>Type</th><th>Months</th><th style="text-align:right">Amount</th><th>Method</th><th>Note</th>
+      </tr></thead><tbody>`;
+
+    // export rows: start with meta rows (student info)
+    const exportRows = [];
+    exportRows.push(['Student Name', name]);
+    exportRows.push(['Student ID', studentId]);
+    exportRows.push(['Class', className || '']);
+    exportRows.push([]); // blank line
+    exportRows.push(['Date','Type','Months','Amount','Method','Note']); // header
+
+    // build mobile card markup container
+    let cardsHtml = `<div class="tx-cards" style="margin-top:10px">`;
+
+    for(const tx of txs){
+      if(tx.is_deleted) continue; // hide soft-deleted
+      const d = tx.createdAt ? new Date(tx.createdAt.seconds * 1000) : null;
+      const date = d ? d.toLocaleString() : (tx.date || '');
+      const typeRaw = String(tx.type || '');
+      // display label: if adjustment -> Reesto Hore
+      const typeLabel = (typeRaw === 'adjustment' || typeRaw === 'adjust') ? 'Reesto Hore' : (typeRaw || '');
+      const typeEsc = escapeHtml(typeLabel);
+
+      // months may be array or single
+      let monthsLabel = '';
+      if (tx.related_months && Array.isArray(tx.related_months) && tx.related_months.length) {
+        monthsLabel = tx.related_months.map(m => formatMonthLabel(m)).join(', ');
+      } else if (tx.related_month) {
+        monthsLabel = formatMonthLabel(tx.related_month);
+      } else {
+        monthsLabel = '';
+      }
+      const amount = c2p(tx.amount_cents || 0);
+      const method = escapeHtml((tx.payment_method || '') + (tx.mobile_provider ? (' / ' + tx.mobile_provider) : ''));
+      const note = escapeHtml(tx.note || '');
+
+      // badge & classes: use Reesto label for adjustment
+      const badgeHtml = (typeRaw === 'adjustment' || typeRaw === 'adjust')
+        ? `<span class="badge-reesto">Reesto Hore</span>`
+        : `<span class="badge-pay">${escapeHtml(typeRaw || 'Payment')}</span>`;
+
+      html += `<tr>
+        <td style="padding:8px;white-space:nowrap">${escapeHtml(date)}</td>
+        <td style="padding:8px">${badgeHtml}</td>
+        <td style="padding:8px;white-space:nowrap">${escapeHtml(monthsLabel)}</td>
+        <td style="padding:8px;text-align:right">${amount}</td>
+        <td style="padding:8px;white-space:nowrap">${method}</td>
+        <td style="padding:8px">${note}</td>
+      </tr>`;
+
+      // export row (plain values)
+      exportRows.push([date, typeLabel, monthsLabel, amount, method, note]);
+
+      // mobile card for this tx (inline SVG icons)
+      const iconPay = `<svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 7h16v10H4z" stroke="#16a34a" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M8 12h8" stroke="#16a34a" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+      const iconReesto = `<svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 5v14M5 12h14" stroke="#0b6bd6" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+      const iconHtml = (typeRaw === 'adjustment' || typeRaw === 'adjust') ? iconReesto : iconPay;
+
+      cardsHtml += `<div class="tx-card">
+        <div class="left">${iconHtml}</div>
+        <div class="content">
+          <div class="row"><div style="font-weight:800">${escapeHtml(date)}</div><div style="font-weight:900;color:${typeRaw==='adjustment' ? 'var(--tx-badge-reesto)':'var(--tx-badge-pay)'}">${amount}</div></div>
+          <div class="muted" style="margin-top:6px">${typeEsc}${monthsLabel ? ' • ' + monthsLabel : ''}${method ? ' • ' + method : ''}</div>
+          <div style="margin-top:8px">${note}</div>
+        </div>
+      </div>`;
+    }
+
+    // totals rows in export (blank line then totals)
+    exportRows.push([]);
+    exportRows.push(['Totals', '', 'Total monthly paid', c2p(totalMonthlyPaid), '', '']);
+    exportRows.push(['Totals', '', 'Total all paid', c2p(totalAllPaid), '', '']);
+    exportRows.push(['Totals', '', 'Reesto Hore', c2p(totalReesto), '', '']);
+    exportRows.push(['Totals', '', 'Current balance', currentBalance===null? '—' : c2p(currentBalance), '', '']);
+
+    html += `</tbody></table>${cardsHtml}</div>`; // close cards container in string
+    html += `</div>`; // close outer card div
+
+    // render into resultArea (clear previous)
+    resultArea.style.display = 'block';
+    resultArea.innerHTML = html;
+    hideLoader && hideLoader();
+    try { resultArea.scrollIntoView({ behavior: 'smooth' }); } catch(e){}
+
+    // wire export buttons
+    const exportCsvBtn = document.getElementById('exportCsvBtn');
+    const exportPdfBtn = document.getElementById('exportPdfBtn');
+    const printBtn = document.getElementById('printBtn');
+
+    exportCsvBtn && (exportCsvBtn.onclick = () => {
+      try {
+        const safeName = (student && (student.fullName||student.name)) ? (student.fullName||student.name).replace(/\s+/g,'_') : studentId;
+        const fname = `${safeName}_transactions.csv`;
+        downloadCSV(fname, exportRows);
+        toast && toast('CSV downloaded');
+      } catch(e) { console.warn('CSV export failed', e); toast && toast('CSV export failed'); }
+    });
+
+    exportPdfBtn && (exportPdfBtn.onclick = async () => {
+      try {
+        const safeName = (student && (student.fullName||student.name)) ? (student.fullName||student.name).replace(/\s+/g,'_') : studentId;
+        const fname = `${safeName}_transactions.pdf`;
+        const cols = ['Date','Type','Months','Amount','Method','Note'];
+        // meta and totals for PDF (plain strings)
+        const meta = { 'Student Name': name, 'Student ID': studentId, 'Class': className || '' };
+        const totals = {
+          'Total monthly paid': c2p(totalMonthlyPaid),
+          'Total all paid': c2p(totalAllPaid),
+          'Reesto Hore': c2p(totalReesto),
+          'Current balance': (currentBalance===null? '—' : c2p(currentBalance))
+        };
+        // rows for PDF body: take exportRows, remove first meta lines and blank
+        const bodyRows = exportRows.slice(4, exportRows.length - 5); // between header and totals
+        // bodyRows contains arrays; pass to PDF exporter
+        const ok = await exportTransactionsToPDF(fname, cols, bodyRows, meta, totals);
+        if (!ok) {
+          // fallback to CSV
+          downloadCSV(fname.replace(/\.pdf$/,'') + '.csv', exportRows);
+          toast && toast('PDF export not available — downloaded CSV instead');
+        } else {
+          toast && toast('PDF downloaded');
+        }
+      } catch(e) {
+        console.warn('PDF export failed fallback to CSV', e);
+        downloadCSV(`${studentId}_transactions.csv`, exportRows);
+        toast && toast('Export failed — CSV saved');
+      }
+    });
+
+    printBtn && (printBtn.onclick = () => { try { window.print(); } catch(e){ console.warn(e); } });
+
+  }catch(err){
+    console.error('renderStudentTransactionsModal failed', err);
+    hideLoader && hideLoader();
+    message.textContent = 'Ma la soo bixi karo macluumaadka lacagaha. Fadlan isku day mar kale.';
+    toast && toast('Failed to load transactions');
+    throw err;
+  }
+}
 
 
-//   const resultModeSelect = document.getElementById('resultModeSelect');
-// // inside searchBtn.onclick:
-// const mode = resultModeSelect ? resultModeSelect.value : 'exam';
-// if(mode === 'test'){
-//   // if student wants testing/leaderboard, pass the searched ID to leaderboard so it can auto-open verify
-//   sessionStorage.setItem('visitorStudentId', studentId); // <-- add this
-//   window.location.href = 'leaderboard.html';
-//   return;
-// }
+// -------------------------------
+// Student-facing: attendance view (inline, not modal)
+// -------------------------------
+async function renderStudentAttendanceModal(studentId){
+  try{
+    // fetch student info (best-effort)
+    let student = null;
+    try {
+      const sSnap = await getDoc(doc(db,'students', studentId));
+      if(sSnap.exists()) student = sSnap.data();
+    } catch(e){ console.warn('student lookup failed', e); }
 
-// // otherwise continue existing exam search behaviour...
+    // load attendance records
+    const q = query(collection(db,'attendance'), where('student_id','==', studentId));
+    const snap = await getDocs(q);
+    const recs = snap.docs.map(d=> ({ id:d.id, ...d.data() })).sort((a,b)=> {
+      // try ISO date first, fallback to createdAt
+      const da = a.date || (a.createdAt ? new Date(a.createdAt.seconds*1000).toISOString() : '');
+      const db_ = b.date || (b.createdAt ? new Date(b.createdAt.seconds*1000).toISOString() : '');
+      return db_ < da ? -1 : (db_ > da ? 1 : 0);
+    });
 
-//   const studentId = studentIdInput.value.trim();
-//   message.textContent = '';
-//   resultArea.style.display = 'none'; resultArea.innerHTML = '';
-//   if(!studentId){ message.textContent = 'Fadlan geli ID sax ah.'; return; }
-//   showLoader();
-//   try{
-//     const latestSnap = await getDoc(doc(db,'studentsLatest', studentId));
-//     let latest = latestSnap.exists() ? latestSnap.data() : null;
+    const name = (student && (student.fullName || student.name || student.studentName)) ? escapeHtml(student.fullName || student.name || student.studentName) : escapeHtml(studentId);
+    const className = student ? escapeHtml(student.className || student.classId || '') : '';
 
-//     if(latest && !latest.motherName){
-//       try{ const sSnap = await getDoc(doc(db,'students', studentId)); if(sSnap.exists()){ const sData = sSnap.data(); if(sData && sData.motherName) latest.motherName = sData.motherName; } }catch(e){ console.warn(e); }
-//     }
+    let html = `<div class="card"><div style="display:flex;justify-content:space-between;align-items:center">
+      <div>
+        <div style="font-weight:900">${name}</div>
+        <div class="muted">ID: ${escapeHtml(studentId)} ${className ? ' • Class: ' + className : ''}</div>
+      </div>
+      <div style="text-align:right"><div style="font-weight:700">Records: ${recs.length}</div></div>
+    </div></div>`;
 
-//     if(!latest){
-//       const alt = await fallbackFindLatestExamTotal(studentId);
-//       if(!alt){ message.textContent = 'Natiijo la heli waayey. Fadlan hubi ID-ga.'; hideLoader(); return; }
-//       await renderResult(alt, { source: 'examTotals' }); return;
-//     }
+    html += `<div class="card" style="margin-top:10px;overflow:auto"><table style="width:100%;border-collapse:collapse">
+      <thead><tr style="text-align:left"><th>Date</th><th>Class</th><th>Subject</th><th>Status</th><th>Note</th></tr></thead><tbody>`;
 
-//     if(latest.blocked){
-//       resultArea.style.display='block'; resultArea.innerHTML = `<div class="card"><h2>Access blocked</h2><p>${escapeHtml(latest.blockMessage || 'You are not allowed to view results.')}</p></div>`; hideLoader(); return;
-//     }
+    recs.forEach(r => {
+      const date = r.date || (r.createdAt ? new Date(r.createdAt.seconds*1000).toLocaleDateString() : '');
+      html += `<tr style="border-bottom:1px solid #f1f5f9">
+        <td style="padding:8px;white-space:nowrap">${escapeHtml(date)}</td>
+        <td style="padding:8px">${escapeHtml(r.class_id || r.class || '')}</td>
+        <td style="padding:8px">${escapeHtml(r.subject_id || r.subject || '')}</td>
+        <td style="padding:8px">${escapeHtml(r.status || '')}</td>
+        <td style="padding:8px">${escapeHtml(r.note || '')}</td>
+      </tr>`;
+    });
 
-//     const alt = await fallbackFindLatestExamTotal(studentId);
-//     if(alt && alt.publishedAt && latest.publishedAt){
-//       const altSeconds = alt.publishedAt.seconds || (new Date(alt.publishedAt).getTime()/1000);
-//       const latestSeconds = latest.publishedAt.seconds || (new Date(latest.publishedAt).getTime()/1000);
-//       if(altSeconds > latestSeconds){ await renderResult(alt, { source: 'examTotals' }); return; }
-//     } else if(alt && !latest.publishedAt){ await renderResult(alt, { source: 'examTotals' }); return; }
+    html += `</tbody></table></div>`;
 
-//     await renderResult(latest, { source: 'AL-Fatxi School' });
+    resultArea.style.display = 'block';
+    resultArea.innerHTML = html;
+    hideLoader();
+    try { resultArea.scrollIntoView({ behavior: 'smooth' }); } catch(e){}
+  } catch(err){
+    console.error('renderStudentAttendanceModal failed', err);
+    hideLoader();
+    message.textContent = 'Ma la soo bixi karo macluumaadka joogitaanka. Fadlan isku day mar kale.';
+    toast && toast('Failed to load attendance');
+    throw err;
+  }
+}
 
-//     setHeaderStudentNameById();
-//     }catch(err){
-//     console.error(err); message.textContent = 'Khalad ayaa dhacay. Fadlan isku day mar kale.'; hideLoader();
-//   }
 
 
 searchBtn.onclick = async () => {
@@ -877,6 +1283,40 @@ searchBtn.onclick = async () => {
   if(mode === 'test'){
     sessionStorage.setItem('visitorStudentId', studentId);
     window.location.href = 'leaderboard.html';
+    return;
+  }
+
+  // STUDENT-FACING: Payments (read-only)
+  if(mode === 'payments'){
+    message.textContent = '';
+    resultArea.style.display = 'none';
+    resultArea.innerHTML = '';
+    showLoader();
+    try {
+      await renderStudentTransactionsModal(studentId);
+    } catch(err){
+      console.error('Failed to load payments view', err);
+      message.textContent = 'Ma la soo bixi karo macluumaadka lacagaha. Fadlan isku day mar kale.';
+    } finally {
+      hideLoader();
+    }
+    return;
+  }
+
+  // STUDENT-FACING: Attendance (read-only)
+  if(mode === 'attendance'){
+    message.textContent = '';
+    resultArea.style.display = 'none';
+    resultArea.innerHTML = '';
+    showLoader();
+    try {
+      await renderStudentAttendanceModal(studentId);
+    } catch(err){
+      console.error('Failed to load attendance view', err);
+      message.textContent = 'Ma la soo bixi karo macluumaadka joogitaanka. Fadlan isku day mar kale.';
+    } finally {
+      hideLoader();
+    }
     return;
   }
 
@@ -908,6 +1348,7 @@ searchBtn.onclick = async () => {
         return;
       }
       await renderResult(alt, { source: 'examTotals' });
+      hideLoader();
       return;
     }
 
@@ -928,12 +1369,14 @@ searchBtn.onclick = async () => {
       const latestSeconds = latest.publishedAt.seconds || Date.parse(latest.publishedAt)/1000;
       if(altSeconds > latestSeconds){
         await renderResult(alt, { source: 'examTotals' });
+        hideLoader();
         return;
       }
     }
 
     await renderResult(latest, { source: 'AL-Fatxi School' });
     setHeaderStudentNameById(studentId);
+    hideLoader();
 
   } catch(err){
     console.error(err);
@@ -941,5 +1384,6 @@ searchBtn.onclick = async () => {
     hideLoader();
   }
 };
+
 
 export { renderResult , };
