@@ -2376,6 +2376,41 @@ function capitalize(str){
   return str.charAt(0).toUpperCase() + str.slice(1);
 }
 
+/* ---------- inline SVG helpers & loader utilities ---------- */
+
+function svgPay(){ 
+  return `<svg class="icon-sm" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="2" y="6" width="20" height="12" rx="2" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M8 10h8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+    <path d="M8 14h8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+  </svg>`; 
+}
+function svgReesto(){ 
+  return `<svg class="icon-sm" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M12 5v14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+    <path d="M5 12h14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+  </svg>`; 
+}
+function svgView(){ 
+  return `<svg class="icon-sm" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z" stroke="currentColor" stroke-width="1.4" fill="none"/>
+    <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.4" fill="none"/>
+  </svg>`; 
+}
+
+/** Put a loader inside a button: returns old content so caller can restore. */
+function putButtonLoader(btn, opts = { colorOnPrimary: true }) {
+  if(!btn) return null;
+  const old = btn.innerHTML;
+  // choose colours carefully: loader dots are white-ish; if button is ghost we add gray border
+  btn.disabled = true;
+  btn.innerHTML = `<span class="btn-loader"><span></span><span></span><span></span></span><span style="margin-left:8px">Saving</span>`;
+  return old;
+}
+function restoreButton(btn, oldHtml){
+  try{ if(btn){ btn.innerHTML = oldHtml; btn.disabled = false; } }catch(e){}
+}
+
 // resolve actor display name (uses usersCache if present, otherwise fetches)
 async function resolveActorName(uid){
   if(!uid) return '';
@@ -2514,22 +2549,30 @@ async function renderPayments(){
   }
 
   page.innerHTML = `
-    <div class="page-header" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+  <div class="page-header">
+    <div class="ph-row ph-left">
       <div style="display:flex;gap:8px;align-items:center">
         <button id="paymentsTabStudents" class="tab active">Students</button>
         <button id="paymentsTabTeachers" class="tab">Teachers</button>
         <button id="paymentsTabStaff" class="tab">Staff</button>
         <button id="paymentsTabExpenses" class="tab">Expenses</button>
       </div>
-      <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
-        <input id="paymentsSearch" placeholder="Search name / ID / phone" />
-        <select id="paymentsClassFilter" style="min-width:160px"><option value="">All classes</option></select>
-        <select id="paymentsStatusFilter" style="min-width:120px"><option value="all">All</option><option value="unpaid">Unpaid</option><option value="paid">Paid</option><option value="free">Free</option></select>
-        <button id="paymentsExport" class="btn btn-ghost">Export</button>
+      <div style="flex:1;display:flex;justify-content:flex-end">
+        <input id="paymentsSearch" placeholder="Search name / ID / phone" style="width:100%;max-width:520px" />
       </div>
     </div>
-    <div id="paymentsList" style="margin-top:10px"></div>
-  `;
+
+    <div class="ph-row ph-right" style="justify-content:flex-start">
+      <select id="paymentsClassFilter" style="min-width:150px"><option value="">All classes</option></select>
+      <select id="paymentsStatusFilter" style="min-width:120px"><option value="all">All</option><option value="unpaid">Unpaid</option><option value="paid">Paid</option><option value="free">Free</option></select>
+      <!-- teacher subject filter gets inserted programmatically if needed -->
+      <button id="paymentsExport" class="btn btn-ghost" style="margin-left:auto">Export</button>
+    </div>
+  </div>
+
+  <div id="paymentsList" style="margin-top:10px"></div>
+`;
+
 
   // populate class filter (use id)
   const sel = document.getElementById('paymentsClassFilter');
@@ -2649,27 +2692,29 @@ async function renderPaymentsList(view = 'students'){
       list.forEach((s, idx) => {
         const idFull = String(s.studentId||s.id||'');
         const idShort = idFull.slice(-6) || idFull;
-        const feeDisplay = (typeof s.fee === 'number' || (s.fee && !isNaN(Number(s.fee)))) ? (Number(s.fee) === 0 ? '0.00' : String(s.fee)) : '0.00';
-        const balanceDisplay = c2p(s.balance_cents || 0);
-        html += `<div class="card" style="display:flex;align-items:center;justify-content:space-between;gap:8px">
-          <div style="display:flex;gap:8px;align-items:center">
-            <div style="font-weight:800">${idx+1}</div>
-            <div style="min-width:60px"><div style="font-weight:900">${escape(idShort)}</div></div>
-            <div>
-              <div style="font-weight:900">${escape(s.fullName||'')}</div>
-              <div class="muted" style="font-size:12px">${escape(s.className || s.class || s.classId || '')}</div>
-            </div>
-          </div>
-          <div style="display:flex;gap:8px;align-items:center">
-            <div style="text-align:right">
-              <div style="font-weight:900">${balanceDisplay}</div>
-              <div class="muted" style="font-size:12px">Fee: ${feeDisplay}</div>
-            </div>
-            <div>
-              <button class="btn btn-ghost more-info" data-id="${escape(s.studentId||s.id||'')}">⋯</button>
-            </div>
-          </div>
-        </div>`;
+  // inside isMobileViewport() -> list.forEach
+const feeDisplay = (typeof s.fee === 'number' || (s.fee && !isNaN(Number(s.fee)))) ? (Number(s.fee) === 0 ? '0.00' : String(s.fee)) : '0.00';
+const balanceDisplay = c2p(s.balance_cents || 0);
+html += `<div class="card" style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+  <div style="display:flex;gap:8px;align-items:center">
+    <div style="font-weight:800">${idx+1}</div>
+    <div style="min-width:60px"><div style="font-weight:900">${escape(idShort)}</div></div>
+    <div>
+      <div style="font-weight:900">${escape(s.fullName||'')}</div>
+      <div class="muted" style="font-size:12px"><span class="class-blue">${escape(s.className || s.class || s.classId || '')}</span></div>
+    </div>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center">
+    <div style="text-align:right">
+      <div class="balance-red" style="font-weight:900">${balanceDisplay}</div>
+      <div class="fee-blue muted" style="font-size:12px">Fee: ${feeDisplay}</div>
+    </div>
+    <div>
+      <button class="btn btn-ghost more-info" data-id="${escape(s.studentId||s.id||'')}" title="More">⋯</button>
+    </div>
+  </div>
+</div>`;
+
       });
       html += `</div>`;
       listRoot.innerHTML = html;
@@ -2680,16 +2725,24 @@ async function renderPaymentsList(view = 'students'){
           const id = e.currentTarget.dataset.id;
           const st = (studentsCache||[]).find(x => (x.studentId===id || x.id===id));
           if(!st) return;
-          const body = `<div style="font-weight:900">${escape(st.fullName||'')}</div>
-            <div class="muted">ID: ${escape(st.studentId||st.id||'')}</div>
-            <div style="margin-top:8px">Phone: ${escape(st.parentPhone||st.phone||'—')}</div>
-            <div>Class: ${escape(st.className || st.class || st.classId || '')}</div>
-            <div>Fee: ${(typeof st.fee === 'number' || (st.fee && !isNaN(Number(st.fee)))) ? (Number(st.fee) === 0 ? '0.00' : String(st.fee)) : '0.00'}</div>
-            <div>Balance: ${c2p(st.balance_cents||0)}</div>
-            <div style="margin-top:10px"><button class="btn btn-primary pay-btn" data-id="${escape(st.studentId||st.id||'')}">Pay</button> <button class="btn btn-ghost view-trans-btn" data-id="${escape(st.studentId||st.id||'')}">View</button></div>`;
-          showModal('Student details', body);
-          modalBody.querySelectorAll('.pay-btn').forEach(bb => bb.onclick = openPayModal);
-          modalBody.querySelectorAll('.view-trans-btn').forEach(bb => bb.onclick = openViewTransactionsModal);
+// in more-info click handler
+const body = `<div style="font-weight:900">${escape(st.fullName||'')}</div>
+  <div class="muted">ID: ${escape(st.studentId||st.id||'')}</div>
+  <div style="margin-top:8px">Phone: ${escape(st.parentPhone||st.phone||'—')}</div>
+  <div>Class: <span class="class-blue">${escape(st.className || st.class || st.classId || '')}</span></div>
+  <div>Fee: <span class="fee-blue">${(typeof st.fee === 'number' || (st.fee && !isNaN(Number(st.fee)))) ? (Number(st.fee) === 0 ? '0.00' : String(st.fee)) : '0.00'}</span></div>
+  <div>Balance: <span class="balance-red">${c2p(st.balance_cents||0)}</span></div>
+  <div class="modal-more-actions">
+    <button class="btn btn-primary pay-btn" data-id="${escape(st.studentId||st.id||'')}">${svgPay()} Pay</button>
+    <button class="btn btn-secondary adj-btn" data-id="${escape(st.studentId||st.id||'')}">${svgReesto()} Reesto Hore</button>
+    <button class="btn btn-ghost view-trans-btn" data-id="${escape(st.studentId||st.id||'')}">${svgView()} View</button>
+  </div>`;
+showModal('Student details', body);
+// wire actions inside modal
+modalBody.querySelectorAll('.pay-btn').forEach(bb => bb.onclick = openPayModal);
+modalBody.querySelectorAll('.adj-btn').forEach(bb => bb.onclick = openAdjustmentModal);
+modalBody.querySelectorAll('.view-trans-btn').forEach(bb => bb.onclick = openViewTransactionsModal);
+
         };
       });
 
@@ -2716,9 +2769,10 @@ async function renderPaymentsList(view = 'students'){
         <td style="padding:8px">${c2p(s.balance_cents||0)}</td>
         <td style="padding:8px"><span class="badge">${escape(status)}</span></td>
         <td style="padding:8px">
-          <button class="btn btn-primary btn-sm pay-btn" data-id="${escape(s.studentId||s.id||'')}" title="Pay">💸</button>
-          <button class="btn btn-secondary btn-sm adj-btn" data-id="${escape(s.studentId||s.id||'')}" title="Reesto Hore">🔁</button>
-          <button class="btn btn-ghost btn-sm view-trans-btn" data-id="${escape(s.studentId||s.id||'')}" title="View">👁️</button>
+  <button class="btn btn-primary btn-sm pay-btn" data-id="${escape(s.studentId||s.id||'')}" title="Pay">${svgPay()}</button>
+<button class="btn btn-secondary btn-sm adj-btn" data-id="${escape(s.studentId||s.id||'')}" title="Reesto Hore">${svgReesto()}</button>
+<button class="btn btn-ghost btn-sm view-trans-btn" data-id="${escape(s.studentId||s.id||'')}" title="View">${svgView()}</button>
+
         </td>
       </tr>`;
     });
@@ -2788,9 +2842,12 @@ async function renderPaymentsList(view = 'students'){
         <td style="padding:8px">${t.salary != null ? (String(t.salary)) : '—'}</td>
         <td style="padding:8px">${c2p(t.balance_cents||0)}</td>
         <td style="padding:8px">
-          <button class="btn btn-primary btn-sm pay-btn" data-id="${escape(t.teacherId||t.id||'')}" title="Pay">💸</button>
-          <button class="btn btn-secondary btn-sm adj-btn" data-id="${escape(t.teacherId||t.id||'')}" title="Reesto Hore">🔁</button>
-          <button class="btn btn-ghost btn-sm view-trans-btn" data-id="${escape(t.teacherId||t.id||'')}" title="View">👁️</button>
+ 
+
+          <button class="btn btn-primary btn-sm pay-btn" data-id="${escape(t.teacherId||t.id||'')}" title="Pay">${svgPay()}</button>
+          <button class="btn btn-secondary btn-sm adj-btn" data-id="${escape(t.teacherId||t.id||'')}" title="Reesto Hore">${svgReesto()}</button>
+          <button class="btn btn-ghost btn-sm view-trans-btn" data-id="${escape(t.teacherId||t.id||'')}" title="View">${svgView()}</button>
+
         </td>
       </tr>`;
     });
@@ -2993,12 +3050,12 @@ async function openPayModal(e){
   modalBody.querySelector('#payClose').onclick = closeModal;
   modalBody.querySelector('#paySave').onclick = async () => {
     const btn = modalBody.querySelector('#paySave');
+    const oldHtml = putButtonLoader(btn);
     try{
-      btn.disabled = true; const oldText = btn.textContent; btn.textContent = 'Saving…';
       const raw = modalBody.querySelector('#payAmount').value;
-      if(!raw) return toast('Amount required');
+      if(!raw) { toast('Amount required'); restoreButton(btn, oldHtml); return; }
       const amountCents = p2c(raw);
-      if(amountCents <= 0) { btn.disabled=false; btn.textContent=oldText; return toast('Amount must be > 0'); }
+      if(amountCents <= 0) { toast('Amount must be > 0'); restoreButton(btn, oldHtml); return; }
       const type = payType.value;
       let relatedMonths = [];
       if(multiWrapper.style.display !== 'none'){
@@ -3037,7 +3094,6 @@ async function openPayModal(e){
       toast('Payment recorded');
       closeModal();
       await loadTransactions();
-      // refresh only active payments tab
       const active = document.querySelector('#pagePayments .tab.active');
       const viewName = active ? active.textContent.toLowerCase() : 'students';
       await renderPaymentsList(viewName);
@@ -3045,9 +3101,10 @@ async function openPayModal(e){
     }catch(err){
       console.error(err); toast('Failed to save payment');
     } finally {
-      btn.disabled = false; btn.textContent = 'Save';
+      restoreButton(btn, oldHtml);
     }
   };
+  
   
 }
 
