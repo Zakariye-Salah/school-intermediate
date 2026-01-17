@@ -55,6 +55,49 @@
   .modal-actions{ display:flex; gap:8px; justify-content:flex-end; margin-top:12px; flex-wrap:wrap }
   .muted{ color:var(--muted) }
   .pill{ display:inline-block; padding:4px 8px; border-radius:999px; background:#f1f5f9; font-weight:800; color:var(--muted); font-size:.85rem }
+
+  /* --------- Payments UI tweaks (mobile two-row header, colors, loader) --------- */
+
+/* container row splitting for payments header */
+.page-header {
+  gap: 8px;
+}
+.page-header .ph-row { display:flex; gap:8px; align-items:center; width:100%; }
+.page-header .ph-left { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.page-header .ph-right { display:flex; gap:8px; align-items:center; margin-left:auto; flex-wrap:wrap; }
+
+/* small screens: stack into two lines */
+@media (max-width:720px){
+  .page-header { flex-direction:column; align-items:stretch; gap:6px; }
+  .page-header .ph-row { justify-content:space-between; }
+  /* make search consume single row */
+  #paymentsSearch { flex:1; min-width: 0; }
+  /* second row holds filters & export (wrap if needed) */
+  #paymentsClassFilter, #paymentsStatusFilter, #paymentsTeacherSubjectFilter {
+    min-width: 120px; max-width: 45%;
+  }
+  #paymentsExport { order: 99; margin-left:auto; }
+}
+
+/* colors for fee / balance / class */
+.fee-blue { color:#246bff; font-weight:900; }
+.balance-red { color:#ef4444; font-weight:900; }
+.class-blue { color:#0b74ff; font-weight:900; }
+
+/* 3-dot loader used inside buttons */
+.btn-loader { display:inline-flex; gap:6px; align-items:center; padding-left:4px; padding-right:4px; }
+.btn-loader span { width:6px; height:6px; border-radius:50%; background:rgba(255,255,255,0.95); display:inline-block; opacity:0.95; transform:translateY(0); animation: btn-dot 900ms infinite; }
+.btn-loader span:nth-child(2){ animation-delay:120ms; background:rgba(255,255,255,0.9); }
+.btn-loader span:nth-child(3){ animation-delay:240ms; background:rgba(255,255,255,0.85); }
+@keyframes btn-dot { 0%{ transform:translateY(0); opacity:0.35 } 50%{ transform:translateY(-6px); opacity:1 } 100%{ transform:translateY(0); opacity:0.35 } }
+
+/* small styling for "more" modal content (mobile) */
+.modal-more-grid { display:grid; grid-template-columns:1fr; gap:8px; }
+.modal-more-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:8px; }
+
+/* small icon wrappers to keep inline SVGs tidy */
+.icon-sm { width:18px; height:18px; display:inline-block; vertical-align:middle; }
+
 </style>
 
 </head>
