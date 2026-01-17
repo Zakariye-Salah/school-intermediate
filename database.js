@@ -67,25 +67,79 @@ let examsCache = [];
 let teachersCache = []; // NEW
 let examTotalsCache = {}; // examId -> { studentId: payload }
 /* UI helpers */
+// function showPage(id) {
+//   // clear tab active classes (defensive - some tabs may be missing)
+//   [tabStudents, tabClasses, tabSubjects, tabExams, tabTeachers].forEach(t=>{
+//     if(t && t.classList) t.classList.remove('active');
+//   });
+
+//   // hide all pages (defensive - only hide if element exists)
+//   if(pageStudents) pageStudents.style.display = 'none';
+//   if(pageClasses) pageClasses.style.display = 'none';
+//   if(pageSubjects) pageSubjects.style.display = 'none';
+//   if(pageExams) pageExams.style.display = 'none';
+//   if(pageTeachers) pageTeachers.style.display = 'none';
+
+//   // show requested page and mark tab active
+//   if(id === 'students'){ if(tabStudents) tabStudents.classList.add('active'); if(pageStudents) pageStudents.style.display = 'block'; }
+//   if(id === 'classes'){ if(tabClasses) tabClasses.classList.add('active'); if(pageClasses) pageClasses.style.display = 'block'; }
+//   if(id === 'subjects'){ if(tabSubjects) tabSubjects.classList.add('active'); if(pageSubjects) pageSubjects.style.display = 'block'; }
+//   if(id === 'exams'){ if(tabExams) tabExams.classList.add('active'); if(pageExams) pageExams.style.display = 'block'; }
+//   if(id === 'teachers' && pageTeachers){ if(tabTeachers) tabTeachers.classList.add('active'); pageTeachers.style.display = 'block'; }
+// }
+
 function showPage(id) {
-  // clear tab active classes (defensive - some tabs may be missing)
-  [tabStudents, tabClasses, tabSubjects, tabExams, tabTeachers].forEach(t=>{
-    if(t && t.classList) t.classList.remove('active');
+  // Remove active from all tabs
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+
+  // Hide all pages (any element that uses the .page class)
+  document.querySelectorAll('.page').forEach(p => {
+    p.style.display = 'none';
   });
 
-  // hide all pages (defensive - only hide if element exists)
-  if(pageStudents) pageStudents.style.display = 'none';
-  if(pageClasses) pageClasses.style.display = 'none';
-  if(pageSubjects) pageSubjects.style.display = 'none';
-  if(pageExams) pageExams.style.display = 'none';
-  if(pageTeachers) pageTeachers.style.display = 'none';
+  // Helper to find and show the first existing candidate id
+  function showFirstExisting(candidates) {
+    for (const cid of candidates) {
+      const el = document.getElementById(cid);
+      if (el) {
+        el.style.display = 'block';
+        return true;
+      }
+    }
+    return false;
+  }
 
-  // show requested page and mark tab active
-  if(id === 'students'){ if(tabStudents) tabStudents.classList.add('active'); if(pageStudents) pageStudents.style.display = 'block'; }
-  if(id === 'classes'){ if(tabClasses) tabClasses.classList.add('active'); if(pageClasses) pageClasses.style.display = 'block'; }
-  if(id === 'subjects'){ if(tabSubjects) tabSubjects.classList.add('active'); if(pageSubjects) pageSubjects.style.display = 'block'; }
-  if(id === 'exams'){ if(tabExams) tabExams.classList.add('active'); if(pageExams) pageExams.style.display = 'block'; }
-  if(id === 'teachers' && pageTeachers){ if(tabTeachers) tabTeachers.classList.add('active'); pageTeachers.style.display = 'block'; }
+  // Map logical page id -> DOM id candidates (tries in order)
+  const pageMap = {
+    dashboard: ['pageDashboard', 'dashboardCard', 'pageDashboardCard'],
+    payments: ['pagePayments'],
+    attendance: ['pageAttendance'],
+    users: ['pageUsers'],
+    students: ['pageStudents'],
+    classes: ['pageClasses'],
+    subjects: ['pageSubjects'],
+    exams: ['pageExams'],
+    teachers: ['pageTeachers'],
+    // add other pages here if needed
+  };
+
+  // Show the desired page (try mapped ids, then fallback to page-{id})
+  const candidates = pageMap[id] || [`page${id[0].toUpperCase()}${id.slice(1)}`, `page-${id}`];
+  const shown = showFirstExisting(candidates);
+
+  // Activate matching tab button if present (tabId = 'tab' + Capitalized(id))
+  const tabId = 'tab' + (id[0] ? id[0].toUpperCase() + id.slice(1) : id);
+  const tabEl = document.getElementById(tabId);
+  if (tabEl) tabEl.classList.add('active');
+
+  // If nothing was shown, optionally show first pageStudents as safe default
+  if (!shown) {
+    const fallback = document.getElementById('pageStudents') || document.getElementById('dashboardCard');
+    if (fallback) fallback.style.display = 'block';
+    // Also try to set Students tab active
+    const t = document.getElementById('tabStudents');
+    if (t) t.classList.add('active');
+  }
 }
 
 
@@ -1066,6 +1120,7 @@ function openEditStudentModal(e){
     closeModal(); await loadStudents(); renderStudents(); toast(`${name} updated`);
   };
 }
+
 
 async function deleteOrUnblockStudent(e){
   const id = e.target.dataset.id;
@@ -2267,3 +2322,1019 @@ function escape(s){ if(s==null) return ''; return String(s).replace(/[&<>"']/g, 
 
 /* expose reload function */
 window._reloadAdmin = async ()=>{ await loadAll(); console.log('reloaded'); };
+
+
+
+
+
+
+/* ------------------------
+  Payments / Transactions
+  Paste into database.js (append)
+-------------------------*/
+
+/* safe local caches if not present */
+if(typeof transactionsCache === 'undefined') var transactionsCache = [];
+
+/* small helpers (pennies <-> display currency) */
+function p2c(amount){ // parse to cents (supports strings or numbers)
+  if(amount === null || amount === undefined || amount === '') return 0;
+  return Math.round(Number(amount) * 100);
+}
+function c2p(cents){ // cents -> display string with 2 decimals
+  return (Number(cents || 0) / 100).toFixed(2);
+}
+
+function capitalize(str){
+  if(!str) return '';
+  return str.charAt(0).toUpperCase() + str.slice(1);
+}
+
+/* load transactions into local cache */
+async function loadTransactions(){
+  try{
+    const snap = await getDocs(collection(db,'transactions'));
+    transactionsCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  }catch(err){
+    console.error('loadTransactions failed', err);
+    transactionsCache = [];
+  }
+}
+
+/* generic update of target balance (students/teachers/staff)
+   deltaCents may be positive or negative; positive increases owed balance */
+async function updateTargetBalanceGeneric(targetType, targetId, deltaCents){
+  if(!targetType || !targetId) return;
+  const col = targetType === 'student' ? 'students' : (targetType === 'teacher' ? 'teachers' : (targetType === 'staff' ? 'staff' : null));
+  if(!col) return;
+  try{
+    const ref = doc(db, col, targetId);
+    const snap = await getDoc(ref);
+    if(!snap.exists()){
+      // create with balance_cents
+      await setDoc(ref, { balance_cents: Number(deltaCents || 0) }, { merge: true });
+      return;
+    }
+    const cur = snap.data();
+    const curBalance = Number(cur.balance_cents || 0);
+    const next = curBalance + Number(deltaCents || 0);
+    await updateDoc(ref, { balance_cents: next, updatedAt: Timestamp.now(), updatedBy: (currentUser && currentUser.uid) || null });
+    // also refresh local caches if possible
+    if(targetType === 'student'){
+      const s = (studentsCache||[]).find(x => x.studentId === targetId || x.id === targetId);
+      if(s) s.balance_cents = next;
+    } else if(targetType === 'teacher'){
+      const t = (teachersCache||[]).find(x => x.teacherId === targetId || x.id === targetId);
+      if(t) t.balance_cents = next;
+    } else if(targetType === 'staff' && window.staffCache){
+      const st = (window.staffCache||[]).find(x => x.id === targetId);
+      if(st) st.balance_cents = next;
+    }
+  }catch(err){
+    console.error('updateTargetBalanceGeneric failed', err);
+  }
+}
+
+/* ------------------------
+  Render Payments (UI + list + actions)
+-------------------------*/
+
+async function renderPayments(){
+  // create payments page if missing
+  let page = document.getElementById('pagePayments');
+  if(!page){
+    page = document.createElement('section');
+    page.id = 'pagePayments';
+    page.className = 'page';
+    const main = document.querySelector('main');
+    main && main.appendChild(page);
+  }
+
+  page.innerHTML = `
+    <div class="page-header" style="display:flex;align-items:center;gap:8px">
+      <div style="display:flex;gap:8px;align-items:center">
+        <button id="paymentsTabStudents" class="tab active">Students</button>
+        <button id="paymentsTabTeachers" class="tab">Teachers</button>
+        <button id="paymentsTabStaff" class="tab">Staff</button>
+        <button id="paymentsTabExpenses" class="tab">Expenses</button>
+      </div>
+      <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+        <input id="paymentsSearch" placeholder="Search name / ID / phone" />
+        <select id="paymentsClassFilter"><option value="">All classes</option></select>
+        <select id="paymentsStatusFilter"><option value="all">All</option><option value="unpaid">Unpaid</option><option value="paid">Paid</option><option value="free">Free</option></select>
+        <button id="paymentsExport" class="btn btn-ghost">Export</button>
+      </div>
+    </div>
+    <div id="paymentsList"></div>
+  `;
+
+  // populate class filter
+  const sel = document.getElementById('paymentsClassFilter');
+  if(sel){
+    sel.innerHTML = '<option value="">All classes</option>' + (classesCache || []).map(c => `<option value="${escape(c.name)}">${escape(c.name)}</option>`).join('');
+  }
+
+  // wire tabs and search
+  document.getElementById('paymentsTabStudents').onclick = ()=>{ document.querySelectorAll('#pagePayments .tab').forEach(t=>t.classList.remove('active')); document.getElementById('paymentsTabStudents').classList.add('active'); renderPaymentsList('students'); };
+  document.getElementById('paymentsTabTeachers').onclick = ()=>{ document.querySelectorAll('#pagePayments .tab').forEach(t=>t.classList.remove('active')); document.getElementById('paymentsTabTeachers').classList.add('active'); renderPaymentsList('teachers'); };
+  document.getElementById('paymentsTabStaff').onclick = ()=>{ document.querySelectorAll('#pagePayments .tab').forEach(t=>t.classList.remove('active')); document.getElementById('paymentsTabStaff').classList.add('active'); renderPaymentsList('staff'); };
+  document.getElementById('paymentsTabExpenses').onclick = ()=>{ document.querySelectorAll('#pagePayments .tab').forEach(t=>t.classList.remove('active')); document.getElementById('paymentsTabExpenses').classList.add('active'); renderPaymentsList('expenses'); };
+
+  const search = document.getElementById('paymentsSearch');
+  if(search) search.oninput = ()=>{ const active = document.querySelector('#pagePayments .tab.active'); renderPaymentsList(active ? active.textContent.toLowerCase() : 'students'); };
+
+  document.getElementById('paymentsExport').onclick = exportCurrentPaymentsView;
+
+  // initial render
+  await Promise.all([
+    loadStudents && loadStudents(),
+    loadTeachers && loadTeachers(),
+    loadTransactions()
+  ]);
+  await renderPaymentsList('students');
+  }
+
+async function renderPaymentsList(view = 'students'){
+  await loadTransactions(); // keep cache fresh
+  const listRoot = document.getElementById('paymentsList');
+  if(!listRoot) return;
+
+  const q = (document.getElementById('paymentsSearch') && document.getElementById('paymentsSearch').value || '').trim().toLowerCase();
+  const classFilter = (document.getElementById('paymentsClassFilter') && document.getElementById('paymentsClassFilter').value) || '';
+  const statusFilter = (document.getElementById('paymentsStatusFilter') && document.getElementById('paymentsStatusFilter').value) || 'all';
+
+  if(view === 'students'){
+    let list = (studentsCache || []).slice();
+    if(classFilter) list = list.filter(s => (s.classId || '') === classFilter);
+    if(q) list = list.filter(s => ((s.fullName||'') + (s.studentId||'') + (s.parentPhone||'') + (s.phone||'')).toLowerCase().includes(q));
+    // apply status filter
+    list = list.filter(s => {
+      const balance = Number(s.balance_cents || 0);
+      const fee = Number(s.fee || 0);
+      if(statusFilter === 'free') return fee === 0;
+      if(statusFilter === 'paid') return fee > 0 && balance === 0;
+      if(statusFilter === 'unpaid') return balance > 0;
+      return true;
+    });
+    list.sort((a,b) => (b.balance_cents||0) - (a.balance_cents||0));
+    let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><strong>Students — ${list.length}</strong><div class="muted">Columns: No, ID, Name, Parent/Phone, Balance, Actions</div></div>`;
+    html += `<div style="overflow:auto"><table style="width:100%;border-collapse:collapse"><thead><tr><th>No</th><th>ID</th><th>Name</th><th>Parent/Phone</th><th>Balance</th><th>Actions</th></tr></thead><tbody>`;
+    list.forEach((s, idx) => {
+      html += `<tr style="border-bottom:1px solid #f1f5f9">
+        <td style="padding:8px">${idx+1}</td>
+        <td style="padding:8px">${escape(s.studentId||s.id||'')}</td>
+        <td style="padding:8px">${escape(s.fullName||'')}</td>
+        <td style="padding:8px">${escape(s.parentPhone||s.phone||'—')}</td>
+        <td style="padding:8px">${c2p(s.balance_cents||0)}</td>
+        <td style="padding:8px">
+          <button class="btn btn-ghost btn-sm pay-btn" data-id="${escape(s.studentId||s.id||'')}">Pay</button>
+          <button class="btn btn-ghost btn-sm adj-btn" data-id="${escape(s.studentId||s.id||'')}">+</button>
+          <button class="btn btn-ghost btn-sm view-trans-btn" data-id="${escape(s.studentId||s.id||'')}">View</button>
+        </td></tr>`;
+    });
+    html += `</tbody></table></div>`;
+    listRoot.innerHTML = html;
+    listRoot.querySelectorAll('.pay-btn').forEach(b => b.onclick = openPayModal);
+    listRoot.querySelectorAll('.adj-btn').forEach(b => b.onclick = openAdjustmentModal);
+    listRoot.querySelectorAll('.view-trans-btn').forEach(b => b.onclick = openViewTransactionsModal);
+    return;
+  }
+
+  if(view === 'teachers' || view === 'staff'){
+    const pool = view === 'teachers' ? (teachersCache || []) : (window.staffCache || []);
+    let list = pool.slice();
+    if(q) list = list.filter(t => ((t.fullName||'') + (t.teacherId||t.id||'') + (t.phone||'')).toLowerCase().includes(q));
+    list.sort((a,b) => (b.balance_cents||0) - (a.balance_cents||0));
+    let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><strong>${capitalize(view)} — ${list.length}</strong><div class="muted">Columns: No, ID, Name, Balance, Actions</div></div>`;
+    html += `<div style="overflow:auto"><table style="width:100%;border-collapse:collapse"><thead><tr><th>No</th><th>ID</th><th>Name</th><th>Balance</th><th>Actions</th></tr></thead><tbody>`;
+    list.forEach((t, idx) => {
+      html += `<tr style="border-bottom:1px solid #f1f5f9">
+        <td style="padding:8px">${idx+1}</td>
+        <td style="padding:8px">${escape(t.teacherId||t.id||'')}</td>
+        <td style="padding:8px">${escape(t.fullName||'')}</td>
+        <td style="padding:8px">${c2p(t.balance_cents||0)}</td>
+        <td style="padding:8px">
+          <button class="btn btn-ghost btn-sm pay-btn" data-id="${escape(t.teacherId||t.id||'')}">Pay</button>
+          <button class="btn btn-ghost btn-sm adj-btn" data-id="${escape(t.teacherId||t.id||'')}">+</button>
+          <button class="btn btn-ghost btn-sm view-trans-btn" data-id="${escape(t.teacherId||t.id||'')}">View</button>
+        </td></tr>`;
+    });
+    html += `</tbody></table></div>`;
+    listRoot.innerHTML = html;
+    listRoot.querySelectorAll('.pay-btn').forEach(b => b.onclick = openPayModal);
+    listRoot.querySelectorAll('.adj-btn').forEach(b => b.onclick = openAdjustmentModal);
+    listRoot.querySelectorAll('.view-trans-btn').forEach(b => b.onclick = openViewTransactionsModal);
+    return;
+  }
+
+  if(view === 'expenses'){
+    // show transactions where target_type === 'expense'
+    const rows = (transactionsCache || []).filter(t => t.target_type === 'expense' && !t.is_deleted).sort((a,b) => (b.createdAt?.seconds||0) - (a.createdAt?.seconds||0));
+    let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><strong>Expenses — ${rows.length}</strong><div class="muted">Columns: No, Name, Category, Amount, Date, Actions</div></div>`;
+    html += `<div style="overflow:auto"><table style="width:100%;border-collapse:collapse"><thead><tr><th>No</th><th>Name</th><th>Category</th><th>Amount</th><th>Date</th><th>Actions</th></tr></thead><tbody>`;
+    rows.forEach((tx, idx) => {
+      html += `<tr style="border-bottom:1px solid #f1f5f9">
+        <td style="padding:8px">${idx+1}</td>
+        <td style="padding:8px">${escape(tx.note || tx.expense_name || 'Expense')}</td>
+        <td style="padding:8px">${escape(tx.subtype || '')}</td>
+        <td style="padding:8px">${c2p(tx.amount_cents || 0)}</td>
+        <td style="padding:8px">${tx.createdAt ? new Date(tx.createdAt.seconds * 1000).toLocaleString() : ''}</td>
+        <td style="padding:8px">
+          <button class="btn btn-ghost btn-sm edit-expense" data-id="${tx.id}">Edit</button>
+          <button class="btn btn-danger btn-sm del-expense" data-id="${tx.id}">Delete</button>
+        </td>
+      </tr>`;
+    });
+    html += `</tbody></table></div>`;
+    listRoot.innerHTML = html;
+    listRoot.querySelectorAll('.edit-expense').forEach(b => b.onclick = openEditTransactionModal);
+    listRoot.querySelectorAll('.del-expense').forEach(b => b.onclick = deleteTransaction);
+    return;
+  }
+}
+
+/* --- Pay modal (students/teachers/staff) --- */
+async function openPayModal(e){
+  const id = e.target.dataset.id;
+  const activeTab = document.querySelector('#pagePayments .tab.active');
+  const view = activeTab ? activeTab.textContent.toLowerCase() : 'students';
+  const targetType = view === 'students' ? 'student' : (view === 'teachers' ? 'teacher' : 'staff');
+  let target = null;
+  if(targetType === 'student') target = (studentsCache||[]).find(s => s.studentId === id || s.id === id);
+  else if(targetType === 'teacher') target = (teachersCache||[]).find(t => t.teacherId === id || t.id === id);
+  else target = (window.staffCache||[]).find(s => s.id === id);
+
+  if(!target) return toast('Target not found');
+
+  // default values
+  const currentBalance = Number(target.balance_cents || 0);
+  const defaultPhone = target.parentPhone || target.phone || '';
+  const monthsOptions = Array.from({length:12}, (_,i)=>`<option value="${i+1}">${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][i]}</option>`).join('');
+
+  // Modal HTML (full)
+  const html = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div><label>Amount (${c2p(0)})</label><input id="payAmount" type="number" min="0" step="0.01" value="${c2p(currentBalance)}" /></div>
+      <div><label>Payment Type</label>
+        <select id="payType">
+          <option value="monthly">Monthly</option>
+          <option value="id-card">ID Card</option>
+          <option value="registration">Registration</option>
+          ${targetType !== 'student' ? '<option value="salary">Salary</option>' : ''}
+          <option value="other">Other</option>
+        </select>
+      </div>
+      <div id="payOtherTypeWrapper" style="display:none"><label>Other Type</label><input id="payOtherType" /></div>
+      <div id="monthsWrapper"><label>Months (multi)</label><select id="payMonths" multiple size="6">${monthsOptions}</select></div>
+      <div><label>Year</label>
+        <select id="payYear">${Array.from({length:81},(_,i)=>2020+i).map(y=>`<option value="${y}" ${y===new Date().getFullYear()?'selected':''}>${y}</option>`).join('')}</select>
+      </div>
+      <div><label>Payment Method</label>
+        <select id="payMethod"><option value="mobile">Mobile</option><option value="cash">Cash</option><option value="card">Card</option></select>
+      </div>
+      <div id="mobileProviderWrapper"><label>Mobile Provider</label>
+        <select id="mobileProvider"><option>Hormuud</option><option>Somnet</option><option>Somtel</option><option>Telesom</option><option>Amtel</option><option>Other</option></select>
+      </div>
+      <div><label>Payer Phone</label><input id="payerPhone" value="${escape(defaultPhone)}" /></div>
+      <div style="grid-column:1 / -1"><label>Note</label><input id="payNote" /></div>
+    </div>
+    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
+      <button id="payClose" class="btn btn-ghost">Close</button>
+      <button id="paySave" class="btn btn-primary">Save</button>
+    </div>
+  `;
+  showModal(`Pay • ${escape(target.fullName || target.teacherName || target.id || '')} • Balance: ${c2p(currentBalance)}`, html);
+
+  const payType = modalBody.querySelector('#payType');
+  const payMonths = modalBody.querySelector('#payMonths');
+  const monthsWrapper = modalBody.querySelector('#monthsWrapper');
+  const otherTypeWrapper = modalBody.querySelector('#payOtherTypeWrapper');
+  const mobileProviderWrapper = modalBody.querySelector('#mobileProviderWrapper');
+  const payMethodEl = modalBody.querySelector('#payMethod');
+
+  function toggleTypeUI(){
+    const t = payType.value;
+    otherTypeWrapper.style.display = t === 'other' ? 'block' : 'none';
+    monthsWrapper.style.display = t === 'monthly' ? 'block' : 'none';
+  }
+  function toggleMethodUI(){
+    mobileProviderWrapper.style.display = payMethodEl.value === 'mobile' ? 'block' : 'none';
+  }
+  payType.onchange = toggleTypeUI; payMethodEl.onchange = toggleMethodUI;
+  toggleTypeUI(); toggleMethodUI();
+
+  modalBody.querySelector('#payClose').onclick = closeModal;
+
+  modalBody.querySelector('#paySave').onclick = async () => {
+    try{
+      const rawAmount = modalBody.querySelector('#payAmount').value;
+      if(rawAmount === '' || rawAmount === null) return toast('Amount required');
+      const amountCents = p2c(rawAmount);
+      if(amountCents <= 0) return toast('Amount must be > 0');
+      const type = payType.value === 'other' ? (modalBody.querySelector('#payOtherType').value.trim() || 'other') : payType.value;
+      const months = Array.from(payMonths.selectedOptions).map(o => ({ month: Number(o.value), year: Number(modalBody.querySelector('#payYear').value) }));
+      const payment_method = modalBody.querySelector('#payMethod').value;
+      const mobile_provider = (modalBody.querySelector('#mobileProvider') && modalBody.querySelector('#mobileProvider').value) || null;
+      const payer_phone = modalBody.querySelector('#payerPhone').value.trim() || null;
+      const note = modalBody.querySelector('#payNote').value.trim() || null;
+
+      // transaction payload
+      const tx = {
+        actor: currentUser ? currentUser.uid : null,
+        target_type: targetType,
+        target_id: target.studentId || target.teacherId || target.id,
+        type: type,
+        subtype: null,
+        amount_cents: amountCents,
+        payment_method,
+        mobile_provider,
+        payer_phone,
+        note,
+        related_months: (type === 'monthly') ? months.map(m=> `${m.year}-${String(m.month).padStart(2,'0')}`) : [],
+        is_reversal: false,
+        original_transaction_id: null,
+        createdAt: Timestamp.now(),
+      };
+
+      // store transaction
+      const ref = await addDoc(collection(db,'transactions'), tx);
+      // for monthly and salary: update target balance (monthly reduces student balance; salary reduces teacher/staff balance)
+      if(type === 'monthly' && targetType === 'student'){
+        // monthly payment reduces student's owed balance -> subtract amount
+        await updateTargetBalanceGeneric('student', tx.target_id, -amountCents);
+      }
+      if(type === 'salary' && (targetType === 'teacher' || targetType === 'staff')){
+        // paying salary reduces the money owed to teacher/staff
+        await updateTargetBalanceGeneric(targetType, tx.target_id, -amountCents);
+      }
+      await toast('Payment recorded');
+      closeModal();
+      await loadTransactions(); // refresh cache
+      // refresh lists/dash
+      renderPaymentsList('students');
+      renderPaymentsList('teachers');
+      renderPaymentsList('staff');
+      renderDashboard && renderDashboard();
+    }catch(err){
+      console.error('save payment failed', err);
+      toast('Failed to save payment');
+    }
+  };
+}
+
+/* --- Adjustment modal (+) --- */
+async function openAdjustmentModal(e){
+  const id = e.target.dataset.id;
+  const activeTab = document.querySelector('#pagePayments .tab.active');
+  const view = activeTab ? activeTab.textContent.toLowerCase() : 'students';
+  const targetType = view === 'students' ? 'student' : (view === 'teachers' ? 'teacher' : 'staff');
+  let target = null;
+  if(targetType === 'student') target = (studentsCache||[]).find(s => s.studentId === id || s.id === id);
+  else if(targetType === 'teacher') target = (teachersCache||[]).find(t => t.teacherId === id || t.id === id);
+  else target = (window.staffCache||[]).find(s => s.id === id);
+
+  if(!target) return toast('Target not found');
+
+  const html = `
+    <div style="display:grid;grid-template-columns:1fr;gap:8px">
+      <div><label>Amount (enter negative to reduce balance)</label><input id="adjAmount" type="number" step="0.01" value="0" /></div>
+      <div><label>Reason / Note</label><input id="adjNote" /></div>
+    </div>
+    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
+      <button id="adjClose" class="btn btn-ghost">Close</button>
+      <button id="adjSave" class="btn btn-primary">Save</button>
+    </div>
+  `;
+  showModal(`Adjust • ${escape(target.fullName || target.id || '')}`, html);
+  modalBody.querySelector('#adjClose').onclick = closeModal;
+  modalBody.querySelector('#adjSave').onclick = async () => {
+    try{
+      const raw = modalBody.querySelector('#adjAmount').value;
+      if(raw === '' || raw === null) return toast('Amount required');
+      const signedCents = Math.round(Number(raw) * 100); // can be negative
+      if(signedCents === 0) return toast('Amount should not be zero');
+      const note = modalBody.querySelector('#adjNote').value.trim() || 'Adjustment';
+      // transaction
+      const tx = {
+        actor: currentUser ? currentUser.uid : null,
+        target_type: targetType,
+        target_id: target.studentId || target.teacherId || target.id,
+        type: 'adjustment',
+        subtype: null,
+        amount_cents: signedCents,
+        payment_method: 'manual',
+        mobile_provider: null,
+        payer_phone: null,
+        note,
+        related_months: [],
+        is_reversal: false,
+        original_transaction_id: null,
+        createdAt: Timestamp.now()
+      };
+      await addDoc(collection(db,'transactions'), tx);
+      // apply balance change: adjustment value is added to balance (positive increases owed, negative decreases owed)
+      await updateTargetBalanceGeneric(targetType, tx.target_id, signedCents);
+      await toast('Adjustment saved');
+      closeModal();
+      await loadTransactions();
+      renderPaymentsList('students');
+      renderPaymentsList('teachers');
+      renderPaymentsList('staff');
+      renderDashboard && renderDashboard();
+    }catch(err){
+      console.error('save adjustment failed', err);
+      toast('Failed to save adjustment');
+    }
+  };
+}
+
+/* --- View Transactions for a target (open drawer/modal) --- */
+async function openViewTransactionsModal(e){
+  const id = e.target.dataset.id;
+  // determine which list invoked (search for id among students / teachers / staff)
+  let targetType = 'student';
+  let target = (studentsCache||[]).find(s => s.studentId === id || s.id === id);
+  if(!target){
+    target = (teachersCache||[]).find(t => t.teacherId === id || t.id === id);
+    if(target) targetType = 'teacher';
+  }
+  if(!target){
+    target = (window.staffCache||[]).find(s => s.id === id);
+    if(target) targetType = 'staff';
+  }
+  if(!target) return toast('Target not found');
+
+  // load transactions for that target
+  const q = query(collection(db,'transactions'), where('target_type','==',targetType), where('target_id','==',(target.studentId || target.teacherId || target.id)));
+  const snap = await getDocs(q);
+  const txs = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b) => (b.createdAt?.seconds||0) - (a.createdAt?.seconds||0));
+
+  // summary
+  const totalMonthly = txs.filter(t => t.type === 'monthly').reduce((s,t) => s + (t.amount_cents || 0), 0);
+  const totalAll = txs.reduce((s,t) => s + (t.amount_cents || 0), 0);
+
+  let html = `<div><strong>${escape(target.fullName || target.teacherName || target.id)}</strong> <div class="muted">ID: ${escape(target.studentId || target.teacherId || target.id)}</div></div>`;
+  html += `<div style="margin-top:8px"><strong>Summary</strong><div class="muted">Total monthly paid: ${c2p(totalMonthly)} • Total all: ${c2p(totalAll)} • Current balance: ${c2p(target.balance_cents||0)}</div></div>`;
+  html += `<div style="overflow:auto;margin-top:8px"><table style="width:100%;border-collapse:collapse"><thead><tr><th>Date</th><th>Type</th><th>Months</th><th>Amount</th><th>Method</th><th>By</th><th>Note</th><th>Actions</th></tr></thead><tbody>`;
+  txs.forEach(tx => {
+    html += `<tr style="border-bottom:1px solid #f1f5f9">
+      <td style="padding:8px">${tx.createdAt ? new Date(tx.createdAt.seconds * 1000).toLocaleString() : ''}</td>
+      <td style="padding:8px">${escape(tx.type)}</td>
+      <td style="padding:8px">${(tx.related_months || []).join(', ')}</td>
+      <td style="padding:8px">${c2p(tx.amount_cents||0)}</td>
+      <td style="padding:8px">${escape(tx.payment_method || '')}${tx.mobile_provider ? ' / ' + escape(tx.mobile_provider) : ''}</td>
+      <td style="padding:8px">${escape(tx.actor || '')}</td>
+      <td style="padding:8px">${escape(tx.note || '')}</td>
+      <td style="padding:8px">
+        <button class="btn btn-ghost btn-sm edit-tx" data-id="${tx.id}">Edit</button>
+        <button class="btn btn-danger btn-sm del-tx" data-id="${tx.id}">Delete</button>
+      </td>
+    </tr>`;
+  });
+  html += `</tbody></table></div><div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end"><button id="closeTxView" class="btn btn-ghost">Close</button></div>`;
+
+  showModal('Transactions', html);
+  modalBody.querySelector('#closeTxView').onclick = closeModal;
+  modalBody.querySelectorAll('.edit-tx').forEach(b => b.onclick = openEditTransactionModal);
+  modalBody.querySelectorAll('.del-tx').forEach(b => b.onclick = deleteTransaction);
+}
+
+/* --- Edit transaction modal --- */
+async function openEditTransactionModal(e){
+  const txId = e.target.dataset.id;
+  if(!txId) return;
+  const txSnap = await getDoc(doc(db,'transactions', txId));
+  if(!txSnap.exists()) return toast('Transaction not found');
+  const tx = { id: txSnap.id, ...txSnap.data() };
+
+  // modal fields
+  const monthsOptions = Array.from({length:12}, (_,i)=>`<option value="${i+1}">${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][i]}</option>`).join('');
+  const html = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div><label>Amount</label><input id="editAmount" type="number" step="0.01" value="${c2p(tx.amount_cents||0)}" /></div>
+      <div><label>Type</label><input id="editType" value="${escape(tx.type||'')}" /></div>
+      <div><label>Months (multi)</label><select id="editMonths" multiple size="6">${monthsOptions}</select></div>
+      <div><label>Payment Method</label><input id="editMethod" value="${escape(tx.payment_method||'')}" /></div>
+      <div><label>Mobile Provider</label><input id="editProvider" value="${escape(tx.mobile_provider||'')}" /></div>
+      <div><label>Payer Phone</label><input id="editPayer" value="${escape(tx.payer_phone||'')}" /></div>
+      <div style="grid-column:1 / -1"><label>Note</label><input id="editNote" value="${escape(tx.note||'')}" /></div>
+    </div>
+    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
+      <button id="editClose" class="btn btn-ghost">Close</button>
+      <button id="editSave" class="btn btn-primary">Save</button>
+    </div>
+  `;
+  showModal('Edit Transaction', html);
+
+  // pre-select related months if present (format 'YYYY-MM')
+  const selectMonths = modalBody.querySelector('#editMonths');
+  (tx.related_months || []).forEach(m => {
+    const parts = String(m).split('-'); // YYYY-MM
+    if(parts.length === 2){
+      const monthNum = Number(parts[1]);
+      const opt = Array.from(selectMonths.options).find(o => Number(o.value) === monthNum);
+      if(opt) opt.selected = true;
+    }
+  });
+
+  modalBody.querySelector('#editClose').onclick = closeModal;
+  modalBody.querySelector('#editSave').onclick = async () => {
+    try{
+      const newAmountCents = p2c(modalBody.querySelector('#editAmount').value);
+      const newType = modalBody.querySelector('#editType').value.trim();
+      const newMonths = Array.from(selectMonths.selectedOptions).map(o => o.value);
+      const newMethod = modalBody.querySelector('#editMethod').value.trim();
+      const newProvider = modalBody.querySelector('#editProvider').value.trim();
+      const newPayer = modalBody.querySelector('#editPayer').value.trim();
+      const newNote = modalBody.querySelector('#editNote').value.trim();
+
+      // if type affects balance (monthly or salary) we must compute delta and apply
+      const affectsBalance = (tx.type === 'monthly' || tx.type === 'salary') && (newType === tx.type); // only if type remains one that affects balance
+      if(affectsBalance){
+        // original amount was tx.amount_cents; previously we applied effect (e.g., subtracted from balance). We need to apply difference: delta = old - new (we add delta to balance because old was applied)
+        const delta = (tx.amount_cents || 0) - newAmountCents; // if positive -> add to balance; if negative -> subtract
+        await updateTargetBalanceGeneric(tx.target_type, tx.target_id, delta);
+      } else {
+        // also handle case where original affected but new doesn't: we must reverse original effect
+        if(tx.type === 'monthly' || tx.type === 'salary'){
+          // reverse original effect completely
+          await updateTargetBalanceGeneric(tx.target_type, tx.target_id, (tx.amount_cents || 0));
+        }
+        // if original not affecting but new type affects, apply new effect (subtract)
+        if(newType === 'monthly' || newType === 'salary'){
+          await updateTargetBalanceGeneric(tx.target_type, tx.target_id, -newAmountCents);
+        }
+      }
+
+      // save transaction edits and audit fields
+      await updateDoc(doc(db,'transactions', tx.id), {
+        amount_cents: newAmountCents,
+        type: newType,
+        payment_method: newMethod || null,
+        mobile_provider: newProvider || null,
+        payer_phone: newPayer || null,
+        note: newNote || null,
+        related_months: (newType === 'monthly') ? newMonths.map(m => `${new Date().getFullYear()}-${String(Number(m)).padStart(2,'0')}`) : [],
+        edited_by: currentUser ? currentUser.uid : null,
+        edited_at: Timestamp.now()
+      });
+
+      await toast('Transaction updated');
+      closeModal();
+      await loadTransactions();
+      renderPaymentsList('students');
+      renderPaymentsList('teachers');
+      renderPaymentsList('staff');
+      renderDashboard && renderDashboard();
+    }catch(err){
+      console.error('edit transaction failed', err);
+      toast('Failed to update transaction');
+    }
+  };
+}
+
+/* --- Delete/soft-delete transaction --- */
+async function deleteTransaction(e){
+  const id = e.target.dataset.id;
+  if(!id) return;
+  if(!confirm('Delete Transaction? This will reverse balance effects if applicable. Proceed?')) return;
+  try{
+    const snap = await getDoc(doc(db,'transactions', id));
+    if(!snap.exists()) return toast('Transaction not found');
+    const tx = { id: snap.id, ...snap.data() };
+    // reverse effect if affected balance (monthly or salary)
+    if(tx.type === 'monthly' || tx.type === 'salary'){
+      // original subtract was applied when created -> add it back
+      await updateTargetBalanceGeneric(tx.target_type, tx.target_id, (tx.amount_cents || 0));
+    }
+    // soft-delete
+    await updateDoc(doc(db,'transactions', id), { is_deleted: true, deleted_by: currentUser ? currentUser.uid : null, deleted_at: Timestamp.now() });
+    await toast('Transaction deleted');
+    await loadTransactions();
+    renderPaymentsList('students');
+    renderPaymentsList('teachers');
+    renderPaymentsList('staff');
+    renderDashboard && renderDashboard();
+  }catch(err){
+    console.error('delete transaction failed', err);
+    toast('Failed to delete transaction');
+  }
+}
+
+/* Export current payments view to CSV (simple) */
+async function exportCurrentPaymentsView(){
+  const active = document.querySelector('#pagePayments .tab.active');
+  const view = active ? active.textContent.toLowerCase() : 'students';
+  let rows = [];
+  if(view === 'students'){
+    rows.push(['ID','Name','Phone','AssignedFee','CurrentBalance']);
+    (studentsCache||[]).forEach(s => rows.push([s.studentId||s.id, s.fullName||'', s.parentPhone||s.phone||'', s.fee||'', c2p(s.balance_cents||0)]));
+  } else if(view === 'teachers'){
+    rows.push(['ID','Name','Phone','Salary','CurrentBalance']);
+    (teachersCache||[]).forEach(t => rows.push([t.teacherId||t.id, t.fullName||'', t.phone||'', t.salary||'', c2p(t.balance_cents||0)]));
+  } else if(view === 'staff'){
+    rows.push(['ID','Name','Phone','Role','CurrentBalance']);
+    (window.staffCache||[]).forEach(s => rows.push([s.id, s.fullName||'', s.phone||'', s.role||'', c2p(s.balance_cents||0)]));
+  } else { // expenses
+    rows.push(['TransactionID','Note','Category','Amount','Date','RecordedBy']);
+    (transactionsCache||[]).filter(t=> t.target_type === 'expense' && !t.is_deleted).forEach(t => rows.push([t.id, t.note||'', t.subtype||'', c2p(t.amount_cents||0), t.createdAt ? new Date(t.createdAt.seconds*1000).toISOString() : '', t.actor || '']));
+  }
+  const csv = rows.map(r => r.map(c => '"' + String(c||'').replace(/"/g,'""') + '"').join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = `export-${view}.csv`; a.click(); URL.revokeObjectURL(url);
+}
+
+/* ------------------------
+  Dashboard (simple widget render)
+-------------------------*/
+async function renderDashboard(){
+  // ensure caches loaded
+  await Promise.all([ loadStudents(), loadTeachers(), loadTransactions() ]);
+  const totalStudents = (studentsCache||[]).length;
+  const totalTeachers = (teachersCache||[]).length;
+  const totalStaff = (window.staffCache||[]).length || 0;
+  const totalOutstandingCents = (studentsCache||[]).reduce((s,x)=> s + (x.balance_cents||0), 0) + (teachersCache||[]).reduce((s,x)=> s + (x.balance_cents||0), 0) + ((window.staffCache||[]).reduce((s,x)=> s + (x.balance_cents||0), 0));
+  // due this month: sum of student fee for month + teacher salary owed (simple approximation)
+  const totalDueThisMonthCents = (studentsCache||[]).reduce((s,x)=> s + (p2c(x.fee || 0)), 0) + (teachersCache||[]).reduce((s,x)=> s + (p2c(x.salary || 0)), 0);
+
+  // render / update dashboard card
+  let dash = document.getElementById('dashboardCard');
+  const html = `
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:12px">
+      <div class="card"><strong>Total Students</strong><div class="muted" id="totalStudentsVal">${totalStudents}</div></div>
+      <div class="card"><strong>Total Teachers</strong><div class="muted" id="totalTeachersVal">${totalTeachers}</div></div>
+      <div class="card"><strong>Total Staff</strong><div class="muted" id="totalStaffVal">${totalStaff}</div></div>
+      <div class="card"><strong>Total Outstanding</strong><div class="muted" id="totalOutstandingVal">${c2p(totalOutstandingCents)}</div></div>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:12px">
+      <button id="openPaymentsQuick" class="btn btn-primary">Open Payments</button>
+      <button id="openAttendanceQuick" class="btn btn-ghost">Open Attendance</button>
+      <button id="openAddExpenseQuick" class="btn btn-ghost">New Expense</button>
+      <button id="openExportQuick" class="btn btn-ghost">Export Reports</button>
+    </div>
+    <div style="margin-bottom:12px"><strong>Totals</strong> <div class="muted">Due this month: ${c2p(totalDueThisMonthCents)}</div></div>
+    <div style="margin-top:8px"><strong>Recent Transactions</strong></div>
+    <div id="dashboardRecentTx"></div>
+  `;
+
+  if(!dash){
+    dash = document.createElement('div');
+    dash.id = 'dashboardCard';
+    dash.className = 'page';
+    const main = document.querySelector('main');
+    main && main.prepend(dash);
+  }
+  dash.innerHTML = html;
+
+  document.getElementById('openPaymentsQuick').onclick = ()=>{ renderPayments(); showPage && showPage('payments'); };
+  document.getElementById('openAttendanceQuick').onclick = ()=>{ renderAttendance(); showPage && showPage('attendance'); };
+  document.getElementById('openAddExpenseQuick').onclick = async () => {
+    // open small add-expense modal
+    const html = `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div><label>Expense Name</label><input id="expName" /></div>
+        <div><label>Category</label><input id="expCategory" /></div>
+        <div><label>Amount</label><input id="expAmount" type="number" step="0.01" /></div>
+        <div><label>Date</label><input id="expDate" type="date" value="${new Date().toISOString().slice(0,10)}" /></div>
+        <div style="grid-column:1 / -1"><label>Note</label><input id="expNote" /></div>
+      </div>
+      <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
+        <button id="expClose" class="btn btn-ghost">Close</button>
+        <button id="expSave" class="btn btn-primary">Save</button>
+      </div>
+    `;
+    showModal('Add Expense', html);
+    modalBody.querySelector('#expClose').onclick = closeModal;
+    modalBody.querySelector('#expSave').onclick = async () => {
+      const name = modalBody.querySelector('#expName').value.trim();
+      const cat = modalBody.querySelector('#expCategory').value.trim();
+      const amt = modalBody.querySelector('#expAmount').value;
+      const date = modalBody.querySelector('#expDate').value;
+      const note = modalBody.querySelector('#expNote').value.trim();
+      if(!name || !amt) return toast('Name and amount required');
+      const cents = p2c(amt);
+      const tx = {
+        actor: currentUser ? currentUser.uid : null,
+        target_type: 'expense',
+        target_id: `EXP-${Date.now()}`,
+        type: 'expense',
+        subtype: cat || null,
+        amount_cents: cents,
+        payment_method: 'manual',
+        mobile_provider: null,
+        payer_phone: null,
+        note: name + (note ? ' - ' + note : ''),
+        related_months: [],
+        is_reversal: false,
+        original_transaction_id: null,
+        createdAt: Timestamp.now()
+      };
+      await addDoc(collection(db,'transactions'), tx);
+      await toast('Expense recorded');
+      closeModal();
+      await loadTransactions();
+      renderPaymentsList('expenses');
+      renderDashboard && renderDashboard();
+    };
+  };
+
+  // recent 10 tx
+  const recent = (transactionsCache || []).filter(t=> !t.is_deleted).sort((a,b)=> (b.createdAt?.seconds||0) - (a.createdAt?.seconds||0)).slice(0,10);
+  const recentDiv = document.getElementById('dashboardRecentTx');
+  recentDiv.innerHTML = `<table style="width:100%"><thead><tr><th>Date</th><th>Target</th><th>Type</th><th>Amount</th><th>Method</th></tr></thead><tbody>${recent.map(r => `<tr><td>${r.createdAt ? new Date(r.createdAt.seconds*1000).toLocaleString() : ''}</td><td>${escape(r.target_type||'')} ${escape(r.target_id||'')}</td><td>${escape(r.type||'')}</td><td>${c2p(r.amount_cents||0)}</td><td>${escape(r.payment_method||'')}</td></tr>`).join('')}</tbody></table>`;
+}
+
+/* ------------------------
+  Attendance
+-------------------------*/
+
+async function renderAttendance(){
+  let page = document.getElementById('pageAttendance');
+  if(!page){
+    page = document.createElement('section');
+    page.id = 'pageAttendance';
+    page.className = 'page';
+    const main = document.querySelector('main');
+    main && main.appendChild(page);
+  }
+
+  page.innerHTML = `
+    <div class="page-header" style="display:flex;align-items:center;gap:8px">
+      <select id="attClass" style="min-width:160px"><option value="">Select class</option></select>
+      <select id="attSubject" style="min-width:160px"><option value="">Subject (optional)</option></select>
+      <input id="attDate" type="date" />
+      <div style="margin-left:auto;display:flex;gap:8px">
+        <button id="attMark" class="btn btn-primary">Mark Attendance</button>
+        <button id="attImport" class="btn btn-ghost">Bulk Import</button>
+        <button id="attExport" class="btn btn-ghost">Export</button>
+      </div>
+    </div>
+    <div id="attendanceList"></div>
+  `;
+  const classSel = document.getElementById('attClass');
+  classSel.innerHTML = '<option value="">Select class</option>' + (classesCache||[]).map(c => `<option value="${escape(c.name)}">${escape(c.name)}</option>`).join('');
+  const subjSel = document.getElementById('attSubject');
+  subjSel.innerHTML = '<option value="">Subject (optional)</option>' + (subjectsCache||[]).map(s => `<option value="${escape(s.name)}">${escape(s.name)}</option>`).join('');
+  document.getElementById('attDate').value = new Date().toISOString().slice(0,10);
+
+  document.getElementById('attMark').onclick = openMarkAttendanceModal;
+  document.getElementById('attExport').onclick = async () => {
+    const classId = document.getElementById('attClass').value;
+    const dateISO = document.getElementById('attDate').value;
+    if(!classId || !dateISO) return toast('Select class and date');
+    await exportAttendanceCSV(classId, dateISO);
+  };
+}
+
+/* load attendance records for class+date */
+async function loadAttendanceForDate(classId, dateISO){
+  try{
+    const q = query(collection(db,'attendance'), where('class_id','==',classId), where('date','==',dateISO));
+    const snap = await getDocs(q);
+    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  }catch(err){
+    console.error('loadAttendanceForDate failed', err);
+    return [];
+  }
+}
+
+/* mark attendance modal */
+async function openMarkAttendanceModal(){
+  const classId = document.getElementById('attClass').value;
+  const dateISO = document.getElementById('attDate').value;
+  if(!classId) return toast('Choose class');
+  if(!dateISO) return toast('Choose date');
+  await loadStudents();
+  const students = (studentsCache||[]).filter(s => (s.classId || '') === classId);
+  const existing = await loadAttendanceForDate(classId, dateISO);
+
+  let html = `<div><strong>Class: ${escape(classId)}</strong> <div class="muted">Date: ${dateISO}</div></div>`;
+  html += `<div style="overflow:auto;margin-top:8px"><table style="width:100%;border-collapse:collapse"><thead><tr><th>No</th><th>ID</th><th>Name</th><th>Phone</th><th>Status</th><th>Note</th></tr></thead><tbody>`;
+  students.forEach((s, idx) => {
+    const rec = existing.find(r => r.student_id === (s.studentId || s.id));
+    const status = rec ? rec.status : 'absent';
+    const note = rec ? (rec.note || '') : '';
+    html += `<tr style="border-bottom:1px solid #f1f5f9">
+      <td style="padding:8px">${idx+1}</td>
+      <td style="padding:8px">${escape(s.studentId||s.id||'')}</td>
+      <td style="padding:8px">${escape(s.fullName||'')}</td>
+      <td style="padding:8px">${escape(s.parentPhone||s.phone||'')}</td>
+      <td style="padding:8px">
+        <select class="att-status" data-id="${escape(s.studentId||s.id)}">
+          <option value="present" ${status==='present'?'selected':''}>Present</option>
+          <option value="absent" ${status==='absent'?'selected':''}>Absent</option>
+          <option value="late" ${status==='late'?'selected':''}>Late</option>
+          <option value="excused" ${status==='excused'?'selected':''}>Excused</option>
+        </select>
+      </td>
+      <td style="padding:8px"><input class="att-note" data-id="${escape(s.studentId||s.id)}" value="${escape(note)}" /></td>
+    </tr>`;
+  });
+  html += `</tbody></table></div><div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end"><button id="attCancel" class="btn btn-ghost">Cancel</button><button id="attSave" class="btn btn-primary">Save</button></div>`;
+  showModal('Mark Attendance', html);
+
+  modalBody.querySelector('#attCancel').onclick = closeModal;
+  modalBody.querySelector('#attSave').onclick = async () => {
+    try{
+      const statuses = Array.from(modalBody.querySelectorAll('.att-status')).map(s => ({ student_id: s.dataset.id, status: s.value }));
+      const notes = Array.from(modalBody.querySelectorAll('.att-note')).map(n => ({ student_id: n.dataset.id, note: n.value }));
+      for(const s of statuses){
+        const noteObj = notes.find(n => n.student_id === s.student_id);
+        const recId = `${classId}::${dateISO}::${s.student_id}`; // deterministic id avoids duplicates
+        const payload = {
+          class_id: classId,
+          date: dateISO,
+          subject_id: (document.getElementById('attSubject') && document.getElementById('attSubject').value) || null,
+          student_id: s.student_id,
+          status: s.status,
+          marked_by: currentUser ? currentUser.uid : null,
+          timestamp: Timestamp.now(),
+          note: noteObj ? noteObj.note : ''
+        };
+        await setDoc(doc(db,'attendance', recId), payload);
+      }
+      toast('Attendance saved');
+      closeModal();
+    }catch(err){
+      console.error('save attendance failed', err);
+      toast('Failed to save attendance');
+    }
+  };
+}
+
+/* export attendance CSV for class/date */
+async function exportAttendanceCSV(classId, dateISO){
+  const recs = await loadAttendanceForDate(classId, dateISO);
+  const rows = [['StudentID','Name','Date','Class','Status','Note']];
+  for(const r of recs){
+    const stu = (studentsCache||[]).find(s => s.studentId === r.student_id || s.id === r.student_id);
+    rows.push([r.student_id, stu ? stu.fullName : '', r.date, r.class_id, r.status, r.note || '']);
+  }
+  const csv = rows.map(r => r.map(c => '"' + String(c||'').replace(/"/g,'""') + '"').join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = `attendance-${classId}-${dateISO}.csv`; a.click(); URL.revokeObjectURL(url);
+}
+
+/* ------------------------
+  Users (admin) CRUD
+-------------------------*/
+async function renderUsers(){
+  let page = document.getElementById('pageUsers');
+  if(!page){
+    page = document.createElement('section');
+    page.id = 'pageUsers';
+    page.className = 'page';
+    const main = document.querySelector('main');
+    main && main.appendChild(page);
+  }
+
+  // load users
+  let users = [];
+  try{
+    const snap = await getDocs(collection(db,'users'));
+    users = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  }catch(err){
+    console.error('load users failed', err);
+  }
+
+  page.innerHTML = `
+    <div class="page-header" style="display:flex;align-items:center;gap:8px">
+      <button id="addUserBtn" class="btn btn-primary">+ Add Admin</button>
+      <input id="usersSearch" placeholder="Search users" style="margin-left:auto" />
+    </div>
+    <div id="usersList"></div>
+  `;
+
+  document.getElementById('addUserBtn').onclick = openAddUserModal;
+  document.getElementById('usersSearch').oninput = () => renderUsersList(users);
+
+  renderUsersList(users);
+}
+
+function renderUsersList(users){
+  const q = (document.getElementById('usersSearch') && document.getElementById('usersSearch').value || '').trim().toLowerCase();
+  const list = (users || []).filter(u => !q || (u.displayName||'').toLowerCase().includes(q) || (u.email||'').toLowerCase().includes(q));
+  const container = document.getElementById('usersList');
+  if(!container) return;
+  let html = `<table style="width:100%;border-collapse:collapse"><thead><tr><th>No</th><th>Email</th><th>Name</th><th>Role</th><th>Actions</th></tr></thead><tbody>`;
+  list.forEach((u, idx) => {
+    html += `<tr style="border-bottom:1px solid #f1f5f9"><td style="padding:8px">${idx+1}</td><td style="padding:8px">${escape(u.email||'')}</td><td style="padding:8px">${escape(u.displayName||'')}</td><td style="padding:8px">${escape(u.role||'admin')}</td><td style="padding:8px"><button class="btn btn-ghost edit-user" data-id="${u.id}">Edit</button> <button class="btn btn-danger del-user" data-id="${u.id}">Delete</button></td></tr>`;
+  });
+  html += `</tbody></table>`;
+  container.innerHTML = html;
+  container.querySelectorAll('.edit-user').forEach(b => b.onclick = openEditUserModal);
+  container.querySelectorAll('.del-user').forEach(b => b.onclick = deleteUser);
+}
+
+function openAddUserModal(){
+  const html = `
+    <div style="display:grid;grid-template-columns:1fr;gap:8px">
+      <div><label>Email</label><input id="newUserEmail" /></div>
+      <div><label>Name</label><input id="newUserName" /></div>
+      <div><label>Role</label><select id="newUserRole"><option value="admin">Admin</option></select></div>
+    </div>
+    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
+      <button id="newUserClose" class="btn btn-ghost">Close</button>
+      <button id="newUserSave" class="btn btn-primary">Save</button>
+    </div>
+  `;
+  showModal('Add Admin', html);
+  modalBody.querySelector('#newUserClose').onclick = closeModal;
+  modalBody.querySelector('#newUserSave').onclick = async () => {
+    const email = modalBody.querySelector('#newUserEmail').value.trim();
+    const name = modalBody.querySelector('#newUserName').value.trim();
+    const role = modalBody.querySelector('#newUserRole').value;
+    if(!email) return toast('Email required');
+    try{
+      const payload = { email, displayName: name || '', role, createdAt: Timestamp.now(), createdBy: currentUser ? currentUser.uid : null };
+      const ref = await addDoc(collection(db,'users'), payload);
+      toast('Admin added');
+      closeModal();
+      renderUsers(); // reload list
+    }catch(err){
+      console.error('add admin failed', err);
+      toast('Failed to add');
+    }
+  };
+}
+
+async function openEditUserModal(e){
+  const id = e.target.dataset.id;
+  if(!id) return;
+  const snap = await getDoc(doc(db,'users', id));
+  if(!snap.exists()) return toast('User not found');
+  const u = { id: snap.id, ...snap.data() };
+  const html = `
+    <div style="display:grid;grid-template-columns:1fr;gap:8px">
+      <div><label>Name</label><input id="editUserName" value="${escape(u.displayName||'')}" /></div>
+      <div><label>Role</label><input id="editUserRole" value="${escape(u.role||'admin')}" /></div>
+    </div>
+    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
+      <button id="editUserClose" class="btn btn-ghost">Close</button>
+      <button id="editUserSave" class="btn btn-primary">Save</button>
+    </div>
+  `;
+  showModal('Edit Admin', html);
+  modalBody.querySelector('#editUserClose').onclick = closeModal;
+  modalBody.querySelector('#editUserSave').onclick = async () => {
+    const name = modalBody.querySelector('#editUserName').value.trim();
+    const role = modalBody.querySelector('#editUserRole').value.trim();
+    try{
+      await updateDoc(doc(db,'users', id), { displayName: name, role, updatedAt: Timestamp.now(), updatedBy: currentUser ? currentUser.uid : null });
+      toast('Updated');
+      closeModal();
+      renderUsers();
+    }catch(err){
+      console.error('update admin failed', err);
+      toast('Failed to update');
+    }
+  };
+}
+
+async function deleteUser(e){
+  const id = e.target.dataset.id;
+  if(!id) return;
+  if(!confirm('Delete admin?')) return;
+  try{
+    await deleteDoc(doc(db,'users', id));
+    toast('Deleted');
+    renderUsers();
+  }catch(err){
+    console.error('delete admin failed', err);
+    toast('Failed to delete');
+  }
+}
+
+/* ------------------------
+  Header wiring (add tabs: Dashboard, Payments, Attendance, Users)
+-------------------------*/
+(function wireHeaderTabs(){
+  try{
+    const nav = document.querySelector('.tabs');
+    if(!nav) return;
+    if(!document.getElementById('tabDashboard')){
+      const btn = document.createElement('button'); btn.id='tabDashboard'; btn.className='tab'; btn.textContent='Dashboard';
+      nav.insertBefore(btn, nav.firstChild);
+      btn.onclick = ()=>{ renderDashboard(); showPage && showPage('dashboard'); };
+    }
+    if(!document.getElementById('tabPayments')){
+      const btn = document.createElement('button'); btn.id='tabPayments'; btn.className='tab'; btn.textContent='Payments';
+      nav.appendChild(btn);
+      btn.onclick = ()=>{ renderPayments(); showPage && showPage('payments'); };
+    }
+    if(!document.getElementById('tabAttendance')){
+      const btn = document.createElement('button'); btn.id='tabAttendance'; btn.className='tab'; btn.textContent='Attendance';
+      nav.appendChild(btn);
+      btn.onclick = ()=>{ renderAttendance(); showPage && showPage('attendance'); };
+    }
+    if(!document.getElementById('tabUsers')){
+      const btn = document.createElement('button'); btn.id='tabUsers'; btn.className='tab'; btn.textContent='Users';
+      nav.appendChild(btn);
+      btn.onclick = ()=>{ renderUsers(); showPage && showPage('users'); };
+    }
+  }catch(err){ console.warn('wireHeaderTabs failed', err); }
+})();
+
+/* End of payments/attendance/users additions */
