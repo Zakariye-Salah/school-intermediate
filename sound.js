@@ -44,24 +44,62 @@ function fadeVolume(audio, from, to, duration=300){
 }
 
 // safe play: try Audio and return a promise that resolves when ended (or timed out)
+// function playAudioElement(path){
+//   return new Promise((resolve) => {
+//     try {
+//       const a = new Audio(path);
+//       a.preload = 'auto';
+//       // ensure it resolves even if playback doesn't start or errors
+//       let settled = false;
+//       const finish = (ok=true) => { if(settled) return; settled = true; try { a.pause(); } catch(e){} resolve(ok); };
+//       a.addEventListener('ended', () => finish(true));
+//       a.addEventListener('error', () => finish(false));
+//       // safety timeout in case 'ended' doesn't fire (2s default, but effects might be longer) - we set 6s here
+//       const to = setTimeout(()=> finish(true), 6000);
+//       a.play().catch((e) => { // play may be blocked
+//         // fallback: resolve false (still allow app to continue)
+//         finish(false);
+//       });
+//       // when finished, clear timeout
+//       // finish will pause audio and resolve
+//     } catch (e) {
+//       resolve(false);
+//     }
+//   });
+// }
+
+// safe play: try Audio and return a promise that resolves when ended (or timed out)
 function playAudioElement(path){
   return new Promise((resolve) => {
     try {
       const a = new Audio(path);
       a.preload = 'auto';
-      // ensure it resolves even if playback doesn't start or errors
+
+      // keep a global pool so we can stop all active sounds later
+      if(!window.__activeAudioPool) window.__activeAudioPool = [];
+      window.__activeAudioPool.push(a);
+
       let settled = false;
-      const finish = (ok=true) => { if(settled) return; settled = true; try { a.pause(); } catch(e){} resolve(ok); };
+      const finish = (ok=true) => {
+        if(settled) return;
+        settled = true;
+        try { a.pause(); a.currentTime = 0; } catch(e){}
+        // remove from pool
+        window.__activeAudioPool = (window.__activeAudioPool || []).filter(x => x !== a);
+        resolve(ok);
+      };
+
       a.addEventListener('ended', () => finish(true));
       a.addEventListener('error', () => finish(false));
-      // safety timeout in case 'ended' doesn't fire (2s default, but effects might be longer) - we set 6s here
-      const to = setTimeout(()=> finish(true), 6000);
-      a.play().catch((e) => { // play may be blocked
-        // fallback: resolve false (still allow app to continue)
+
+      // safety timeout in case 'ended' doesn't fire
+      const to = setTimeout(() => finish(true), 6000);
+
+      a.play().catch(() => {
+        // playback blocked or failed — still cleanup
+        clearTimeout(to);
         finish(false);
       });
-      // when finished, clear timeout
-      // finish will pause audio and resolve
     } catch (e) {
       resolve(false);
     }
@@ -98,7 +136,26 @@ export const SoundManager = {
   _chooseBgPath(){
     return getRandomFrom(this.bgList) || null;
   },
+//where i added is here be carefully not double dd think it here comes error if.. not jj dd  ok
 
+  stopAll(){
+    try {
+      // stop background audio if present
+      if(this.bgAudio){
+        try { this.bgAudio.pause(); this.bgAudio.currentTime = 0; } catch(e){}
+      }
+    } catch(e){}
+  
+    // stop any active effect audio created by playAudioElement
+    try {
+      if(window.__activeAudioPool && Array.isArray(window.__activeAudioPool)){
+        window.__activeAudioPool.forEach(a => { try { a.pause(); a.currentTime = 0; } catch(e){} });
+        window.__activeAudioPool = [];
+      }
+    } catch(e){}
+  },
+
+  //that's the end 
   async _startBg(){
     if(!this.bgAudio) return;
     const path = this._chooseBgPath();
