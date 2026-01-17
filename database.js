@@ -191,10 +191,34 @@ async function loadExams(){
   const snap = await getDocs(collection(db,'exams'));
   examsCache = snap.docs.map(d=>({ id:d.id, ...d.data() }));
 }
+// async function loadTeachers(){
+//   try {
+//     const snap = await getDocs(collection(db,'teachers'));
+//     teachersCache = snap.docs.map(d=>({ id:d.id, ...d.data() }));
+//   } catch(err){ teachersCache = []; console.warn('loadTeachers failed', err); }
+// }
+
 async function loadTeachers(){
   try {
     const snap = await getDocs(collection(db,'teachers'));
     teachersCache = snap.docs.map(d=>({ id:d.id, ...d.data() }));
+    // resolve subject names if subjectsCache available
+    if(!subjectsCache || !subjectsCache.length) await loadSubjects();
+    teachersCache.forEach(t => {
+      if(!t.subjectName){
+        if(t.subjects && Array.isArray(t.subjects)){
+          t.subjectName = t.subjects.map(id => {
+            const s = (subjectsCache||[]).find(x => x.id === id || x.name === id);
+            return s ? s.name : id;
+          }).join(', ');
+        } else if(t.subjectId){
+          const s = (subjectsCache||[]).find(x => x.id === t.subjectId || x.name === t.subjectId);
+          t.subjectName = s ? s.name : t.subjectId;
+        } else {
+          t.subjectName = t.subjectName || '';
+        }
+      }
+    });
   } catch(err){ teachersCache = []; console.warn('loadTeachers failed', err); }
 }
 
@@ -2336,6 +2360,7 @@ window._reloadAdmin = async ()=>{ await loadAll(); console.log('reloaded'); };
 /* safe local caches if not present */
 if(typeof transactionsCache === 'undefined') var transactionsCache = [];
 
+
 /* small helpers (pennies <-> display currency) */
 function p2c(amount){ // parse to cents (supports strings or numbers)
   if(amount === null || amount === undefined || amount === '') return 0;
@@ -2366,6 +2391,50 @@ async function resolveActorName(uid){
     }
   }catch(e){ /* ignore */ }
   return uid;
+}
+
+/** small: format month label like "Jan-2026" from "1-2026", "2026-01", "2026-01-05", etc. */
+function formatMonthLabel(m) {
+  if (!m && m !== 0) return '';
+  const s = String(m).trim();
+  const mm1 = s.match(/^(\d{1,2})-(\d{4})$/);
+  if (mm1) {
+    const mon = Number(mm1[1]), yr = mm1[2];
+    const names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    return (mon>=1 && mon<=12) ? `${names[mon-1]}-${yr}` : s;
+  }
+  const mm2 = s.match(/^(\d{4})-(\d{1,2})/);
+  if (mm2) {
+    const yr = mm2[1], mon = Number(mm2[2]);
+    const names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    return (mon>=1 && mon<=12) ? `${names[mon-1]}-${yr}` : s;
+  }
+  const d = new Date(s);
+  if (!isNaN(d.getTime())) {
+    const names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    return `${names[d.getMonth()]}-${d.getFullYear()}`;
+  }
+  return s;
+}
+
+/** display-friendly type label (maps 'adjustment' -> 'Reesto Hore') */
+function displayTypeLabel(type) {
+  if (!type) return '';
+  if (String(type).toLowerCase() === 'adjustment' || String(type).toLowerCase() === 'adjust') return 'Reesto Hore';
+  return capitalize(String(type));
+}
+
+/** get school meta for exports */
+async function getSchoolMeta() {
+  // try to read a 'settings' doc that may contain school info, fallback to static
+  try {
+    const snap = await getDoc(doc(db, 'settings', 'school'));
+    if (snap.exists()) {
+      const d = snap.data();
+      return { name: d.name || 'AL-FATXI PRIMARY AND SECONDARY SCHOOL', logo: d.logo || 'assets/logo.png' };
+    }
+  } catch(e){ /* ignore */ }
+  return { name: 'AL-FATXI PRIMARY AND SECONDARY SCHOOL', logo: 'assets/logo.png' };
 }
 
 async function loadStaff(){
@@ -2430,7 +2499,6 @@ async function updateTargetBalanceGeneric(targetType, targetId, deltaCents){
 /* ------------------------
   Render Payments (UI + list + actions)
 -------------------------*/
-
 async function renderPayments(){
   // ensure caches
   await Promise.all([ loadStudents && loadStudents(), loadTeachers && loadTeachers(), loadStaff && loadStaff(), loadSubjects && loadSubjects(), loadTransactions && loadTransactions() ]);
@@ -2514,7 +2582,6 @@ async function renderPayments(){
   await renderPaymentsList('students');
 }
 
-/* render list depending on view */
 async function renderPaymentsList(view = 'students'){
   await loadTransactions();
 
@@ -2526,22 +2593,35 @@ async function renderPaymentsList(view = 'students'){
   const statusFilter = (document.getElementById('paymentsStatusFilter') && document.getElementById('paymentsStatusFilter').value) || 'all';
   const subjectFilter = (document.getElementById('paymentsTeacherSubjectFilter') && document.getElementById('paymentsTeacherSubjectFilter').value) || '';
 
-  // STUDENTS
+  // Helper to normalize class match
+  function matchesClassFilter(item, val){
+    if(!val) return true;
+    const cf = String(val);
+    const itemClassIds = [ item.classId, item.class, item.className, item.class_id, item.className && item.className.toString() ].filter(Boolean).map(x => String(x));
+    // class doc id might be in classesCache id field
+    if(itemClassIds.includes(cf)) return true;
+    // also compare using classesCache name -> id mapping
+    const found = (classesCache||[]).find(c => String(c.id) === cf || String(c.name) === cf || String(c.displayName||'') === cf);
+    if(found){
+      return itemClassIds.includes(String(found.id)) || itemClassIds.includes(String(found.name));
+    }
+    // fallback: compare case-insensitive names
+    return itemClassIds.some(x => x.toLowerCase() === cf.toLowerCase());
+  }
+
+  // STUDENTS view
   if(view === 'students'){
     let list = (studentsCache || []).slice();
 
-    // class filter: support id or name
+    // class filter: normalized compare
     if(classFilter){
-      list = list.filter(s => {
-        const val = String(classFilter);
-        return String(s.classId || s.class || s.classId === val || s.class === val || (s.classId||'') === val || (s.class||'') === val);
-      });
+      list = list.filter(s => matchesClassFilter(s, classFilter));
     }
 
     // search
     if(q){
       list = list.filter(s => {
-        const hay = ((s.fullName||'') + ' ' + (s.studentId||s.id||'') + ' ' + (s.parentPhone||'') + ' ' + (s.phone||'') + ' ' + (s.classId||'')).toLowerCase();
+        const hay = ((s.fullName||'') + ' ' + (s.studentId||s.id||'') + ' ' + (s.parentPhone||'') + ' ' + (s.phone||'') + ' ' + (s.className||s.class||'')).toLowerCase();
         return hay.includes(q);
       });
     }
@@ -2558,26 +2638,87 @@ async function renderPaymentsList(view = 'students'){
 
     list.sort((a,b) => (b.balance_cents||0) - (a.balance_cents||0));
 
-    let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><strong>Students — ${list.length}</strong><div class="muted">Columns: No, ID, Name, Class, Phone, Fee, Balance, Status, Actions</div></div>`;
+    // mobile layout if small viewport
+    if(isMobileViewport()){
+      // compact card list for mobile — last 6 digits of ID
+      let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <strong>Students — ${list.length}</strong>
+        <div class="muted">Tap "more" to see details</div>
+      </div>`;
+      html += `<div style="display:flex;flex-direction:column;gap:8px">`;
+      list.forEach((s, idx) => {
+        const idFull = String(s.studentId||s.id||'');
+        const idShort = idFull.slice(-6) || idFull;
+        const feeDisplay = (typeof s.fee === 'number' || (s.fee && !isNaN(Number(s.fee)))) ? (Number(s.fee) === 0 ? '0.00' : String(s.fee)) : '0.00';
+        const balanceDisplay = c2p(s.balance_cents || 0);
+        html += `<div class="card" style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+          <div style="display:flex;gap:8px;align-items:center">
+            <div style="font-weight:800">${idx+1}</div>
+            <div style="min-width:60px"><div style="font-weight:900">${escape(idShort)}</div></div>
+            <div>
+              <div style="font-weight:900">${escape(s.fullName||'')}</div>
+              <div class="muted" style="font-size:12px">${escape(s.className || s.class || s.classId || '')}</div>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <div style="text-align:right">
+              <div style="font-weight:900">${balanceDisplay}</div>
+              <div class="muted" style="font-size:12px">Fee: ${feeDisplay}</div>
+            </div>
+            <div>
+              <button class="btn btn-ghost more-info" data-id="${escape(s.studentId||s.id||'')}">⋯</button>
+            </div>
+          </div>
+        </div>`;
+      });
+      html += `</div>`;
+      listRoot.innerHTML = html;
+
+      // wire more-info expand (show modal with full info)
+      listRoot.querySelectorAll('.more-info').forEach(b => {
+        b.onclick = (e) => {
+          const id = e.currentTarget.dataset.id;
+          const st = (studentsCache||[]).find(x => (x.studentId===id || x.id===id));
+          if(!st) return;
+          const body = `<div style="font-weight:900">${escape(st.fullName||'')}</div>
+            <div class="muted">ID: ${escape(st.studentId||st.id||'')}</div>
+            <div style="margin-top:8px">Phone: ${escape(st.parentPhone||st.phone||'—')}</div>
+            <div>Class: ${escape(st.className || st.class || st.classId || '')}</div>
+            <div>Fee: ${(typeof st.fee === 'number' || (st.fee && !isNaN(Number(st.fee)))) ? (Number(st.fee) === 0 ? '0.00' : String(st.fee)) : '0.00'}</div>
+            <div>Balance: ${c2p(st.balance_cents||0)}</div>
+            <div style="margin-top:10px"><button class="btn btn-primary pay-btn" data-id="${escape(st.studentId||st.id||'')}">Pay</button> <button class="btn btn-ghost view-trans-btn" data-id="${escape(st.studentId||st.id||'')}">View</button></div>`;
+          showModal('Student details', body);
+          modalBody.querySelectorAll('.pay-btn').forEach(bb => bb.onclick = openPayModal);
+          modalBody.querySelectorAll('.view-trans-btn').forEach(bb => bb.onclick = openViewTransactionsModal);
+        };
+      });
+
+      return;
+    }
+
+    // desktop table layout (students)
+    let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <strong>Students — ${list.length}</strong><div class="muted">Columns: No, ID, Name, Class, Phone, Fee, Balance, Status, Actions</div></div>`;
     html += `<div style="overflow:auto"><table style="width:100%;border-collapse:collapse"><thead><tr>
       <th>No</th><th>ID</th><th>Name</th><th>Class</th><th>Phone</th><th>Fee</th><th>Balance</th><th>Status</th><th>Actions</th>
     </tr></thead><tbody>`;
 
     list.forEach((s, idx) => {
       const status = (Number(s.fee||0) === 0) ? 'Free' : ((Number(s.balance_cents||0) > 0) ? 'Unpaid' : 'Paid');
+      const feeDisplay = (typeof s.fee === 'number' || (s.fee && !isNaN(Number(s.fee)))) ? (Number(s.fee) === 0 ? '0.00' : String(s.fee)) : '0.00';
       html += `<tr style="border-bottom:1px solid #f1f5f9">
         <td style="padding:8px">${idx+1}</td>
         <td style="padding:8px">${escape(s.studentId||s.id||'')}</td>
         <td style="padding:8px">${escape(s.fullName||'')}</td>
         <td style="padding:8px">${escape(s.className || s.class || s.classId || '')}</td>
         <td style="padding:8px">${escape(s.parentPhone||s.phone||'—')}</td>
-        <td style="padding:8px">${(s.fee||'')}</td>
+        <td style="padding:8px">${feeDisplay}</td>
         <td style="padding:8px">${c2p(s.balance_cents||0)}</td>
         <td style="padding:8px"><span class="badge">${escape(status)}</span></td>
         <td style="padding:8px">
-          <button class="btn btn-primary btn-sm pay-btn" data-id="${escape(s.studentId||s.id||'')}">Pay</button>
-          <button class="btn btn-secondary btn-sm adj-btn" data-id="${escape(s.studentId||s.id||'')}">Adj</button>
-          <button class="btn btn-ghost btn-sm view-trans-btn" data-id="${escape(s.studentId||s.id||'')}">View</button>
+          <button class="btn btn-primary btn-sm pay-btn" data-id="${escape(s.studentId||s.id||'')}" title="Pay">💸</button>
+          <button class="btn btn-secondary btn-sm adj-btn" data-id="${escape(s.studentId||s.id||'')}" title="Reesto Hore">🔁</button>
+          <button class="btn btn-ghost btn-sm view-trans-btn" data-id="${escape(s.studentId||s.id||'')}" title="View">👁️</button>
         </td>
       </tr>`;
     });
@@ -2591,33 +2732,50 @@ async function renderPaymentsList(view = 'students'){
     return;
   }
 
-  // TEACHERS / STAFF
+  // TEACHERS / STAFF (desktop & mobile same table for simplicity)
   if(view === 'teachers' || view === 'staff'){
     const pool = view === 'teachers' ? (teachersCache || []) : (window.staffCache || []);
     let list = pool.slice();
 
-    // subject filter for teachers
+    // ensure teacher subject names resolved (map subject ids to names)
+    if(view === 'teachers'){
+      (list || []).forEach(t => {
+        if(!t.subjectName){
+          if(t.subjects && Array.isArray(t.subjects)){
+            t.subjectName = t.subjects.map(id => {
+              const s = (subjectsCache||[]).find(x => x.id === id || x.name === id);
+              return s ? s.name : id;
+            }).join(', ');
+          } else if(t.subjectId){
+            const s = (subjectsCache||[]).find(x => x.id === t.subjectId || x.name === t.subjectId);
+            t.subjectName = s ? s.name : t.subjectId;
+          } else {
+            t.subjectName = t.subjectName || '';
+          }
+        }
+      });
+    }
+
     if(subjectFilter && view === 'teachers'){
-      list = list.filter(t=>{
-        if(!t.subjectId && !t.subjects) return false;
+      list = list.filter(t => {
+        if(!t.subjects && !t.subjectId) return false;
         if(Array.isArray(t.subjects)) return t.subjects.includes(subjectFilter);
         return String(t.subjectId||'') === String(subjectFilter);
       });
     }
 
-    // search
     if(q){
       list = list.filter(t => {
-        const hay = ((t.fullName||'') + ' ' + (t.teacherId||t.id||'') + ' ' + (t.phone||'') + ' ' + (t.subjectId||'') ).toLowerCase();
+        const hay = ((t.fullName||'') + ' ' + (t.teacherId||t.id||'') + ' ' + (t.phone||'') + ' ' + (t.subjectName||'') ).toLowerCase();
         return hay.includes(q);
       });
     }
 
     list.sort((a,b) => (b.balance_cents||0) - (a.balance_cents||0));
 
-    let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><strong>${capitalize(view)} — ${list.length}</strong><div class="muted">Columns: No, ID, Name, Subject, Balance, Actions</div></div>`;
+    let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><strong>${capitalize(view)} — ${list.length}</strong><div class="muted">Columns: No, ID, Name, Subject, Class, Salary, Balance, Actions</div></div>`;
     html += `<div style="overflow:auto"><table style="width:100%;border-collapse:collapse"><thead><tr>
-      <th>No</th><th>ID</th><th>Name</th><th>Subject</th><th>Balance</th><th>Actions</th>
+      <th>No</th><th>ID</th><th>Name</th><th>Subject</th><th>Class</th><th>Salary</th><th>Balance</th><th>Actions</th>
     </tr></thead><tbody>`;
 
     list.forEach((t, idx) => {
@@ -2625,12 +2783,14 @@ async function renderPaymentsList(view = 'students'){
         <td style="padding:8px">${idx+1}</td>
         <td style="padding:8px">${escape(t.teacherId||t.id||'')}</td>
         <td style="padding:8px">${escape(t.fullName||'')}</td>
-        <td style="padding:8px">${escape(t.subjectName || t.subjectId || (Array.isArray(t.subjects) ? t.subjects.join(', ') : ''))}</td>
+        <td style="padding:8px">${escape(t.subjectName||t.subject||'')}</td>
+        <td style="padding:8px">${escape(t.className||t.class||'')}</td>
+        <td style="padding:8px">${t.salary != null ? (String(t.salary)) : '—'}</td>
         <td style="padding:8px">${c2p(t.balance_cents||0)}</td>
         <td style="padding:8px">
-          <button class="btn btn-primary btn-sm pay-btn" data-id="${escape(t.teacherId||t.id||'')}">Pay</button>
-          <button class="btn btn-secondary btn-sm adj-btn" data-id="${escape(t.teacherId||t.id||'')}">Adj</button>
-          <button class="btn btn-ghost btn-sm view-trans-btn" data-id="${escape(t.teacherId||t.id||'')}">View</button>
+          <button class="btn btn-primary btn-sm pay-btn" data-id="${escape(t.teacherId||t.id||'')}" title="Pay">💸</button>
+          <button class="btn btn-secondary btn-sm adj-btn" data-id="${escape(t.teacherId||t.id||'')}" title="Reesto Hore">🔁</button>
+          <button class="btn btn-ghost btn-sm view-trans-btn" data-id="${escape(t.teacherId||t.id||'')}" title="View">👁️</button>
         </td>
       </tr>`;
     });
@@ -2644,7 +2804,7 @@ async function renderPaymentsList(view = 'students'){
     return;
   }
 
-  // EXPENSES
+  // EXPENSES view (unchanged except actions)
   if(view === 'expenses'){
     const rows = (transactionsCache || []).filter(t => t.target_type === 'expense' && !t.is_deleted).sort((a,b) => (b.createdAt?.seconds||0) - (a.createdAt?.seconds||0));
     let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><strong>Expenses — ${rows.length}</strong><div class="muted">Columns: No, Name, Category, Amount, Date, Actions</div></div>`;
@@ -2657,8 +2817,8 @@ async function renderPaymentsList(view = 'students'){
         <td style="padding:8px">${c2p(tx.amount_cents || 0)}</td>
         <td style="padding:8px">${tx.createdAt ? new Date(tx.createdAt.seconds * 1000).toLocaleString() : ''}</td>
         <td style="padding:8px">
-          <button class="btn btn-ghost btn-sm edit-expense" data-id="${tx.id}">Edit</button>
-          <button class="btn btn-danger btn-sm del-expense" data-id="${tx.id}">Delete</button>
+          <button class="btn btn-ghost btn-sm edit-expense" data-id="${tx.id}" title="Edit">✏️</button>
+          <button class="btn btn-danger btn-sm del-expense" data-id="${tx.id}" title="Delete">🗑️</button>
         </td>
       </tr>`;
     });
@@ -2669,6 +2829,7 @@ async function renderPaymentsList(view = 'students'){
     return;
   }
 }
+
 
 /* ---- Export modal + worker ---- */
 async function exportCurrentPaymentsView(){
@@ -2684,19 +2845,36 @@ async function exportCurrentPaymentsView(){
 async function doExport(format){
   const active = document.querySelector('#pagePayments .tab.active');
   const view = active ? active.textContent.toLowerCase() : 'students';
+  const classFilter = (document.getElementById('paymentsClassFilter') && document.getElementById('paymentsClassFilter').value) || '';
+  const statusFilter = (document.getElementById('paymentsStatusFilter') && document.getElementById('paymentsStatusFilter').value) || 'all';
+  const school = await getSchoolMeta();
+  const titleParts = [school.name];
+  if(classFilter){
+    const cls = (classesCache||[]).find(c => c.id === classFilter || c.name === classFilter);
+    titleParts.push(cls ? `Class: ${cls.name}` : `Class: ${classFilter}`);
+  }
+  if(statusFilter && statusFilter !== 'all') titleParts.push(capitalize(statusFilter));
+  const title = titleParts.join(' • ');
+
   const rows = [];
   if(view === 'students'){
+    rows.push([title]);
     rows.push(['ID','Name','Class','Phone','AssignedFee','CurrentBalance']);
-    (studentsCache||[]).forEach(s => rows.push([s.studentId||s.id, s.fullName||'', s.className||s.class||'', s.parentPhone||'', s.fee||'', c2p(s.balance_cents||0)]));
+    (studentsCache||[]).forEach(s => rows.push([s.studentId||s.id, s.fullName||'', s.className||s.class||'', s.parentPhone||'', s.fee||'0.00', c2p(s.balance_cents||0)]));
   } else if(view === 'teachers'){
+    rows.push([title]);
     rows.push(['ID','Name','Subject','Phone','Salary','CurrentBalance']);
     (teachersCache||[]).forEach(t => rows.push([t.teacherId||t.id, t.fullName||'', (t.subjectName||t.subjectId||''), t.phone||'', t.salary||'', c2p(t.balance_cents||0)]));
   } else if(view === 'staff'){
+    rows.push([title]);
     rows.push(['ID','Name','Phone','Role','CurrentBalance']);
     (window.staffCache||[]).forEach(s => rows.push([s.id, s.fullName||'', s.phone||'', s.role||'', c2p(s.balance_cents||0)]));
   } else {
-    rows.push(['TransactionID','Note','Category','Amount','Date','RecordedBy']);
-    (transactionsCache||[]).filter(t=> t.target_type === 'expense' && !t.is_deleted).forEach(t => rows.push([t.id, t.note||'', t.subtype||'', c2p(t.amount_cents||0), t.createdAt ? new Date(t.createdAt.seconds*1000).toISOString() : '', t.actor || '']));
+    rows.push([title]);
+    rows.push(['TransactionID','Note','Category','Amount','Date']);
+    (transactionsCache||[]).filter(t=> t.target_type === 'expense' && !t.is_deleted).forEach(t => {
+      rows.push([t.id, t.note||'', t.subtype||'', c2p(t.amount_cents||0), t.createdAt ? new Date(t.createdAt.seconds*1000).toISOString() : '']);
+    });
   }
 
   if(format === 'csv'){
@@ -2708,18 +2886,21 @@ async function doExport(format){
   }
 
   if(format === 'pdf'){
-    // requires jsPDF + autotable loaded on page
     const { jsPDF } = window.jspdf || {};
-    if(!jsPDF || !window.jsPDF) {
-      try{ const doc = new window.jspdf.jsPDF({orientation:'landscape'}); doc.autoTable({ head:[rows[0]], body:rows.slice(1), styles:{fontSize:8} }); doc.save(`export-${view}.pdf`); }
+    if(!jsPDF) {
+      try{ const doc = new window.jspdf.jsPDF({orientation:'landscape'}); doc.autoTable({ head:[rows[1]], body:rows.slice(2), styles:{fontSize:8} }); doc.save(`export-${view}.pdf`); }
       catch(e){ alert('PDF export not available'); }
       return;
     }
     const doc = new jsPDF({orientation:'landscape'});
-    doc.autoTable({ head:[rows[0]], body:rows.slice(1), styles:{fontSize:8} });
+    // title as a header
+    doc.setFontSize(14);
+    doc.text(title, 20, 30);
+    doc.autoTable({ startY: 40, head:[rows[1]], body:rows.slice(2), styles:{fontSize:8} });
     doc.save(`export-${view}.pdf`);
   }
 }
+
 
 /* ---- Pay modal (improved) ---- */
 async function openPayModal(e){
@@ -2811,11 +2992,13 @@ async function openPayModal(e){
 
   modalBody.querySelector('#payClose').onclick = closeModal;
   modalBody.querySelector('#paySave').onclick = async () => {
+    const btn = modalBody.querySelector('#paySave');
     try{
+      btn.disabled = true; const oldText = btn.textContent; btn.textContent = 'Saving…';
       const raw = modalBody.querySelector('#payAmount').value;
       if(!raw) return toast('Amount required');
       const amountCents = p2c(raw);
-      if(amountCents <= 0) return toast('Amount must be > 0');
+      if(amountCents <= 0) { btn.disabled=false; btn.textContent=oldText; return toast('Amount must be > 0'); }
       const type = payType.value;
       let relatedMonths = [];
       if(multiWrapper.style.display !== 'none'){
@@ -2827,7 +3010,7 @@ async function openPayModal(e){
       const mobile_provider = modalBody.querySelector('#mobileProvider') ? modalBody.querySelector('#mobileProvider').value : null;
       const payer_phone = modalBody.querySelector('#payerPhone').value.trim() || null;
       const note = modalBody.querySelector('#payNote').value.trim() || null;
-
+  
       const tx = {
         actor: currentUser ? currentUser.uid : null,
         target_type: targetType,
@@ -2841,27 +3024,31 @@ async function openPayModal(e){
         related_months: type === 'monthly' ? relatedMonths : [],
         createdAt: Timestamp.now(),
       };
-
+  
       await addDoc(collection(db,'transactions'), tx);
-
+  
       if(type === 'monthly' && targetType === 'student'){
         await updateTargetBalanceGeneric('student', tx.target_id, -amountCents);
       }
       if(type === 'salary' && (targetType === 'teacher' || targetType === 'staff')){
         await updateTargetBalanceGeneric(targetType, tx.target_id, -amountCents);
       }
-
+  
       toast('Payment recorded');
       closeModal();
       await loadTransactions();
-      renderPaymentsList('students');
-      renderPaymentsList('teachers');
-      renderPaymentsList('staff');
+      // refresh only active payments tab
+      const active = document.querySelector('#pagePayments .tab.active');
+      const viewName = active ? active.textContent.toLowerCase() : 'students';
+      await renderPaymentsList(viewName);
       renderDashboard && renderDashboard();
     }catch(err){
       console.error(err); toast('Failed to save payment');
+    } finally {
+      btn.disabled = false; btn.textContent = 'Save';
     }
   };
+  
 }
 
 /* ---- Adjustment modal (Adj) ---- */
@@ -2886,7 +3073,8 @@ async function openAdjustmentModal(e){
       <button id="adjSave" class="btn btn-primary">Save</button>
     </div>
   `;
-  showModal(`Adjust • ${escape(target.fullName || target.id || '')}`, html);
+// where you call showModal(...)
+showModal(`Reesto Hore • ${escape(target.fullName || target.id || '')}`, html);
   modalBody.querySelector('#adjClose').onclick = closeModal;
   modalBody.querySelector('#adjSave').onclick = async () => {
     try{
@@ -2942,7 +3130,7 @@ async function openViewTransactionsModal(e){
   const totalAll = txs.reduce((s,t)=>s+(t.amount_cents||0),0);
   const totalAdj = txs.filter(t=>t.type==='adjustment').reduce((s,t)=>s+(t.amount_cents||0),0);
 
-  // resolve actor names in parallel
+  // resolve actor names in parallel (but we do not show the By column now)
   const actorNames = await Promise.all(txs.map(t => resolveActorName(t.actor)));
 
   let html = `<div style="display:flex;justify-content:space-between;align-items:center">
@@ -2950,22 +3138,25 @@ async function openViewTransactionsModal(e){
       <div style="text-align:right"><div class="muted">Balance</div><div style="font-weight:900">${c2p(target.balance_cents||0)}</div></div>
     </div>`;
 
-  html += `<div style="margin-top:10px;display:flex;gap:12px"><div class="pill">Monthly paid: ${c2p(totalMonthly)}</div><div class="pill">All: ${c2p(totalAll)}</div><div class="pill">Adjustments: ${c2p(totalAdj)}</div></div>`;
+  html += `<div style="margin-top:10px;display:flex;gap:12px">
+    <div class="pill">Monthly paid: ${c2p(totalMonthly)}</div>
+    <div class="pill">All: ${c2p(totalAll)}</div>
+    <div class="pill">Reesto Hore: ${c2p(totalAdj)}</div>
+  </div>`;
 
   html += `<div style="overflow:auto;margin-top:12px"><table style="width:100%;border-collapse:collapse"><thead><tr>
-    <th>Date</th><th>Type</th><th>Months</th><th style="text-align:right">Amount</th><th>Method</th><th>By</th><th>Note</th><th>Actions</th>
+    <th>Date</th><th>Type</th><th>Months</th><th style="text-align:right">Amount</th><th>Method</th><th>Note</th><th>Actions</th>
   </tr></thead><tbody>`;
 
   txs.forEach((tx, idx) => {
-    const actorName = actorNames[idx] || (tx.actor || '');
-    const defaultNote = tx.note || (tx.type==='monthly' ? (`lacagta bish ${(tx.related_months||[])[0]||''}`) : (tx.type==='id-card' ? 'lacagta id card' : (tx.type==='registration' ? 'lacagta registration' : (tx.type==='salary' ? 'lacagta mushaar' : ''))));
+    const defaultNote = tx.note || (tx.type==='monthly' ? (formatMonthLabel((tx.related_months||[])[0]||'')) : '');
+    const monthsLabel = (tx.related_months && tx.related_months.length) ? tx.related_months.map(m => formatMonthLabel(m)).join(', ') : (tx.related_month ? formatMonthLabel(tx.related_month) : '');
     html += `<tr style="border-bottom:1px solid #f1f5f9">
       <td style="padding:8px">${tx.createdAt ? new Date(tx.createdAt.seconds*1000).toLocaleString() : ''}</td>
-      <td style="padding:8px">${escape(tx.type)}</td>
-      <td style="padding:8px">${(tx.related_months||[]).join(', ')}</td>
+      <td style="padding:8px">${escape(displayTypeLabel(tx.type))}</td>
+      <td style="padding:8px">${escape(monthsLabel)}</td>
       <td style="padding:8px;text-align:right">${c2p(tx.amount_cents||0)}</td>
       <td style="padding:8px">${escape(tx.payment_method||'')}${tx.mobile_provider ? ' / ' + escape(tx.mobile_provider) : ''}</td>
-      <td style="padding:8px">${escape(actorName)}</td>
       <td style="padding:8px">${escape(defaultNote)}</td>
       <td style="padding:8px">
         <button title="Edit" class="icon edit-tx" data-id="${tx.id}" style="border:0;background:transparent">✏️</button>
