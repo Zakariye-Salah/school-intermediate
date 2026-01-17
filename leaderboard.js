@@ -1437,6 +1437,19 @@ if (viewAllBtn) {
     renderLeaderboard();
   };
 }
+
+// function cleanupAndClose(){
+//   if(state.timeoutId){ clearInterval(state.timeoutId); state.timeoutId = null; }
+//   window.removeEventListener('keydown', keyHandler);
+
+//   try {
+//     SoundManager.setBgEnabled && SoundManager.setBgEnabled(false);
+//     SoundManager.setEffectsEnabled && SoundManager.setEffectsEnabled(false);
+//     if(typeof SoundManager.stopAll === 'function') SoundManager.stopAll(); // <-- add this
+//   } catch(e){/* ignore */ }
+//   closeModal();
+// }
+
 /* ---------- openTestModal (improved: breakdown, +3 popup, retry skipped) ---------- */
 
 function openTestModal(set){
