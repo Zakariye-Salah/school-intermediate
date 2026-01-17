@@ -1951,3 +1951,4 @@ async function getHighestStreakHolder(){
 }
 /* ---------- export minor helpers if you reuse in other files ---------- */
 export { renderCompetitionHeader, loadCompetitionScores, loadCompetitionAndScores, getHighestStreakHolder };
+ 
