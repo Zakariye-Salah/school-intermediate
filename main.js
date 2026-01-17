@@ -1264,126 +1264,300 @@ async function renderStudentAttendanceModal(studentId){
 
 
 
+// searchBtn.onclick = async () => {
+//   tryUnlockAudio().catch(()=>{});
+
+//   // ✅ DECLARE FIRST
+//   const studentId = studentIdInput.value.trim();
+
+//   const resultModeSelect = document.getElementById('resultModeSelect');
+//   const mode = resultModeSelect ? resultModeSelect.value : 'exam';
+
+//   // validate early
+//   if(!studentId){
+//     message.textContent = 'Fadlan geli ID sax ah.';
+//     return;
+//   }
+
+//   // ✅ TEST MODE (leaderboard / quiz)
+//   if(mode === 'test'){
+//     sessionStorage.setItem('visitorStudentId', studentId);
+//     window.location.href = 'leaderboard.html';
+//     return;
+//   }
+
+//   // STUDENT-FACING: Payments (read-only)
+//   if(mode === 'payments'){
+//     message.textContent = '';
+//     resultArea.style.display = 'none';
+//     resultArea.innerHTML = '';
+//     showLoader();
+//     try {
+//       await renderStudentTransactionsModal(studentId);
+//     } catch(err){
+//       console.error('Failed to load payments view', err);
+//       message.textContent = 'Ma la soo bixi karo macluumaadka lacagaha. Fadlan isku day mar kale.';
+//     } finally {
+//       hideLoader();
+//     }
+//     return;
+//   }
+
+//   // STUDENT-FACING: Attendance (read-only)
+//   if(mode === 'attendance'){
+//     message.textContent = '';
+//     resultArea.style.display = 'none';
+//     resultArea.innerHTML = '';
+//     showLoader();
+//     try {
+//       await renderStudentAttendanceModal(studentId);
+//     } catch(err){
+//       console.error('Failed to load attendance view', err);
+//       message.textContent = 'Ma la soo bixi karo macluumaadka joogitaanka. Fadlan isku day mar kale.';
+//     } finally {
+//       hideLoader();
+//     }
+//     return;
+//   }
+
+//   // ---------------- NORMAL EXAM FLOW ----------------
+//   message.textContent = '';
+//   resultArea.style.display = 'none';
+//   resultArea.innerHTML = '';
+//   showLoader();
+
+//   try {
+//     const latestSnap = await getDoc(doc(db,'studentsLatest', studentId));
+//     let latest = latestSnap.exists() ? latestSnap.data() : null;
+
+//     if(latest && !latest.motherName){
+//       try{
+//         const sSnap = await getDoc(doc(db,'students', studentId));
+//         if(sSnap.exists()){
+//           const sData = sSnap.data();
+//           if(sData?.motherName) latest.motherName = sData.motherName;
+//         }
+//       }catch(e){ console.warn(e); }
+//     }
+
+//     if(!latest){
+//       const alt = await fallbackFindLatestExamTotal(studentId);
+//       if(!alt){
+//         message.textContent = 'Natiijo la heli waayey. Fadlan hubi ID-ga.';
+//         hideLoader();
+//         return;
+//       }
+//       await renderResult(alt, { source: 'examTotals' });
+//       hideLoader();
+//       return;
+//     }
+
+//     if(latest.blocked){
+//       resultArea.style.display='block';
+//       resultArea.innerHTML = `
+//         <div class="card">
+//           <h2>Access blocked</h2>
+//           <p>${escapeHtml(latest.blockMessage || 'You are not allowed to view results.')}</p>
+//         </div>`;
+//       hideLoader();
+//       return;
+//     }
+
+//     const alt = await fallbackFindLatestExamTotal(studentId);
+//     if(alt && alt.publishedAt && latest.publishedAt){
+//       const altSeconds = alt.publishedAt.seconds || Date.parse(alt.publishedAt)/1000;
+//       const latestSeconds = latest.publishedAt.seconds || Date.parse(latest.publishedAt)/1000;
+//       if(altSeconds > latestSeconds){
+//         await renderResult(alt, { source: 'examTotals' });
+//         hideLoader();
+//         return;
+//       }
+//     }
+
+//     await renderResult(latest, { source: 'AL-Fatxi School' });
+//     setHeaderStudentNameById(studentId);
+//     hideLoader();
+
+//   } catch(err){
+//     console.error(err);
+//     message.textContent = 'Khalad ayaa dhacay. Fadlan isku day mar kale.';
+//     hideLoader();
+//   }
+// };
+
+// ------------------ Cards + Remember logic ------------------
+// global selected mode (defaults to exam)
+let selectedMode = 'exam';
+const cardsRow = document.getElementById('cardsRow');
+const showCardsBtn = document.getElementById('showCardsBtn');
+const rememberCheckbox = document.getElementById('rememberCheckbox');
+
+// load remembered id on page load
+(function loadRememberedId(){
+  try {
+    const stored = localStorage.getItem('rememberedStudentId');
+    if (stored) {
+      studentIdInput.value = stored;
+      if(rememberCheckbox) rememberCheckbox.checked = true;
+    }
+  } catch(e){ console.warn('remember load failed', e); }
+})();
+
+// when checkbox changed, update storage (but only store a valid id)
+if(rememberCheckbox){
+  rememberCheckbox.addEventListener('change', () => {
+    try {
+      const val = studentIdInput.value.trim();
+      if(rememberCheckbox.checked && val){
+        localStorage.setItem('rememberedStudentId', val);
+      } else {
+        localStorage.removeItem('rememberedStudentId');
+      }
+    } catch(e){ console.warn(e); }
+  });
+}
+
+// helper: hide & show cards
+function hideCardsUI(){
+  if(cardsRow) cardsRow.style.display = 'none';
+  if(showCardsBtn) showCardsBtn.style.display = 'inline-block';
+}
+function showCardsUI(){
+  if(cardsRow) cardsRow.style.display = 'flex';
+  if(showCardsBtn) showCardsBtn.style.display = 'none';
+}
+
+// wire show cards button
+if(showCardsBtn){
+  showCardsBtn.addEventListener('click', () => {
+    showCardsUI();
+  });
+}
+
+// wire the individual cards
+document.querySelectorAll('.mode-card').forEach(card => {
+  card.addEventListener('click', async (e) => {
+    e.preventDefault();
+    const mode = card.dataset.mode || 'exam';
+    selectedMode = mode;
+
+    // ensure ID present
+    const id = studentIdInput.value.trim();
+    if(!id){
+      message.textContent = 'Fadlan geli ID sax ah oo ka hor tag sanduuqa.';
+      studentIdInput.focus();
+      return;
+    } else {
+      message.textContent = '';
+    }
+
+    // if remember checked, save
+    try { if(rememberCheckbox && rememberCheckbox.checked) localStorage.setItem('rememberedStudentId', id); } catch(e){}
+
+    // perform action similar to the search button, but using the selected card
+    showLoader();
+    try {
+      if(mode === 'test'){
+        sessionStorage.setItem('visitorStudentId', id);
+        // hide cards for UX
+        hideCardsUI();
+        window.location.href = 'leaderboard.html';
+        return;
+      }
+      if(mode === 'payments'){
+        await renderStudentTransactionsModal(id);
+        hideCardsUI();
+        return;
+      }
+      if(mode === 'attendance'){
+        await renderStudentAttendanceModal(id);
+        hideCardsUI();
+        return;
+      }
+      // exam flow
+      if(mode === 'exam'){
+        const latestSnap = await getDoc(doc(db,'studentsLatest', id));
+        let latest = latestSnap.exists() ? latestSnap.data() : null;
+        if(latest && !latest.motherName){
+          try{
+            const sSnap = await getDoc(doc(db,'students', id));
+            if(sSnap.exists()){
+              const sData = sSnap.data();
+              if(sData?.motherName) latest.motherName = sData.motherName;
+            }
+          }catch(e){ console.warn(e); }
+        }
+        if(!latest){
+          const alt = await fallbackFindLatestExamTotal(id);
+          if(!alt){
+            message.textContent = 'Natiijo la heli waayey. Fadlan hubi ID-ga.';
+            hideLoader();
+            return;
+          }
+          await renderResult(alt, { source: 'examTotals' });
+          hideLoader();
+          hideCardsUI();
+          return;
+        }
+        if(latest.blocked){
+          resultArea.style.display='block';
+          resultArea.innerHTML = `<div class="card"><h2>Access blocked</h2><p>${escapeHtml(latest.blockMessage || 'You are not allowed to view results.')}</p></div>`;
+          hideLoader();
+          hideCardsUI();
+          return;
+        }
+        const alt = await fallbackFindLatestExamTotal(id);
+        if(alt && alt.publishedAt && latest.publishedAt){
+          const altSeconds = alt.publishedAt.seconds || Date.parse(alt.publishedAt)/1000;
+          const latestSeconds = latest.publishedAt.seconds || Date.parse(latest.publishedAt)/1000;
+          if(altSeconds > latestSeconds){
+            await renderResult(alt, { source: 'examTotals' });
+            hideLoader();
+            hideCardsUI();
+            return;
+          }
+        }
+        await renderResult(latest, { source: 'AL-Fatxi School' });
+        setHeaderStudentNameById(id);
+        hideLoader();
+        hideCardsUI();
+        return;
+      }
+    } catch(err){
+      console.error('Card action failed', err);
+      message.textContent = 'Khalad ayaa dhacay. Fadlan isku day mar kale.';
+      hideLoader();
+    }
+  });
+});
+
+// ------------------ Replace search button handler ------------------
+// Use the selectedMode (card click sets it) OR default to 'exam'
 searchBtn.onclick = async () => {
   tryUnlockAudio().catch(()=>{});
-
-  // ✅ DECLARE FIRST
-  const studentId = studentIdInput.value.trim();
-
-  const resultModeSelect = document.getElementById('resultModeSelect');
-  const mode = resultModeSelect ? resultModeSelect.value : 'exam';
-
-  // validate early
-  if(!studentId){
+  const studentIdVal = studentIdInput.value.trim();
+  if(!studentIdVal){
     message.textContent = 'Fadlan geli ID sax ah.';
     return;
   }
+  // save preference if checked
+  try { if(rememberCheckbox && rememberCheckbox.checked) localStorage.setItem('rememberedStudentId', studentIdVal); } catch(e){}
 
-  // ✅ TEST MODE (leaderboard / quiz)
-  if(mode === 'test'){
-    sessionStorage.setItem('visitorStudentId', studentId);
-    window.location.href = 'leaderboard.html';
-    return;
-  }
+  // if current selectedMode is payments/attendance/test/exam, reuse same behavior as cards
+  const mode = selectedMode || 'exam';
 
-  // STUDENT-FACING: Payments (read-only)
-  if(mode === 'payments'){
-    message.textContent = '';
-    resultArea.style.display = 'none';
-    resultArea.innerHTML = '';
-    showLoader();
-    try {
-      await renderStudentTransactionsModal(studentId);
-    } catch(err){
-      console.error('Failed to load payments view', err);
-      message.textContent = 'Ma la soo bixi karo macluumaadka lacagaha. Fadlan isku day mar kale.';
-    } finally {
-      hideLoader();
-    }
-    return;
-  }
-
-  // STUDENT-FACING: Attendance (read-only)
-  if(mode === 'attendance'){
-    message.textContent = '';
-    resultArea.style.display = 'none';
-    resultArea.innerHTML = '';
-    showLoader();
-    try {
-      await renderStudentAttendanceModal(studentId);
-    } catch(err){
-      console.error('Failed to load attendance view', err);
-      message.textContent = 'Ma la soo bixi karo macluumaadka joogitaanka. Fadlan isku day mar kale.';
-    } finally {
-      hideLoader();
-    }
-    return;
-  }
-
-  // ---------------- NORMAL EXAM FLOW ----------------
-  message.textContent = '';
-  resultArea.style.display = 'none';
-  resultArea.innerHTML = '';
-  showLoader();
-
-  try {
-    const latestSnap = await getDoc(doc(db,'studentsLatest', studentId));
-    let latest = latestSnap.exists() ? latestSnap.data() : null;
-
-    if(latest && !latest.motherName){
-      try{
-        const sSnap = await getDoc(doc(db,'students', studentId));
-        if(sSnap.exists()){
-          const sData = sSnap.data();
-          if(sData?.motherName) latest.motherName = sData.motherName;
-        }
-      }catch(e){ console.warn(e); }
-    }
-
-    if(!latest){
-      const alt = await fallbackFindLatestExamTotal(studentId);
-      if(!alt){
-        message.textContent = 'Natiijo la heli waayey. Fadlan hubi ID-ga.';
-        hideLoader();
-        return;
-      }
-      await renderResult(alt, { source: 'examTotals' });
-      hideLoader();
-      return;
-    }
-
-    if(latest.blocked){
-      resultArea.style.display='block';
-      resultArea.innerHTML = `
-        <div class="card">
-          <h2>Access blocked</h2>
-          <p>${escapeHtml(latest.blockMessage || 'You are not allowed to view results.')}</p>
-        </div>`;
-      hideLoader();
-      return;
-    }
-
-    const alt = await fallbackFindLatestExamTotal(studentId);
-    if(alt && alt.publishedAt && latest.publishedAt){
-      const altSeconds = alt.publishedAt.seconds || Date.parse(alt.publishedAt)/1000;
-      const latestSeconds = latest.publishedAt.seconds || Date.parse(latest.publishedAt)/1000;
-      if(altSeconds > latestSeconds){
-        await renderResult(alt, { source: 'examTotals' });
-        hideLoader();
-        return;
-      }
-    }
-
-    await renderResult(latest, { source: 'AL-Fatxi School' });
-    setHeaderStudentNameById(studentId);
-    hideLoader();
-
-  } catch(err){
-    console.error(err);
-    message.textContent = 'Khalad ayaa dhacay. Fadlan isku day mar kale.';
-    hideLoader();
+  // trigger same flows as cards (delegated to the card handler logic above)
+  // to avoid duplicating large code, just simulate a click on the matching card if visible
+  const card = document.querySelector(`.mode-card[data-mode="${mode}"]`);
+  if(card){
+    card.click();
+  } else {
+    // fallback — if cards not present just run exam flow
+    selectedMode = 'exam';
+    const evt = new Event('click');
+    const examCard = document.querySelector(`.mode-card[data-mode="exam"]`);
+    if(examCard) examCard.dispatchEvent(evt);
   }
 };
-
 
 export { renderResult , };
