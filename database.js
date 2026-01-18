@@ -3367,10 +3367,22 @@ async function renderPaymentsList(view = 'students'){
               <div style="font-size:12px; font-weight:900; word-break:break-word">${escape(idMobile)}</div>
             </div>
 
-            <div style="min-width:0;overflow:visible;flex:1">
-              <div style="font-weight:900;line-height:1.2;max-height:2.4em;overflow:hidden;display:block">${escape(s.fullName||'')}</div>
-              <div style="margin-top:4px"><span class="class-blue" style="font-size:12px; color:#0b74de">${escape(className)}</span></div>
-            </div>
+       <div style="min-width:0;flex:1 1 auto;overflow:visible">
+  <div style="
+    font-weight:900;
+    line-height:1.2;
+    display:-webkit-box;
+    -webkit-line-clamp:2;
+    -webkit-box-orient:vertical;
+    overflow:hidden;
+    white-space:normal;
+    word-break:break-word;
+    ">
+    ${escape(s.fullName||'')}
+  </div>
+  <div style="margin-top:4px"><span class="class-blue" style="font-size:12px; color:#0b74de">${escape(className)}</span></div>
+</div>
+
           </div>
 
           <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex:0 0 140px">
@@ -3558,10 +3570,22 @@ async function renderPaymentsList(view = 'students'){
               <div style="font-size:12px; font-weight:900; word-break:break-word">${escape(idMobile)}</div>
             </div>
 
-            <div style="min-width:0;overflow:visible;flex:1">
-              <div style="font-weight:900;line-height:1.2;max-height:2.4em;overflow:hidden;display:block">${escape(t.fullName||'')}</div>
-              <div style="margin-top:4px"><span class="class-blue" style="font-size:12px; color:#0b74de">${escape(classLine)}</span></div>
-            </div>
+      <div style="min-width:0;flex:1 1 auto;overflow:visible">
+  <div style="
+    font-weight:900;
+    line-height:1.2;
+    display:-webkit-box;
+    -webkit-line-clamp:2;
+    -webkit-box-orient:vertical;
+    overflow:hidden;
+    white-space:normal;
+    word-break:break-word;
+    ">
+    ${escape(t.fullName||'')}
+  </div>
+  <div style="margin-top:4px"><span class="class-blue" style="font-size:12px; color:#0b74de">${escape(classLine)}</span></div>
+</div>
+
           </div>
 
           <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex:0 0 150px">
@@ -3730,10 +3754,23 @@ async function renderPaymentsList(view = 'students'){
           <div style="display:flex;gap:8px;align-items:flex-start;min-width:0;flex:1">
             <div style="font-weight:800;flex:0 0 26px">${idx+1}</div>
             <div style="flex:0 0 92px; font-size:8px; word-break:break-all; font-weight:900">${escape(idMobile)}</div>
-            <div style="min-width:0;overflow:visible;flex:1">
-              <div style="font-weight:900;line-height:1.2;max-height:2.4em;overflow:hidden;display:block">${escape(tx.note || tx.expense_name || 'Expense')}</div>
-              <div style="margin-top:4px" class="muted" style="font-size:12px">${escape(tx.subtype || '')}</div>
-            </div>
+
+          <div style="min-width:0;flex:1 1 auto;overflow:visible">
+  <div style="
+    font-weight:900;
+    line-height:1.2;
+    display:-webkit-box;
+    -webkit-line-clamp:2;
+    -webkit-box-orient:vertical;
+    overflow:hidden;
+    white-space:normal;
+    word-break:break-word;
+    ">
+    ${escape(tx.note || tx.expense_name || 'Expense')}
+  </div>
+  <div style="margin-top:4px" class="muted" style="font-size:12px">${escape(tx.subtype || '')}</div>
+</div>
+
           </div>
           <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex:0 0 140px">
             <div style="font-weight:900;color:#b91c1c;font-size:10px">${amount}</div>
