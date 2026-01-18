@@ -3072,10 +3072,9 @@ async function openViewTransactionsModal(btnOrEvent){
 
 /* ---------- Render Payments (header + wiring) ---------- */
 async function renderPayments(){
-  // make sure classes & subjects & caches loaded before building header
+  // ensure caches loaded before building header
   await Promise.all([ loadClasses && loadClasses(), loadSubjects && loadSubjects(), loadStudents && loadStudents(), loadTeachers && loadTeachers(), loadStaff && loadStaff(), loadTransactions && loadTransactions() ]);
 
-  // ensure payments page exists
   let page = document.getElementById('pagePayments');
   if(!page){
     page = document.createElement('section');
@@ -3085,9 +3084,10 @@ async function renderPayments(){
     main.appendChild(page);
   }
 
+  // responsive header: search row + filter row
   page.innerHTML = `
-  <div class="page-header">
-    <div class="ph-row ph-left" style="display:flex;gap:8px;align-items:center">
+  <div class="page-header" style="display:flex;flex-direction:column;gap:8px">
+    <div class="ph-row ph-left" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <div style="display:flex;gap:8px;align-items:center">
         <button id="paymentsTabStudents" class="tab active">Students</button>
         <button id="paymentsTabTeachers" class="tab">Teachers</button>
@@ -3100,12 +3100,17 @@ async function renderPayments(){
       </div>
     </div>
 
-    <div class="ph-row ph-right" style="display:flex;gap:8px;align-items:center;justify-content:flex-end">
-      <input id="paymentsSearch" placeholder="Search name / ID / phone" style="width:360px" />
+    <!-- first row: search (full width on mobile) -->
+    <div class="ph-row ph-search" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <input id="paymentsSearch" placeholder="Search name / ID / phone" style="flex:1;min-width:160px;padding:8px" />
+    </div>
+
+    <!-- second row: class, status, subject, refresh, export (compact) -->
+    <div class="ph-row ph-filters" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <select id="paymentsClassFilter" style="min-width:150px"><option value="">All classes</option></select>
       <select id="paymentsStatusFilter" style="min-width:120px"><option value="all">All</option><option value="unpaid">Unpaid</option><option value="paid">Paid</option><option value="free">Free</option></select>
       <select id="paymentsTeacherSubjectFilter" style="min-width:150px"><option value="">All subjects</option></select>
-      <button id="paymentsRefresh" class="btn btn-ghost" title="Refresh list" style="margin-left:4px">↻</button>
+      <button id="paymentsRefresh" class="btn btn-ghost" title="Refresh list" style="margin-left:auto">↻</button>
       <button id="paymentsExport" class="btn btn-ghost">Export</button>
     </div>
   </div>
@@ -3161,10 +3166,10 @@ async function renderPayments(){
       refreshBtn.disabled = true;
       await Promise.all([ loadClasses && loadClasses(), loadSubjects && loadSubjects(), loadStudents && loadStudents(), loadTeachers && loadTeachers(), loadStaff && loadStaff(), loadTransactions && loadTransactions() ]);
       // re-populate filters
-      const sel = document.getElementById('paymentsClassFilter');
-      if(sel) sel.innerHTML = '<option value="">All classes</option>' + (classesCache || []).map(c => `<option value="${escape(c.id||c.classId||c.name)}">${escape(c.name||c.displayName||c.id)}</option>`).join('');
-      const subjSel = document.getElementById('paymentsTeacherSubjectFilter');
-      if(subjSel) subjSel.innerHTML = '<option value="">All subjects</option>' + (window.subjectsCache||[]).map(s => `<option value="${escape(s.id)}">${escape(s.name||s.id)}</option>`).join('');
+      const sel2 = document.getElementById('paymentsClassFilter');
+      if(sel2) sel2.innerHTML = '<option value="">All classes</option>' + (classesCache || []).map(c => `<option value="${escape(c.id||c.classId||c.name)}">${escape(c.name||c.displayName||c.id)}</option>`).join('');
+      const subjSel2 = document.getElementById('paymentsTeacherSubjectFilter');
+      if(subjSel2) subjSel2.innerHTML = '<option value="">All subjects</option>' + (window.subjectsCache||[]).map(s => `<option value="${escape(s.id)}">${escape(s.name||s.id)}</option>`).join('');
       const active = document.querySelector('#pagePayments .tab.active');
       await renderPaymentsList(active ? active.textContent.toLowerCase() : 'students');
       toast('Refreshed');
@@ -3176,8 +3181,7 @@ async function renderPayments(){
   await renderPaymentsList('students');
 }
 
-
-/* ---------- renderPaymentsList (replace your existing function) ---------- */
+/* ---------- renderPaymentsList (complete) ---------- */
 async function renderPaymentsList(view = 'students'){
   await Promise.all([ loadClasses && loadClasses(), loadSubjects && loadSubjects(), loadStudents && loadStudents(), loadTeachers && loadTeachers(), loadStaff && loadStaff(), loadTransactions && loadTransactions() ]);
 
@@ -3225,7 +3229,7 @@ async function renderPaymentsList(view = 'students'){
     // sort by descending current balance (largest owing first)
     list.sort((a,b) => (b.balance_cents||0) - (a.balance_cents||0));
 
-    // precompute totals so mobile + desktop both get same totals
+    // totals precompute (cents)
     let totalAssignedCents = 0, totalBalanceCents = 0, totalPaidThisMonthCents = 0;
     list.forEach(s => {
       const assigned = (s.fee != null && !isNaN(Number(s.fee))) ? Math.round(Number(s.fee)*100) : 0;
@@ -3234,51 +3238,54 @@ async function renderPaymentsList(view = 'students'){
       totalPaidThisMonthCents += getPaidThisMonthForTarget('student', s);
     });
 
-    // Mobile list
+    // MOBILE view
     if(isMobileViewport()){
       let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
         <strong>Students — ${list.length}</strong>
         <div class="muted">Tap "more" to see actions</div>
       </div><div style="display:flex;flex-direction:column;gap:8px">`;
+
       list.forEach((s, idx) => {
         const idFull = String(s.studentId||s.id||'');
-        const idShort = idFull.slice(-6) || idFull;
+        const showId = idFull; // show full id on mobile (you requested)
         const feeDisplay = (s.fee != null && !isNaN(Number(s.fee))) ? Number(s.fee).toFixed(2) : '0.00';
         const balanceDisplay = c2p(s.balance_cents || 0);
         const paidThisMonth = c2p(getPaidThisMonthForTarget('student', s));
         const className = resolveClassName(s);
+
+        // mobile row: balance (red bold) first, paid (green), fee (blue)
         html += `<div class="card" style="display:flex;align-items:center;justify-content:space-between;gap:8px">
           <div style="display:flex;gap:8px;align-items:center">
             <div style="font-weight:800">${idx+1}</div>
-            <div style="min-width:60px"><div style="font-weight:900">${escape(idShort)}</div></div>
+            <div style="min-width:72px"><div style="font-weight:900">${escape(showId)}</div></div>
             <div>
               <div style="font-weight:900">${escape(s.fullName||'')}</div>
               <div class="muted" style="font-size:12px"><span class="class-blue">${escape(className)}</span></div>
             </div>
           </div>
-          <div style="display:flex;gap:8px;align-items:center">
-            <div style="text-align:right">
-              <div class="total-green" style="font-weight:900">${paidThisMonth}</div>
-              <div class="muted" style="font-size:12px">Fee: <span class="total-blue">${feeDisplay}</span> • <span class="total-red">${balanceDisplay}</span></div>
-            </div>
-            <div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
+            <div style="font-weight:900;color:#b91c1c">${escape(balanceDisplay)}</div>
+            <div style="font-weight:700;color:#059669">${escape(paidThisMonth)}</div>
+            <div style="font-weight:700;color:#0b74de">Fee: ${escape(feeDisplay)}</div>
+            <div style="margin-top:6px">
               <button class="btn btn-ghost more-info" data-id="${escape(s.studentId||s.id||'')}" title="More">⋯</button>
             </div>
           </div>
         </div>`;
       });
+
       html += `</div>`;
 
-      // add mobile totals bar (Paid green, Assigned fee blue, Current balance red)
+      // mobile totals bar (Paid green, Assigned blue, Balance red)
       html += `<div class="card" style="margin-top:10px;display:flex;gap:12px;justify-content:space-around;align-items:center">
-        <div style="text-align:center"><div class="total-green" style="font-weight:900">${c2p(totalPaidThisMonthCents)}</div><div class="muted" style="font-size:12px">Paid (this month)</div></div>
-        <div style="text-align:center"><div class="total-blue" style="font-weight:900">${c2p(totalAssignedCents)}</div><div class="muted" style="font-size:12px">Assigned Fee</div></div>
-        <div style="text-align:center"><div class="total-red" style="font-weight:900">${c2p(totalBalanceCents)}</div><div class="muted" style="font-size:12px">Current Balance</div></div>
+        <div style="text-align:center"><div style="font-weight:900;color:#059669">${c2p(totalPaidThisMonthCents)}</div><div class="muted" style="font-size:12px">Paid (this month)</div></div>
+        <div style="text-align:center"><div style="font-weight:900;color:#0b74de">${c2p(totalAssignedCents)}</div><div class="muted" style="font-size:12px">Assigned Fee</div></div>
+        <div style="text-align:center"><div style="font-weight:900;color:#b91c1c">${c2p(totalBalanceCents)}</div><div class="muted" style="font-size:12px">Current Balance</div></div>
       </div>`;
 
       listRoot.innerHTML = html;
 
-      // more-info wiring
+      // more-info wiring (modal shows actions)
       listRoot.querySelectorAll('.more-info').forEach(b => b.addEventListener('click', ev => {
         const id = ev.currentTarget.dataset.id;
         const st = (studentsCache||[]).find(x => (x.studentId===id || x.id===id));
@@ -3288,10 +3295,10 @@ async function renderPaymentsList(view = 'students'){
           <div class="muted">ID: ${escape(st.studentId||st.id||'')}</div>
           <div style="margin-top:8px">Phone: ${escape(st.parentPhone||st.phone||'—')}</div>
           <div>Class: <span class="class-blue">${escape(className)}</span></div>
-          <div>Fee: <span class="fee-blue">${(st.fee!=null && !isNaN(Number(st.fee)))?Number(st.fee).toFixed(2):'0.00'}</span></div>
-          <div>Balance: <span class="balance-red">${c2p(st.balance_cents||0)}</span></div>
-          <div>Paid this month: <span class="total-green">${c2p(getPaidThisMonthForTarget('student', st))}</span></div>
-          <div class="modal-more-actions" style="margin-top:8px">
+          <div>Balance: <span style="font-weight:900;color:#b91c1c">${c2p(st.balance_cents||0)}</span></div>
+          <div>Paid this month: <span style="font-weight:700;color:#059669">${c2p(getPaidThisMonthForTarget('student', st))}</span></div>
+          <div>Fee: <span style="font-weight:700;color:#0b74de">${(st.fee!=null && !isNaN(Number(st.fee)))?Number(st.fee).toFixed(2):'0.00'}</span></div>
+          <div class="modal-more-actions" style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
             <button class="btn btn-primary pay-btn" data-id="${escape(st.studentId||st.id||'')}">${svgPay()} Pay</button>
             <button class="btn btn-secondary adj-btn" data-id="${escape(st.studentId||st.id||'')}">${svgReesto()} Reesto Hore</button>
             <button class="btn btn-ghost view-trans-btn" data-id="${escape(st.studentId||st.id||'')}">${svgView()} View</button>
@@ -3332,9 +3339,9 @@ async function renderPaymentsList(view = 'students'){
         <td style="padding:8px">${escape(s.fullName||'')}</td>
         <td style="padding:8px">${escape(s.parentPhone||s.phone||'—')}</td>
         <td style="padding:8px">${escape(className||'')}</td>
-        <td style="padding:8px;text-align:right"><span class="total-blue" style="font-weight:900">${c2p(assignedFeeCents)}</span></td>
-        <td style="padding:8px;text-align:right"><span class="total-red" style="font-weight:900">${c2p(balanceCents)}</span></td>
-        <td style="padding:8px;text-align:right"><span class="total-green" style="font-weight:900">${c2p(paidThisMonthCents)}</span></td>
+        <td style="padding:8px;text-align:right"><span style="color:#0b74de;font-weight:900">${c2p(assignedFeeCents)}</span></td>
+        <td style="padding:8px;text-align:right"><span style="color:#b91c1c;font-weight:900">${c2p(balanceCents)}</span></td>
+        <td style="padding:8px;text-align:right"><span style="color:#059669;font-weight:900">${c2p(paidThisMonthCents)}</span></td>
         <td style="padding:8px">
           <button class="btn btn-primary btn-sm pay-btn" data-id="${escape(s.studentId||s.id||'')}" title="Pay">${svgPay()}</button>
           <button class="btn btn-secondary btn-sm adj-btn" data-id="${escape(s.studentId||s.id||'')}" title="Reesto Hore">${svgReesto()}</button>
@@ -3349,17 +3356,17 @@ async function renderPaymentsList(view = 'students'){
     const totalsHtml = `
       <div class="totals-card card" style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">
         <div style="font-weight:900">Totals</div>
-        <div class="totals-block" style="flex-direction:row;gap:18px;align-items:center">
-          <div class="tot-line"><div style="min-width:140px">Assigned fee total:</div><div class="total-blue">${c2p(totalAssignedCents)}</div></div>
-          <div class="tot-line"><div style="min-width:140px">Current balance total:</div><div class="total-red">${c2p(totalBalanceCents)}</div></div>
-          <div class="tot-line"><div style="min-width:140px">Total Paid (this month):</div><div class="total-green">${c2p(totalPaidThisMonthCents)}</div></div>
+        <div style="display:flex;gap:18px;align-items:center">
+          <div style="min-width:140px">Assigned fee total: <span style="color:#0b74de;font-weight:900">${c2p(totalAssignedCents)}</span></div>
+          <div style="min-width:140px">Current balance total: <span style="color:#b91c1c;font-weight:900">${c2p(totalBalanceCents)}</span></div>
+          <div style="min-width:140px">Total Paid (this month): <span style="color:#059669;font-weight:900">${c2p(totalPaidThisMonthCents)}</span></div>
         </div>
       </div>
     `;
 
     listRoot.innerHTML = html + totalsHtml;
 
-    // wire actions
+    // actions wiring
     listRoot.querySelectorAll('.pay-btn').forEach(b => b.addEventListener('click', ev => openPayModal(ev.currentTarget)));
     listRoot.querySelectorAll('.adj-btn').forEach(b => b.addEventListener('click', ev => openAdjustmentModal(ev.currentTarget)));
     listRoot.querySelectorAll('.view-trans-btn').forEach(b => b.addEventListener('click', ev => openViewTransactionsModal(ev.currentTarget)));
@@ -3392,27 +3399,20 @@ async function renderPaymentsList(view = 'students'){
       });
     }
 
-    // subject filter: id or name (more robust)
+    // subject filter: id or name
     if(subjectFilter && isTeacherView){
-      // find subject doc by id or name
       const subjDoc = (subjectsCache||[]).find(s => String(s.id) === String(subjectFilter) || String(s.name||'').toLowerCase() === String(subjectFilter).toLowerCase());
       list = list.filter(t => {
         if(!t.subjects && !t.subjectId && !t.subjectName) return false;
-        // teacher.subjects could be array of ids OR names
         if(Array.isArray(t.subjects)){
           if(t.subjects.includes(subjectFilter)) return true;
-          // match by subject doc id or name
           if(subjDoc && t.subjects.includes(subjDoc.id)) return true;
           if(subjDoc && t.subjects.includes(subjDoc.name)) return true;
-          // also check case-insensitive names
           if(t.subjects.some(x => String(x).toLowerCase() === String(subjectFilter).toLowerCase())) return true;
         }
         if(t.subjectId && String(t.subjectId) === String(subjectFilter)) return true;
         if(t.subjectName && String(t.subjectName).toLowerCase() === String(subjectFilter).toLowerCase()) return true;
-        // if subjDoc found, also allow matching by subjDoc.name -> teacher.subjectName
-        if(subjDoc){
-          if(String(t.subjectName||'').toLowerCase() === String(subjDoc.name||'').toLowerCase()) return true;
-        }
+        if(subjDoc && String(t.subjectName||'').toLowerCase() === String(subjDoc.name||'').toLowerCase()) return true;
         return false;
       });
     }
@@ -3426,7 +3426,7 @@ async function renderPaymentsList(view = 'students'){
 
     list.sort((a,b) => (b.balance_cents||0) - (a.balance_cents||0));
 
-    // precompute totals for mobile and desktop
+    // totals for teachers/staff
     let totBalance = 0, totPaid = 0, totSalaryAssigned = 0;
     list.forEach(t => {
       totBalance += Number(t.balance_cents || 0);
@@ -3439,26 +3439,25 @@ async function renderPaymentsList(view = 'students'){
       html += `<div style="display:flex;flex-direction:column;gap:8px">`;
       list.forEach((t, idx) => {
         const idFull = String(t.teacherId||t.id||'');
-        const idShort = idFull.slice(-4) || idFull;
         const classLine = resolveClassName(t);
         const salaryDisplay = t.salary != null ? (Number(t.salary).toFixed ? Number(t.salary).toFixed(2) : String(t.salary)) : '—';
         const balance = c2p(t.balance_cents||0);
         const paidThisMonth = c2p(getPaidThisMonthForTarget('teacher', t));
+        // mobile teacher row ordered: balance (red), paid (green), salary (blue)
         html += `<div class="card" style="display:flex;align-items:center;justify-content:space-between;gap:8px">
           <div style="display:flex;gap:8px;align-items:center">
             <div style="font-weight:800">${idx+1}</div>
-            <div style="min-width:48px"><div style="font-weight:900">${escape(idShort)}</div></div>
+            <div style="min-width:72px"><div style="font-weight:900">${escape(idFull)}</div></div>
             <div>
               <div style="font-weight:900">${escape(t.fullName||'')}</div>
               <div class="muted" style="font-size:12px">${escape(classLine)}</div>
             </div>
           </div>
-          <div style="display:flex;gap:8px;align-items:center">
-            <div style="text-align:right">
-              <div class="total-green" style="font-weight:900">${paidThisMonth}</div>
-              <div class="muted" style="font-size:12px">Salary: <span class="fee-blue">${escape(salaryDisplay)}</span> • <span class="total-red">${balance}</span></div>
-            </div>
-            <div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
+            <div style="font-weight:900;color:#b91c1c">${escape(balance)}</div>
+            <div style="font-weight:700;color:#059669">${escape(paidThisMonth)}</div>
+            <div style="font-weight:700;color:#0b74de">Salary: ${escape(salaryDisplay)}</div>
+            <div style="margin-top:6px">
               <button class="btn btn-ghost more-info-teacher" data-id="${escape(t.teacherId||t.id||'')}" title="More">⋯</button>
             </div>
           </div>
@@ -3466,15 +3465,16 @@ async function renderPaymentsList(view = 'students'){
       });
       html += `</div>`;
 
-      // totals bar for teachers mobile
+      // totals bar
       html += `<div class="card" style="margin-top:10px;display:flex;gap:12px;justify-content:space-around;align-items:center">
-        <div style="text-align:center"><div class="total-green" style="font-weight:900">${c2p(totPaid)}</div><div class="muted" style="font-size:12px">Paid (this month)</div></div>
-        <div style="text-align:center"><div class="total-blue" style="font-weight:900">${c2p(totSalaryAssigned)}</div><div class="muted" style="font-size:12px">Assigned Salary</div></div>
-        <div style="text-align:center"><div class="total-red" style="font-weight:900">${c2p(totBalance)}</div><div class="muted" style="font-size:12px">Current Balance</div></div>
+        <div style="text-align:center"><div style="font-weight:900;color:#059669">${c2p(totPaid)}</div><div class="muted" style="font-size:12px">Paid (this month)</div></div>
+        <div style="text-align:center"><div style="font-weight:900;color:#0b74de">${c2p(totSalaryAssigned)}</div><div class="muted" style="font-size:12px">Assigned Salary</div></div>
+        <div style="text-align:center"><div style="font-weight:900;color:#b91c1c">${c2p(totBalance)}</div><div class="muted" style="font-size:12px">Current Balance</div></div>
       </div>`;
 
       listRoot.innerHTML = html;
 
+      // more-info-teacher wiring (modal includes actions)
       listRoot.querySelectorAll('.more-info-teacher').forEach(b => b.addEventListener('click', ev => {
         const id = ev.currentTarget.dataset.id;
         const pool = isTeacherView ? teachersCache : window.staffCache;
@@ -3485,33 +3485,45 @@ async function renderPaymentsList(view = 'students'){
           <div class="muted">ID: ${escape(item.teacherId||item.id||'')}</div>
           <div style="margin-top:8px">Classes: <span class="muted">${escape(classLine)}</span></div>
           <div>Phone: ${escape(item.phone||'—')}</div>
-          <div style="margin-top:8px">Balance: <span class="balance-red">${c2p(item.balance_cents||0)}</span></div>
-          <div>Salary: <span class="fee-blue">${item.salary != null ? escape(String(item.salary)) : '—'}</span></div>
-          <div>Paid this month: <span class="total-green">${c2p(getPaidThisMonthForTarget(isTeacherView?'teacher':'staff', item))}</span></div>
-          <div class="modal-more-actions" style="margin-top:8px">
+          <div style="margin-top:8px">Balance: <span style="font-weight:900;color:#b91c1c">${c2p(item.balance_cents||0)}</span></div>
+          <div>Paid this month: <span style="font-weight:700;color:#059669">${c2p(getPaidThisMonthForTarget('teacher', item))}</span></div>
+          <div>Salary: <span style="font-weight:700;color:#0b74de">${item.salary != null ? escape(String(item.salary)) : '—'}</span></div>
+          <div class="modal-more-actions" style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
             <button class="btn btn-primary pay-btn" data-id="${escape(item.teacherId||item.id||'')}">${svgPay()} Pay</button>
             <button class="btn btn-secondary adj-btn" data-id="${escape(item.teacherId||item.id||'')}">${svgReesto()} Reesto Hore</button>
             <button class="btn btn-ghost view-trans-btn" data-id="${escape(item.teacherId||item.id||'')}">${svgView()} View</button>
+            <button class="btn btn-ghost edit-teacher" data-id="${escape(item.teacherId||item.id||'')}">Edit</button>
+            <button class="btn btn-danger del-teacher" data-id="${escape(item.teacherId||item.id||'')}">Delete</button>
           </div>`;
         showModal('Details', body);
         modalBody.querySelectorAll('.pay-btn').forEach(bb => bb.addEventListener('click', ev => openPayModal(ev.currentTarget)));
         modalBody.querySelectorAll('.adj-btn').forEach(bb => bb.addEventListener('click', ev => openAdjustmentModal(ev.currentTarget)));
         modalBody.querySelectorAll('.view-trans-btn').forEach(bb => bb.addEventListener('click', ev => openViewTransactionsModal(ev.currentTarget)));
+        modalBody.querySelectorAll('.edit-teacher').forEach(bb => bb.addEventListener('click', ev => toast('Edit teacher not implemented')));
+        modalBody.querySelectorAll('.del-teacher').forEach(bb => bb.addEventListener('click', async ev => {
+          const tid = ev.currentTarget.dataset.id;
+          if(!confirm('Delete teacher?')) return;
+          try{ await deleteDoc(doc(db,'teachers', tid)); toast('Teacher deleted'); await loadTeachers(); renderPaymentsList('teachers'); }catch(err){ console.error(err); toast('Failed to delete'); }
+        }));
       }));
 
       return;
     }
 
-    // desktop teachers table
+    // DESKTOP teachers table
     if(isTeacherView){
       let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><strong>Teachers — ${list.length}</strong><div class="muted">Columns: No, ID, Name, Subject, Class, Salary, Balance, Paid(this month), Actions</div></div>`;
       html += `<div style="overflow:auto"><table style="width:100%;border-collapse:collapse"><thead><tr>
         <th>No</th><th>ID</th><th>Name</th><th>Subject</th><th>Class</th><th style="text-align:right">Salary</th><th style="text-align:right">Balance</th><th style="text-align:right">Paid (this month)</th><th>Actions</th>
       </tr></thead><tbody>`;
+      let totBalance = 0, totPaid = 0, totSalaryAssigned = 0;
       list.forEach((t, idx) => {
         const salaryVal = t.salary != null && !isNaN(Number(t.salary)) ? Math.round(Number(t.salary)*100) : 0;
         const balance = Number(t.balance_cents||0);
         const paidThisMonth = getPaidThisMonthForTarget('teacher', t);
+        totBalance += balance;
+        totPaid += paidThisMonth;
+        totSalaryAssigned += salaryVal;
         const className = resolveClassName(t);
         html += `<tr style="border-bottom:1px solid #f1f5f9">
           <td style="padding:8px">${idx+1}</td>
@@ -3520,12 +3532,14 @@ async function renderPaymentsList(view = 'students'){
           <td style="padding:8px">${escape(t.subjectName||t.subject||'')}</td>
           <td style="padding:8px">${escape(className||'')}</td>
           <td style="padding:8px;text-align:right">${salaryVal? c2p(salaryVal): '—'}</td>
-          <td style="padding:8px;text-align:right">${c2p(balance)}</td>
-          <td style="padding:8px;text-align:right">${c2p(paidThisMonth)}</td>
+          <td style="padding:8px;text-align:right;color:#b91c1c;font-weight:700">${c2p(balance)}</td>
+          <td style="padding:8px;text-align:right;color:#059669;font-weight:700">${c2p(paidThisMonth)}</td>
           <td style="padding:8px">
             <button class="btn btn-primary btn-sm pay-btn" data-id="${escape(t.teacherId||t.id||'')}" title="Pay">${svgPay()}</button>
             <button class="btn btn-secondary btn-sm adj-btn" data-id="${escape(t.teacherId||t.id||'')}" title="Reesto Hore">${svgReesto()}</button>
             <button class="btn btn-ghost btn-sm view-trans-btn" data-id="${escape(t.teacherId||t.id||'')}" title="View">${svgView()}</button>
+            <button class="btn btn-ghost btn-sm edit-teacher" data-id="${escape(t.teacherId||t.id||'')}" title="Edit">✏️</button>
+            <button class="btn btn-danger btn-sm del-teacher" data-id="${escape(t.teacherId||t.id||'')}" title="Delete">🗑️</button>
           </td>
         </tr>`;
       });
@@ -3533,19 +3547,25 @@ async function renderPaymentsList(view = 'students'){
       // totals
       html += `<div class="totals-card card" style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">
         <div style="font-weight:900">Totals</div>
-        <div class="totals-block" style="flex-direction:row;gap:18px;align-items:center">
-          <div class="tot-line"><div style="min-width:140px">Assigned salary (sum):</div><div class="total-blue">${c2p(totSalaryAssigned)}</div></div>
-          <div class="tot-line"><div style="min-width:140px">Current balance total:</div><div class="total-red">${c2p(totBalance)}</div></div>
-          <div class="tot-line"><div style="min-width:140px">Total Paid (this month):</div><div class="total-green">${c2p(totPaid)}</div></div>
+        <div style="display:flex;gap:18px;align-items:center">
+          <div style="min-width:140px">Assigned salary (sum): <span style="color:#0b74de;font-weight:900">${c2p(totSalaryAssigned)}</span></div>
+          <div style="min-width:140px">Current balance total: <span style="color:#b91c1c;font-weight:900">${c2p(totBalance)}</span></div>
+          <div style="min-width:140px">Total Paid (this month): <span style="color:#059669;font-weight:900">${c2p(totPaid)}</span></div>
         </div>
       </div>`;
       listRoot.innerHTML = html;
       listRoot.querySelectorAll('.pay-btn').forEach(b => b.addEventListener('click', ev => openPayModal(ev.currentTarget)));
       listRoot.querySelectorAll('.adj-btn').forEach(b => b.addEventListener('click', ev => openAdjustmentModal(ev.currentTarget)));
       listRoot.querySelectorAll('.view-trans-btn').forEach(b => b.addEventListener('click', ev => openViewTransactionsModal(ev.currentTarget)));
+      listRoot.querySelectorAll('.edit-teacher').forEach(b => b.addEventListener('click', ev => toast('Edit teacher not implemented')));
+      listRoot.querySelectorAll('.del-teacher').forEach(b => b.addEventListener('click', async ev => {
+        const id = ev.currentTarget.dataset.id;
+        if(!confirm('Delete teacher?')) return;
+        try{ await deleteDoc(doc(db,'teachers', id)); toast('Teacher deleted'); await loadTeachers(); renderPaymentsList('teachers'); }catch(err){ console.error(err); toast('Failed to delete'); }
+      }));
       return;
     } else {
-      // staff view table (unchanged)
+      // staff view table (desktop & mobile wiring)
       let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><strong>Staff — ${list.length}</strong></div>`;
       html += `<div style="overflow:auto"><table style="width:100%;border-collapse:collapse"><thead><tr>
         <th>No</th><th>ID</th><th>Name</th><th>Phone</th><th>Role</th><th style="text-align:right">Balance</th><th>Actions</th>
@@ -3557,7 +3577,7 @@ async function renderPaymentsList(view = 'students'){
           <td style="padding:8px">${escape(s.fullName||'')}</td>
           <td style="padding:8px">${escape(s.phone||'—')}</td>
           <td style="padding:8px">${escape(s.role||'')}</td>
-          <td style="padding:8px;text-align:right">${c2p(s.balance_cents||0)}</td>
+          <td style="padding:8px;text-align:right;color:#b91c1c;font-weight:700">${c2p(s.balance_cents||0)}</td>
           <td style="padding:8px">
             <button class="btn btn-primary btn-sm pay-btn" data-id="${escape(s.staffId||s.id||'')}" title="Pay">${svgPay()}</button>
             <button class="btn btn-secondary btn-sm adj-btn" data-id="${escape(s.staffId||s.id||'')}" title="Reesto Hore">${svgReesto()}</button>
@@ -3594,18 +3614,16 @@ async function renderPaymentsList(view = 'students'){
         html += `<div class="card" style="display:flex;align-items:center;justify-content:space-between;gap:8px">
           <div style="display:flex;gap:8px;align-items:center">
             <div style="font-weight:800">${idx+1}</div>
-            <div style="min-width:48px"><div style="font-weight:900">${escape((tx.id||'').slice(-4) || tx.id || '')}</div></div>
+            <div style="min-width:72px"><div style="font-weight:900">${escape(tx.id || '')}</div></div>
             <div>
               <div style="font-weight:900">${escape(tx.note || tx.expense_name || 'Expense')}</div>
               <div class="muted" style="font-size:12px">${escape(tx.subtype || '')}</div>
             </div>
           </div>
-          <div style="display:flex;gap:8px;align-items:center">
-            <div style="text-align:right">
-              <div class="balance-red" style="font-weight:900">${amount}</div>
-              <div class="muted" style="font-size:12px">${escape(dateStr)}</div>
-            </div>
-            <div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
+            <div style="font-weight:900;color:#b91c1c">${amount}</div>
+            <div class="muted" style="font-size:12px">${escape(dateStr)}</div>
+            <div style="margin-top:6px">
               <button class="btn btn-ghost more-info-expense" data-id="${escape(tx.id||'')}" title="More">⋯</button>
             </div>
           </div>
@@ -3613,6 +3631,8 @@ async function renderPaymentsList(view = 'students'){
       });
       html += `</div>`;
       listRoot.innerHTML = html;
+
+      // more-info-expense modal => show Pay/View/Reesto/Edit/Delete
       listRoot.querySelectorAll('.more-info-expense').forEach(b => b.addEventListener('click', ev => {
         const id = ev.currentTarget.dataset.id;
         const tx = (rows||[]).find(r => r.id === id);
@@ -3621,11 +3641,17 @@ async function renderPaymentsList(view = 'students'){
           <div class="muted">Category: ${escape(tx.subtype||'')}</div>
           <div style="margin-top:8px">Amount: <strong>${c2p(tx.amount_cents||0)}</strong></div>
           <div>Date: ${tx.createdAt ? new Date((tx.createdAt.seconds||tx.createdAt._seconds)*1000).toLocaleString() : ''}</div>
-          <div style="margin-top:10px;display:flex;gap:8px;justify-content:flex-end">
+          <div style="margin-top:10px;display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">
+            <button class="btn btn-primary pay-expense" data-id="${escape(id)}">${svgPay()} Pay</button>
+            <button class="btn btn-secondary reesto-expense" data-id="${escape(id)}">${svgReesto()} Reesto Hore</button>
+            <button class="btn btn-ghost view-expense" data-id="${escape(id)}">${svgView()} View</button>
             <button class="btn btn-ghost edit-expense" data-id="${escape(id)}">Edit</button>
             <button class="btn btn-danger del-expense" data-id="${escape(id)}">Delete</button>
           </div>`;
         showModal('Expense', body);
+        modalBody.querySelectorAll('.pay-expense').forEach(bb => bb.addEventListener('click', ev => openPayModal(ev.currentTarget)));
+        modalBody.querySelectorAll('.reesto-expense').forEach(bb => bb.addEventListener('click', ev => openAdjustmentModal(ev.currentTarget)));
+        modalBody.querySelectorAll('.view-expense').forEach(bb => bb.addEventListener('click', ev => openViewTransactionsModal(ev.currentTarget)));
         modalBody.querySelectorAll('.edit-expense').forEach(bb => bb.addEventListener('click', ev => openEditTransactionModal(ev.currentTarget)));
         modalBody.querySelectorAll('.del-expense').forEach(bb => bb.addEventListener('click', ev => deleteTransaction(ev.currentTarget)));
       }));
@@ -3640,16 +3666,24 @@ async function renderPaymentsList(view = 'students'){
         <td style="padding:8px">${idx+1}</td>
         <td style="padding:8px">${escape(tx.note || tx.expense_name || 'Expense')}</td>
         <td style="padding:8px">${escape(tx.subtype || '')}</td>
-        <td style="padding:8px">${c2p(tx.amount_cents || 0)}</td>
+        <td style="padding:8px;color:#b91c1c;font-weight:700">${c2p(tx.amount_cents || 0)}</td>
         <td style="padding:8px">${tx.createdAt ? new Date((tx.createdAt.seconds||tx.createdAt._seconds)*1000).toLocaleString() : ''}</td>
         <td style="padding:8px">
-          <button class="btn btn-ghost edit-expense" data-id="${tx.id}" title="Edit">✏️</button>
-          <button class="btn btn-danger del-expense" data-id="${tx.id}" title="Delete">🗑️</button>
+          <button class="btn btn-primary btn-sm pay-expense" data-id="${tx.id}" title="Pay">${svgPay()}</button>
+          <button class="btn btn-secondary btn-sm reesto-expense" data-id="${tx.id}" title="Reesto">${svgReesto()}</button>
+          <button class="btn btn-ghost btn-sm view-expense" data-id="${tx.id}" title="View">${svgView()}</button>
+          <button class="btn btn-ghost btn-sm edit-expense" data-id="${tx.id}" title="Edit">✏️</button>
+          <button class="btn btn-danger btn-sm del-expense" data-id="${tx.id}" title="Delete">🗑️</button>
         </td>
       </tr>`;
     });
     html += `</tbody></table></div>`;
     listRoot.innerHTML = html;
+
+    // wire desktop expense buttons
+    listRoot.querySelectorAll('.pay-expense').forEach(b => b.addEventListener('click', ev => openPayModal(ev.currentTarget)));
+    listRoot.querySelectorAll('.reesto-expense').forEach(b => b.addEventListener('click', ev => openAdjustmentModal(ev.currentTarget)));
+    listRoot.querySelectorAll('.view-expense').forEach(b => b.addEventListener('click', ev => openViewTransactionsModal(ev.currentTarget)));
     listRoot.querySelectorAll('.edit-expense').forEach(b => b.addEventListener('click', ev => openEditTransactionModal(ev.currentTarget)));
     listRoot.querySelectorAll('.del-expense').forEach(b => b.addEventListener('click', ev => deleteTransaction(ev.currentTarget)));
     return;
