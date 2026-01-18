@@ -3104,43 +3104,54 @@ function matchesSearchTerm(item, q){
 
 /* ---------------------- SMALL HELPERS ---------------------- */
 
-/** mobile id display: show last 6 chars on mobile, full on desktop */
-function mobileIdDisplay(id){
+/** mobile id display:
+ *  opts = { hideOnMobile: false } - if true, returns '' on mobile (used for staff/expense)
+ */
+function mobileIdDisplay(id, opts = { hideOnMobile: false }){
   if(!id) return '';
   id = String(id);
   if(isMobileViewport()){
+    if(opts.hideOnMobile) return '';          // user requested no staff/expense id on mobile
     if(id.length <= 6) return id;
-    return '...' + id.slice(-6);
+    return '...' + id.slice(-6);              // show last 6 as requested
   }
-  return id;
+  return id; // full on desktop
 }
 
-/** Salary display: supports salary (number string) or salary_cents */
+/* Salary display unchanged (keeps supporting salary_cents and salary) */
 function salaryDisplay(item){
   if(!item) return '—';
   if(typeof item.salary_cents !== 'undefined' && item.salary_cents !== null){
     return c2p(item.salary_cents);
   }
   if(typeof item.salary !== 'undefined' && item.salary !== null && item.salary !== ''){
-    // might be string like "100.00" or number
     if(!isNaN(Number(item.salary))) return Number(item.salary).toFixed(2);
     return String(item.salary);
   }
-  // legacy fields
   if(typeof item.salaryCents !== 'undefined' && item.salaryCents !== null) return c2p(item.salaryCents);
   return '—';
 }
 
-/* improved resolveClassName to check many variants and nested fields */
+/* resolveClassName extended to handle teacher.classes array and other variants */
 function resolveClassName(item){
   if(!item) return '';
-  // direct simple fields
   const tryVal = v => (v && String(v).trim()) ? String(v).trim() : null;
+
+  // direct, simple fields
   const direct = tryVal(item.className) || tryVal(item.class) || tryVal(item.class_name) || tryVal(item.classTitle) || tryVal(item.class_title);
   if(direct) return direct;
 
-  // classId -> lookup in classesCache
-  const cid = item.classId || item.class_id || item.classIdRef || (item.class && typeof item.class === 'object' && item.class.id) || item.record && item.record.classId;
+  // if item has classes array (teachers sometimes store classes array)
+  if(Array.isArray(item.classes) && item.classes.length){
+    const names = item.classes.map(cid => {
+      const cls = (classesCache||[]).find(c => String(c.id) === String(cid) || String(c.classId||'') === String(cid) || String(c.name||'') === String(cid));
+      return cls ? (cls.name || cls.displayName || cls.id) : String(cid);
+    }).filter(Boolean);
+    if(names.length) return names.join(', ');
+  }
+
+  // classId -> lookup
+  const cid = item.classId || item.class_id || item.classIdRef || (item.class && typeof item.class === 'object' && item.class.id) || (item.record && item.record.classId);
   if(cid){
     const cls = (classesCache||[]).find(c => String(c.id) === String(cid) || String(c.classId||'') === String(cid) || String(c.name||'') === String(cid));
     if(cls) return cls.name || cls.displayName || String(cls.id);
@@ -3150,7 +3161,7 @@ function resolveClassName(item){
   if(item.record && (item.record.className || item.record.class)) return tryVal(item.record.className) || tryVal(item.record.class);
   if(item.meta && (item.meta.className || item.meta.class)) return tryVal(item.meta.className) || tryVal(item.meta.class);
 
-  // try fuzzy match: if item.class is numeric or code, map to classesCache names
+  // fuzzy match fallback
   if(item.class){
     const rawClass = String(item.class).trim().toLowerCase();
     if(rawClass){
@@ -3280,6 +3291,11 @@ async function renderPayments(){
 }
 /* ---------- renderPaymentsList (updated mobile behavior + salary fixes) ---------- */
 
+/* ---------------------- Updated helpers ---------------------- */
+
+
+/* ---------------------- renderPaymentsList (complete replacement) ---------------------- */
+
 async function renderPaymentsList(view = 'students'){
   await Promise.all([ loadClasses && loadClasses(), loadSubjects && loadSubjects(), loadStudents && loadStudents(), loadTeachers && loadTeachers(), loadStaff && loadStaff(), loadTransactions && loadTransactions() ]);
 
@@ -3305,13 +3321,8 @@ async function renderPaymentsList(view = 'students'){
   /* ---------- STUDENTS ---------- */
   if(view === 'students'){
     let list = (studentsCache || []).slice();
-
     if(classFilter) list = list.filter(s => matchesClassFilter(s, classFilter));
-
-    if(rawQ){
-      list = list.filter(s => matchesSearchTerm(s, rawQ));
-    }
-
+    if(rawQ) list = list.filter(s => matchesSearchTerm(s, rawQ));
     // status filter
     list = list.filter(s => {
       const balance = Number(s.balance_cents || 0);
@@ -3322,10 +3333,9 @@ async function renderPaymentsList(view = 'students'){
       return true;
     });
 
-    // sort by descending current balance (largest owing first)
     list.sort((a,b) => (b.balance_cents||0) - (a.balance_cents||0));
 
-    // totals precompute (cents)
+    // totals
     let totalAssignedCents = 0, totalBalanceCents = 0, totalPaidThisMonthCents = 0;
     list.forEach(s => {
       const assigned = (s.fee != null && !isNaN(Number(s.fee))) ? Math.round(Number(s.fee)*100) : 0;
@@ -3334,7 +3344,7 @@ async function renderPaymentsList(view = 'students'){
       totalPaidThisMonthCents += getPaidThisMonthForTarget('student', s);
     });
 
-    // MOBILE view
+    // MOBILE
     if(isMobileViewport()){
       let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
         <strong>Students — ${list.length}</strong>
@@ -3343,13 +3353,12 @@ async function renderPaymentsList(view = 'students'){
 
       list.forEach((s, idx) => {
         const idFull = String(s.studentId||s.id||'');
-        const idMobile = mobileIdDisplay(idFull);
+        const idMobile = mobileIdDisplay(idFull); // last-6 for students on mobile
         const feeDisplay = (s.fee != null && !isNaN(Number(s.fee))) ? Number(s.fee).toFixed(2) : '0.00';
         const balanceDisplay = c2p(s.balance_cents || 0);
         const paidThisMonth = c2p(getPaidThisMonthForTarget('student', s));
         const className = resolveClassName(s) || '—';
 
-        // Mobile row: left = index + id (12px bold) + name (wrap up to 2 lines) + class under name
         html += `<div class="card" style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;flex-wrap:nowrap;padding:10px">
           <div style="display:flex;gap:8px;align-items:flex-start;min-width:0;flex:1">
             <div style="font-weight:800;flex:0 0 26px">${idx+1}</div>
@@ -3359,7 +3368,7 @@ async function renderPaymentsList(view = 'students'){
             </div>
 
             <div style="min-width:0;overflow:visible;flex:1">
-              <div style="font-weight:900;line-height:1.15;max-height:36px;overflow:hidden;display:block">${escape(s.fullName||'')}</div>
+              <div style="font-weight:900;line-height:1.2;max-height:2.4em;overflow:hidden;display:block">${escape(s.fullName||'')}</div>
               <div style="margin-top:4px"><span class="class-blue" style="font-size:12px; color:#0b74de">${escape(className)}</span></div>
             </div>
           </div>
@@ -3377,7 +3386,7 @@ async function renderPaymentsList(view = 'students'){
 
       html += `</div>`;
 
-      // mobile totals bar
+      // totals bar
       html += `<div class="card" style="margin-top:10px;display:flex;gap:12px;justify-content:space-around;align-items:center">
         <div style="text-align:center"><div style="font-weight:900;color:#059669">${c2p(totalPaidThisMonthCents)}</div><div class="muted" style="font-size:12px">Paid (this month)</div></div>
         <div style="text-align:center"><div style="font-weight:900;color:#0b74de">${c2p(totalAssignedCents)}</div><div class="muted" style="font-size:12px">Assigned Fee</div></div>
@@ -3386,7 +3395,7 @@ async function renderPaymentsList(view = 'students'){
 
       listRoot.innerHTML = html;
 
-      // more-info wiring
+      // wiring
       listRoot.querySelectorAll('.more-info').forEach(b => b.addEventListener('click', ev => {
         const id = ev.currentTarget.dataset.id;
         const st = (studentsCache||[]).find(x => (String(x.studentId)===String(id) || String(x.id)===String(id)));
@@ -3413,7 +3422,7 @@ async function renderPaymentsList(view = 'students'){
       return;
     }
 
-    // DESKTOP table (unchanged: full IDs)
+    // DESKTOP table (full ids)
     let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
       <strong>Students — ${list.length}</strong><div class="muted">Columns: No, ID, Name, Phone, Class, Assigned Fee, Current Balance, Paid (this month), Actions</div></div>`;
     html += `<div style="overflow:auto"><table style="width:100%;border-collapse:collapse"><thead><tr>
@@ -3453,7 +3462,6 @@ async function renderPaymentsList(view = 'students'){
 
     html += `</tbody></table></div>`;
 
-    // Totals block
     const totalsHtml = `
       <div class="totals-card card" style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">
         <div style="font-weight:900">Totals</div>
@@ -3464,14 +3472,11 @@ async function renderPaymentsList(view = 'students'){
         </div>
       </div>
     `;
-
     listRoot.innerHTML = html + totalsHtml;
 
-    // actions wiring
     listRoot.querySelectorAll('.pay-btn').forEach(b => b.addEventListener('click', ev => openPayModal(ev.currentTarget)));
     listRoot.querySelectorAll('.adj-btn').forEach(b => b.addEventListener('click', ev => openAdjustmentModal(ev.currentTarget)));
     listRoot.querySelectorAll('.view-trans-btn').forEach(b => b.addEventListener('click', ev => openViewTransactionsModal(ev.currentTarget)));
-
     return;
   }
 
@@ -3518,13 +3523,10 @@ async function renderPaymentsList(view = 'students'){
       });
     }
 
-    if(rawQ){
-      list = list.filter(t => matchesSearchTerm(t, rawQ));
-    }
-
+    if(rawQ) list = list.filter(t => matchesSearchTerm(t, rawQ));
     list.sort((a,b) => (b.balance_cents||0) - (a.balance_cents||0));
 
-    // totals for teachers/staff
+    // totals
     let totBalance = 0, totPaid = 0, totSalaryAssigned = 0;
     list.forEach(t => {
       totBalance += Number(t.balance_cents || 0);
@@ -3533,12 +3535,16 @@ async function renderPaymentsList(view = 'students'){
       if(typeof t.salary_cents !== 'undefined') totSalaryAssigned += Number(t.salary_cents||0);
     });
 
+    // MOBILE for teachers/staff
     if(isMobileViewport()){
       let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><strong>${capitalize(view)} — ${list.length}</strong><div class="muted">Tap "more" to see actions</div></div>`;
       html += `<div style="display:flex;flex-direction:column;gap:8px">`;
       list.forEach((t, idx) => {
-        const idFull = String(t.teacherId||t.id||t.staffId||'');
-        const idMobile = mobileIdDisplay(idFull);
+        // pick best ID field order: prefer explicit teacherId/staffId then fallback to id
+        const idFull = String(isTeacherView ? (t.teacherId || t.id || '') : (t.staffId || t.id || ''));
+        // hide staff id on mobile per request; show teacher id (last6) for teachers
+        const idMobile = isTeacherView ? mobileIdDisplay(idFull) : mobileIdDisplay(idFull, { hideOnMobile: true });
+
         const classLine = resolveClassName(t) || '—';
         const salaryDisp = salaryDisplay(t);
         const balance = c2p(t.balance_cents||0);
@@ -3553,7 +3559,7 @@ async function renderPaymentsList(view = 'students'){
             </div>
 
             <div style="min-width:0;overflow:visible;flex:1">
-              <div style="font-weight:900;line-height:1.15;max-height:36px;overflow:hidden;display:block">${escape(t.fullName||'')}</div>
+              <div style="font-weight:900;line-height:1.2;max-height:2.4em;overflow:hidden;display:block">${escape(t.fullName||'')}</div>
               <div style="margin-top:4px"><span class="class-blue" style="font-size:12px; color:#0b74de">${escape(classLine)}</span></div>
             </div>
           </div>
@@ -3577,13 +3583,26 @@ async function renderPaymentsList(view = 'students'){
 
       listRoot.innerHTML = html;
 
-      // teacher/staff more (teachers: no edit/delete; staff: edit/delete appear in desktop; mobile actions keep Pay/Reesto/View)
+      // mobile modal: include Edit/Delete for staff in modal actions (user requested)
       listRoot.querySelectorAll('.more-info-teacher').forEach(b => b.addEventListener('click', ev => {
         const id = ev.currentTarget.dataset.id;
         const pool = isTeacherView ? teachersCache : window.staffCache;
         const item = pool.find(x => (String(x.teacherId) === String(id) || String(x.staffId) === String(id) || String(x.id) === String(id))) || null;
         if(!item) return;
         const classLine = resolveClassName(item) || '—';
+        // For staff modal include Edit/Delete buttons; for teachers keep Pay/Reesto/View
+        let actions = `
+          <button class="btn btn-primary pay-btn" data-id="${escape(item.teacherId||item.staffId||item.id||'')}">${svgPay()} Pay</button>
+          <button class="btn btn-secondary adj-btn" data-id="${escape(item.teacherId||item.staffId||item.id||'')}">${svgReesto()} Reesto Hore</button>
+          <button class="btn btn-ghost view-trans-btn" data-id="${escape(item.teacherId||item.staffId||item.id||'')}">${svgView()} View</button>
+        `;
+        if(!isTeacherView){
+          // staff: add Edit and Delete in modal as requested
+          actions += `
+            <button class="btn btn-ghost edit-staff" data-id="${escape(item.id||item.staffId||'')}">${svgEdit()} Edit</button>
+            <button class="btn btn-danger del-staff" data-id="${escape(item.id||item.staffId||'')}">${svgDelete()} Delete</button>
+          `;
+        }
         const body = `<div style="font-weight:900">${escape(item.fullName||'')}</div>
           <div class="muted">ID: ${escape(item.teacherId||item.staffId||item.id||'')}</div>
           <div style="margin-top:8px">Classes: <span class="muted">${escape(classLine)}</span></div>
@@ -3592,20 +3611,29 @@ async function renderPaymentsList(view = 'students'){
           <div>Paid this month: <span style="font-weight:700;color:#059669">${c2p(getPaidThisMonthForTarget(isTeacherView ? 'teacher' : 'staff', item))}</span></div>
           <div>Salary: <span style="font-weight:700;color:#0b74de">${salaryDisplay(item)}</span></div>
           <div class="modal-more-actions" style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
-            <button class="btn btn-primary pay-btn" data-id="${escape(item.teacherId||item.staffId||item.id||'')}">${svgPay()} Pay</button>
-            <button class="btn btn-secondary adj-btn" data-id="${escape(item.teacherId||item.staffId||item.id||'')}">${svgReesto()} Reesto Hore</button>
-            <button class="btn btn-ghost view-trans-btn" data-id="${escape(item.teacherId||item.staffId||item.id||'')}">${svgView()} View</button>
+            ${actions}
           </div>`;
         showModal('Details', body);
+
         modalBody.querySelectorAll('.pay-btn').forEach(bb => bb.addEventListener('click', ev => openPayModal(ev.currentTarget)));
         modalBody.querySelectorAll('.adj-btn').forEach(bb => bb.addEventListener('click', ev => openAdjustmentModal(ev.currentTarget)));
         modalBody.querySelectorAll('.view-trans-btn').forEach(bb => bb.addEventListener('click', ev => openViewTransactionsModal(ev.currentTarget)));
+        modalBody.querySelectorAll('.edit-staff').forEach(bb => bb.addEventListener('click', ev => {
+          // reuse existing desktop handler or call your edit function
+          const sid = ev.currentTarget.dataset.id;
+          toast('Edit staff not implemented - tell me if you want it'); // you can replace with openEditStaffModal(sid)
+        }));
+        modalBody.querySelectorAll('.del-staff').forEach(bb => bb.addEventListener('click', async ev => {
+          const sid = ev.currentTarget.dataset.id;
+          if(!confirm('Delete staff?')) return;
+          try{ await deleteDoc(doc(db,'staff', sid)); toast('Staff deleted'); await loadStaff(); renderPaymentsList('staff'); }catch(err){ console.error(err); toast('Failed to delete'); }
+        }));
       }));
 
       return;
     }
 
-    // DESKTOP teachers table (full IDs, salary column included)
+    // DESKTOP teacher table (unchanged; full IDs & salary column)
     if(isTeacherView){
       let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><strong>Teachers — ${list.length}</strong><div class="muted">Columns: No, ID, Name, Subject, Class, Salary, Balance, Paid(this month), Actions</div></div>`;
       html += `<div style="overflow:auto"><table style="width:100%;border-collapse:collapse"><thead><tr>
@@ -3633,7 +3661,6 @@ async function renderPaymentsList(view = 'students'){
         </tr>`;
       });
       html += `</tbody></table></div>`;
-      // totals
       html += `<div class="totals-card card" style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">
         <div style="font-weight:900">Totals</div>
         <div style="display:flex;gap:18px;align-items:center">
@@ -3648,7 +3675,7 @@ async function renderPaymentsList(view = 'students'){
       listRoot.querySelectorAll('.view-trans-btn').forEach(b => b.addEventListener('click', ev => openViewTransactionsModal(ev.currentTarget)));
       return;
     } else {
-      // STAFF: desktop table with salary column & edit/delete buttons (SVG)
+      // STAFF: desktop table with salary column & edit/delete buttons
       let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><strong>Staff — ${list.length}</strong></div>`;
       html += `<div style="overflow:auto"><table style="width:100%;border-collapse:collapse"><thead><tr>
         <th>No</th><th>ID</th><th>Name</th><th>Phone</th><th>Role</th><th style="text-align:right">Salary</th><th style="text-align:right">Balance</th><th>Actions</th>
@@ -3688,21 +3715,23 @@ async function renderPaymentsList(view = 'students'){
     }
   }
 
-  /* ---------- EXPENSES (keeps previous mobile/desktop layout, names wrap) ---------- */
+  /* ---------- EXPENSES ---------- */
   if(view === 'expenses'){
     const rows = (transactionsCache || []).filter(t => t.target_type === 'expense' && !t.is_deleted).sort((a,b) => (b.createdAt?.seconds||0) - (a.createdAt?.seconds||0));
 
     if(isMobileViewport()){
       let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><strong>Expenses — ${rows.length}</strong><div class="muted">Tap an item for actions</div></div><div style="display:flex;flex-direction:column;gap:8px">`;
       rows.forEach((tx, idx) => {
+        // hide expense id on mobile per request
+        const idMobile = mobileIdDisplay(tx.id || '', { hideOnMobile: true });
         const amount = c2p(tx.amount_cents || 0);
         const dateStr = tx.createdAt ? new Date((tx.createdAt.seconds||tx.createdAt._seconds)*1000).toLocaleDateString() : '';
         html += `<div class="card" style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;flex-wrap:nowrap;padding:10px">
           <div style="display:flex;gap:8px;align-items:flex-start;min-width:0;flex:1">
             <div style="font-weight:800;flex:0 0 26px">${idx+1}</div>
-            <div style="flex:0 0 92px; font-size:8px; word-break:break-all; font-weight:900">${escape(tx.id || '')}</div>
+            <div style="flex:0 0 92px; font-size:8px; word-break:break-all; font-weight:900">${escape(idMobile)}</div>
             <div style="min-width:0;overflow:visible;flex:1">
-              <div style="font-weight:900;line-height:1.15;max-height:36px;overflow:hidden;display:block">${escape(tx.note || tx.expense_name || 'Expense')}</div>
+              <div style="font-weight:900;line-height:1.2;max-height:2.4em;overflow:hidden;display:block">${escape(tx.note || tx.expense_name || 'Expense')}</div>
               <div style="margin-top:4px" class="muted" style="font-size:12px">${escape(tx.subtype || '')}</div>
             </div>
           </div>
@@ -3716,7 +3745,7 @@ async function renderPaymentsList(view = 'students'){
       html += `</div>`;
       listRoot.innerHTML = html;
 
-      // more-info-expense modal wiring (same as before)
+      // more-info-expense modal wiring (same actions + edit/delete)
       listRoot.querySelectorAll('.more-info-expense').forEach(b => b.addEventListener('click', ev => {
         const id = ev.currentTarget.dataset.id;
         const tx = (rows||[]).find(r => r.id === id);
@@ -3742,7 +3771,7 @@ async function renderPaymentsList(view = 'students'){
       return;
     }
 
-    // desktop expenses table (unchanged)
+    // DESKTOP expenses table (unchanged)
     let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><strong>Expenses — ${rows.length}</strong><div class="muted">Columns: No, Name, Category, Amount, Date, Actions</div></div>`;
     html += `<div style="overflow:auto"><table style="width:100%;border-collapse:collapse"><thead><tr><th>No</th><th>Name</th><th>Category</th><th>Amount</th><th>Date</th><th>Actions</th></tr></thead><tbody>`;
     rows.forEach((tx, idx) => {
@@ -3764,7 +3793,6 @@ async function renderPaymentsList(view = 'students'){
     html += `</tbody></table></div>`;
     listRoot.innerHTML = html;
 
-    // wire desktop expense buttons
     listRoot.querySelectorAll('.pay-expense').forEach(b => b.addEventListener('click', ev => openPayModal(ev.currentTarget)));
     listRoot.querySelectorAll('.reesto-expense').forEach(b => b.addEventListener('click', ev => openAdjustmentModal(ev.currentTarget)));
     listRoot.querySelectorAll('.view-expense').forEach(b => b.addEventListener('click', ev => openViewTransactionsModal(ev.currentTarget)));
