@@ -3289,25 +3289,7 @@ function wirePaymentsInteractiveButtons(rootEl){
 
 /* ---------- helpers used by functions (assumes escape(), c2p(), getPaidThisMonthForTarget(), resolveClassName(), svg* icons, showModal, closeModal, toast, db, etc exist) ---------- */
 
-function wirePaymentsInteractiveButtons(rootEl){
-  if(!rootEl) return;
-  rootEl.querySelectorAll('.payments-id-btn').forEach(btn => {
-    if(btn.__wired) return; btn.__wired = true;
-    btn.addEventListener('click', ev => {
-      const id = ev.currentTarget.dataset.id || ev.currentTarget.textContent || '';
-      openIdModal(id, 'Full ID');
-    });
-  });
-  rootEl.querySelectorAll('.payments-class-link').forEach(btn => {
-    if(btn.__wired) return; btn.__wired = true;
-    btn.addEventListener('click', ev => {
-      const classesJson = ev.currentTarget.dataset.classes;
-      let classesArr = [];
-      try{ classesArr = classesJson ? JSON.parse(classesJson) : []; } catch(e){ classesArr = [ev.currentTarget.textContent]; }
-      openClassesModal(classesArr);
-    });
-  });
-}
+
 
 /* ---------- FULL replacement: renderPayments + renderPaymentsList ---------- */
 
