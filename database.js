@@ -2640,14 +2640,442 @@ async function updateTargetBalanceGeneric(targetType, targetId, deltaCents){
   }
 }
 
-/* ------------------------
-  Render Payments (UI + list + actions)
--------------------------*/
-async function renderPayments(){
-  // ensure caches
-  await Promise.all([ loadStudents && loadStudents(), loadTeachers && loadTeachers(), loadStaff && loadStaff(), loadSubjects && loadSubjects(), loadTransactions && loadTransactions() ]);
+/* ---------- Fixes & improved Payments/Exports: paste to database.js replacing older functions ---------- */
 
-  // create payments page if missing
+/** Helper: returns YYYY-MM string for a Date or now */
+function getYYYYMM(d = new Date()){
+  const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2,'0');
+  return `${y}-${m}`;
+}
+
+/** Sum payments in current month for a target, returns cents (number).
+ *  Ignores transactions with type 'adjustment' (Reesto Hore).
+ *  Matches by target.id / studentId / teacherId / idNumber and by related_months / related_month / createdAt date.
+ */
+function getPaidThisMonthForTarget(targetType, target){
+  if(!target) return 0;
+  const idCandidates = [ String(target.id||''), String(target.studentId||''), String(target.teacherId||''), String(target.idNumber||'' ) ].filter(Boolean);
+  if(!transactionsCache || !transactionsCache.length) return 0;
+  const nowYm = getYYYYMM();
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+  const monthEnd = new Date(now.getFullYear(), now.getMonth()+1, 1).getTime();
+
+  let sum = 0;
+  for(const t of (transactionsCache||[])){
+    if(t.is_deleted) continue;
+    if(String(t.target_type) !== String(targetType)) continue;
+
+    // don't count adjustments
+    if(t.type && String(t.type).toLowerCase() === 'adjustment') continue;
+
+    // match id candidates: target_id or legacy target field
+    const tid = String(t.target_id || t.target || '');
+    if(!idCandidates.includes(tid)) continue;
+
+    // related_months
+    if(Array.isArray(t.related_months) && t.related_months.length){
+      if(t.related_months.some(m => String(m).startsWith(nowYm))) { sum += Number(t.amount_cents||0); continue; }
+    }
+    // related_month
+    if(t.related_month && String(t.related_month).startsWith(nowYm)){ sum += Number(t.amount_cents||0); continue; }
+
+    // fallback: createdAt in current month
+    if(t.createdAt && (t.createdAt.seconds || t.createdAt._seconds)){
+      const ts = (t.createdAt.seconds || t.createdAt._seconds) * 1000;
+      if(ts >= monthStart && ts < monthEnd){
+        sum += Number(t.amount_cents||0);
+        continue;
+      }
+    }
+  }
+  return sum;
+}
+
+/* ---------- Robust resolveClassName (replace older version) ---------- */
+function resolveClassName(item){
+  if(!item) return '';
+  // direct fields first
+  if(item.className && String(item.className).trim()) return String(item.className);
+  if(item.class && String(item.class).trim()) return String(item.class);
+
+  // classId -> lookup
+  const cid = item.classId || item.class_id || item.classIdRef || (item.class && typeof item.class === 'object' && item.class.id);
+  if(cid){
+    const cls = (classesCache||[]).find(c => String(c.id) === String(cid) || String(c.classId||'') === String(cid));
+    if(cls) return cls.name || cls.displayName || String(cls.id);
+  }
+
+  // student/class may store the human name in the 'class' field (try case-insensitive match)
+  const rawClass = String(item.class || '').trim();
+  if(rawClass){
+    const maybe = (classesCache||[]).find(c => String(c.name||'').toLowerCase() === rawClass.toLowerCase() || String(c.displayName||'').toLowerCase() === rawClass.toLowerCase() || String(c.id||'').toLowerCase() === rawClass.toLowerCase());
+    if(maybe) return maybe.name || maybe.displayName || maybe.id;
+    return rawClass;
+  }
+
+  // fallback: maybe class stored inside nested object like item.record.className
+  if(item.record && item.record.className) return item.record.className;
+
+  return '';
+}
+
+
+/* ---------- Small modals for Add Staff / Add Expense ---------- */
+async function openAddStaffModal(){
+  showModal('Add Staff', `
+    <div style="display:grid;gap:8px">
+      <input id="newStaffName" placeholder="Full name" />
+      <input id="newStaffPhone" placeholder="Phone" />
+      <input id="newStaffRole" placeholder="Role (e.g. cleaner, secretary)" />
+      <input id="newStaffSalary" placeholder="Salary (e.g. 100.00)" type="number" step="0.01" />
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px">
+        <button id="addStaffCancel" class="btn btn-ghost">Cancel</button>
+        <button id="addStaffSave" class="btn btn-primary">Save</button>
+      </div>
+    </div>
+  `);
+  modalBody.querySelector('#addStaffCancel').onclick = closeModal;
+  modalBody.querySelector('#addStaffSave').onclick = async () => {
+    const name = (modalBody.querySelector('#newStaffName').value || '').trim();
+    if(!name) return toast('Name required');
+    const phone = (modalBody.querySelector('#newStaffPhone').value || '').trim();
+    const role = (modalBody.querySelector('#newStaffRole').value || '').trim();
+    const salaryRaw = modalBody.querySelector('#newStaffSalary').value;
+    const salaryCents = salaryRaw ? p2c(salaryRaw) : 0;
+    try{
+      // create with a short staffId (best-effort unique)
+      const staffId = `STF${String(Date.now()).slice(-6)}`;
+      await addDoc(collection(db,'staff'), { fullName: name, phone, role, salary_cents: salaryCents, staffId, createdAt: Timestamp.now(), balance_cents: 0 });
+      toast('Staff added');
+      closeModal();
+      await loadStaff();
+      await renderPaymentsList('staff');
+    }catch(e){ console.error(e); toast('Failed to add staff'); }
+  };
+}
+
+async function openAddExpenseModal(){
+  showModal('New Expense', `
+    <div style="display:grid;gap:8px">
+      <input id="newExpenseName" placeholder="Expense name" />
+      <select id="newExpenseCategory">
+        <option value="">Select category</option>
+        <option>Rent</option>
+        <option>Utilities</option>
+        <option>Stationery</option>
+        <option>Transport</option>
+        <option>Maintenance</option>
+        <option>Other</option>
+      </select>
+      <input id="newExpenseAmount" placeholder="Amount (e.g. 120.00)" type="number" step="0.01" />
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px">
+        <button id="addExpenseCancel" class="btn btn-ghost">Cancel</button>
+        <button id="addExpenseSave" class="btn btn-primary">Save</button>
+      </div>
+    </div>
+  `);
+  modalBody.querySelector('#addExpenseCancel').onclick = closeModal;
+  modalBody.querySelector('#addExpenseSave').onclick = async () => {
+    const name = (modalBody.querySelector('#newExpenseName').value || '').trim();
+    const cat = (modalBody.querySelector('#newExpenseCategory').value || '').trim();
+    const amtRaw = modalBody.querySelector('#newExpenseAmount').value;
+    if(!name) return toast('Name required');
+    const amountCents = p2c(amtRaw || 0);
+    try{
+      await addDoc(collection(db,'transactions'), {
+        target_type: 'expense',
+        note: name,
+        subtype: cat,
+        amount_cents: amountCents,
+        createdAt: Timestamp.now()
+      });
+      toast('Expense recorded');
+      closeModal();
+      await loadTransactions();
+      await renderPaymentsList('expenses');
+    }catch(e){ console.error(e); toast('Failed to save expense'); }
+  };
+}
+
+/* ---------- Robust openPay/openAdjustment/openView handlers ----------
+   Accept either the event's currentTarget element or an event. Use dataset.id from the element
+   to avoid nested SVG/span click problems that made earlier code read e.target (wrong).
+*/
+async function openPayModal(btnOrEvent){
+  // normalize to button element
+  const btn = (btnOrEvent && btnOrEvent.dataset) ? btnOrEvent : (btnOrEvent && btnOrEvent.currentTarget) ? btnOrEvent.currentTarget : (btnOrEvent && btnOrEvent.target && btnOrEvent.target.closest && btnOrEvent.target.closest('button')) ? btnOrEvent.target.closest('button') : null;
+  if(!btn) return;
+  const id = btn.dataset.id;
+  const activeTab = document.querySelector('#pagePayments .tab.active');
+  const view = activeTab ? activeTab.textContent.toLowerCase() : 'students';
+  const targetType = view === 'students' ? 'student' : (view === 'teachers' ? 'teacher' : 'staff');
+
+  // resolve target
+  let target = await resolveTargetByAnyId(view, id);
+  if(!target) return toast('Target not found');
+
+  // don't reassign target variable later — use this object
+  const currentBalance = Number(target.balance_cents || 0);
+  const defaultPhone = target.parentPhone || target.phone || '';
+  const now = new Date();
+  const curMonth = now.getMonth()+1;
+  const curYear = now.getFullYear();
+  const html = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div><label>Person</label><div style="font-weight:900;margin-bottom:6px">${escape(target.fullName||target.teacherName||target.id||'')}</div></div>
+      <div><label>Current balance</label><div style="font-weight:900;margin-bottom:6px">${c2p(currentBalance)}</div></div>
+
+      <div><label>Amount</label><input id="payAmount" type="number" step="0.01" value="${c2p(Math.max(0,currentBalance))}" /></div>
+      <div><label>Payment Type</label>
+        <select id="payType">
+          <option value="monthly">Monthly</option>
+          <option value="id-card">ID Card</option>
+          <option value="registration">Registration</option>
+          ${targetType!=='student'?'<option value="salary">Salary</option>':''}
+          <option value="other">Other</option>
+        </select>
+      </div>
+
+      <div id="monthPicker"><label>Month</label>
+        <select id="payMonth">${Array.from({length:12},(_,i)=>`<option value="${i+1}" ${i+1===curMonth?'selected':''}>${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][i]}</option>`).join('')}</select>
+      </div>
+
+      <div><label>Year</label><input id="payYear" type="number" min="${curYear-5}" max="${curYear+5}" value="${curYear}" /></div>
+
+      <div id="multiMonthsWrapper" style="display:none;grid-column:1 / -1">
+        <label>Select months (multi)</label>
+        <select id="payMonths" multiple size="6">${Array.from({length:12},(_,i)=>`<option value="${i+1}">${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][i]}</option>`).join('')}</select>
+      </div>
+
+      <div><label>Payment method</label><select id="payMethod"><option value="mobile">Mobile</option><option value="cash">Cash</option><option value="card">Card</option></select></div>
+      <div id="mobileProviderWrapper"><label>Mobile provider</label><select id="mobileProvider"><option>Hormuud</option><option>Somnet</option><option>Somtel</option><option>Telesom</option><option>Amtel</option><option>Other</option></select></div>
+      <div><label>Payer Phone</label><input id="payerPhone" value="${escape(defaultPhone)}" /></div>
+      <div style="grid-column:1 / -1"><label>Note</label><input id="payNote" placeholder="Optional note (auto-filled for monthly/salary)" /></div>
+    </div>
+
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+      <button id="payClose" class="btn btn-ghost">Close</button>
+      <button id="toggleMultiMonths" class="btn btn-ghost">Select multiple months</button>
+      <button id="paySave" class="btn btn-primary">Save</button>
+    </div>
+  `;
+  showModal(`Pay • ${escape(target.fullName||target.teacherName||target.id||'')}`, html);
+
+  const payType = modalBody.querySelector('#payType');
+  const multiWrapper = modalBody.querySelector('#multiMonthsWrapper');
+  const toggleMulti = modalBody.querySelector('#toggleMultiMonths');
+  const payMonth = modalBody.querySelector('#payMonth');
+  const payYear = modalBody.querySelector('#payYear');
+  const payMonths = modalBody.querySelector('#payMonths');
+  const payNote = modalBody.querySelector('#payNote');
+  const payMethodEl = modalBody.querySelector('#payMethod');
+  const mobileProviderWrapper = modalBody.querySelector('#mobileProviderWrapper');
+
+  function fillDefaultNote(){
+    const t = payType.value;
+    if(!payNote.value){
+      if(t==='monthly') payNote.value = `lacagta bish ${payYear.value}-${String(payMonth.value).padStart(2,'0')}`;
+      else if(t==='id-card') payNote.value = 'lacagta id card';
+      else if(t==='registration') payNote.value = 'lacagta registration';
+      else if(t==='salary') payNote.value = 'lacagta mushaar';
+    }
+  }
+
+  payType.onchange = () => { modalBody.querySelector('#monthPicker').style.display = payType.value==='monthly' ? 'block' : 'none'; fillDefaultNote(); };
+  payMethodEl.onchange = () => { mobileProviderWrapper.style.display = payMethodEl.value === 'mobile' ? 'block' : 'none'; };
+  toggleMulti.onclick = () => {
+    multiWrapper.style.display = multiWrapper.style.display === 'none' ? 'block' : 'none';
+    modalBody.querySelector('#monthPicker').style.display = multiWrapper.style.display === 'none' ? 'block' : 'none';
+  };
+  payMethodEl.onchange();
+  fillDefaultNote();
+
+  modalBody.querySelector('#payClose').onclick = closeModal;
+  modalBody.querySelector('#paySave').onclick = async () => {
+    const btnSave = modalBody.querySelector('#paySave');
+    const oldHtml = putButtonLoader(btnSave);
+    try{
+      const raw = modalBody.querySelector('#payAmount').value;
+      if(!raw) { toast('Amount required'); restoreButton(btnSave, oldHtml); return; }
+      const amountCents = p2c(raw);
+      if(amountCents <= 0) { toast('Amount must be > 0'); restoreButton(btnSave, oldHtml); return; }
+      const type = payType.value;
+      let relatedMonths = [];
+      if(multiWrapper.style.display !== 'none'){
+        relatedMonths = Array.from(payMonths.selectedOptions).map(o => `${payYear.value}-${String(o.value).padStart(2,'0')}`);
+      } else {
+        relatedMonths = [`${payYear.value}-${String(payMonth.value).padStart(2,'0')}`];
+      }
+      const payment_method = payMethodEl.value;
+      const mobile_provider = modalBody.querySelector('#mobileProvider') ? modalBody.querySelector('#mobileProvider').value : null;
+      const payer_phone = modalBody.querySelector('#payerPhone').value.trim() || null;
+      const note = modalBody.querySelector('#payNote').value.trim() || null;
+
+      const tx = {
+        actor: currentUser ? currentUser.uid : null,
+        target_type: targetType,
+        target_id: target.id || target.studentId || target.teacherId || target.id,
+        type,
+        amount_cents: amountCents,
+        payment_method,
+        mobile_provider,
+        payer_phone,
+        note,
+        related_months: type === 'monthly' ? relatedMonths : [],
+        createdAt: Timestamp.now(),
+      };
+
+      await addDoc(collection(db,'transactions'), tx);
+
+      // update balances for students or salary for teachers/staff
+      if(type === 'monthly' && targetType === 'student'){
+        await updateTargetBalanceGeneric('student', tx.target_id, -amountCents);
+      }
+      if(type === 'salary' && (targetType === 'teacher' || targetType === 'staff')){
+        await updateTargetBalanceGeneric(targetType, tx.target_id, -amountCents);
+      }
+
+      toast('Payment recorded');
+      closeModal();
+      await loadTransactions();
+      const active = document.querySelector('#pagePayments .tab.active');
+      const viewName = active ? active.textContent.toLowerCase() : 'students';
+      await renderPaymentsList(viewName);
+      renderDashboard && renderDashboard();
+    }catch(err){
+      console.error(err); toast('Failed to save payment');
+    } finally {
+      restoreButton(btnSave, oldHtml);
+    }
+  };
+}
+
+async function openAdjustmentModal(btnOrEvent){
+  const btn = (btnOrEvent && btnOrEvent.dataset) ? btnOrEvent : (btnOrEvent && btnOrEvent.currentTarget) ? btnOrEvent.currentTarget : (btnOrEvent && btnOrEvent.target && btnOrEvent.target.closest && btnOrEvent.target.closest('button')) ? btnOrEvent.target.closest('button') : null;
+  if(!btn) return;
+  const id = btn.dataset.id;
+  const activeTab = document.querySelector('#pagePayments .tab.active');
+  const view = activeTab ? activeTab.textContent.toLowerCase() : 'students';
+  const targetType = view === 'students' ? 'student' : (view === 'teachers' ? 'teacher' : 'staff');
+
+  const target = await resolveTargetByAnyId(view, id);
+  if(!target) return toast('Target not found');
+
+  const html = `
+    <div style="display:grid;grid-template-columns:1fr;gap:8px">
+      <div><label>Amount (use negative to decrease balance)</label><input id="adjAmount" type="number" step="0.01" value="0" /></div>
+      <div><label>Reason / Note</label><input id="adjNote" placeholder="e.g., refund, penalty, manual add" /></div>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+      <button id="adjClose" class="btn btn-ghost">Close</button>
+      <button id="adjSave" class="btn btn-primary">Save</button>
+    </div>
+  `;
+  showModal(`Reesto Hore • ${escape(target.fullName || target.id || '')}`, html);
+  modalBody.querySelector('#adjClose').onclick = closeModal;
+  modalBody.querySelector('#adjSave').onclick = async () => {
+    try{
+      const raw = modalBody.querySelector('#adjAmount').value;
+      if(raw === '' || raw === null) return toast('Amount required');
+      const signedCents = Math.round(Number(raw)*100);
+      if(signedCents === 0) return toast('Amount should not be zero');
+      const note = modalBody.querySelector('#adjNote').value.trim() || 'Adjustment';
+      const tx = {
+        actor: currentUser ? currentUser.uid : null,
+        target_type: targetType,
+        target_id: target.id || target.studentId || target.teacherId || target.id,
+        type: 'adjustment',
+        amount_cents: signedCents,
+        payment_method: 'manual',
+        note,
+        related_months: [],
+        createdAt: Timestamp.now()
+      };
+      await addDoc(collection(db,'transactions'), tx);
+      await updateTargetBalanceGeneric(targetType, tx.target_id, signedCents); // signedCents may be negative or positive
+      toast('Adjustment saved');
+      closeModal();
+      await loadTransactions();
+      renderPaymentsList('students');
+      renderPaymentsList('teachers');
+      renderPaymentsList('staff');
+      renderDashboard && renderDashboard();
+    }catch(err){ console.error(err); toast('Failed to save adjustment'); }
+  };
+}
+
+async function openViewTransactionsModal(btnOrEvent){
+  const btn = (btnOrEvent && btnOrEvent.dataset) ? btnOrEvent : (btnOrEvent && btnOrEvent.currentTarget) ? btnOrEvent.currentTarget : (btnOrEvent && btnOrEvent.target && btnOrEvent.target.closest && btnOrEvent.target.closest('button')) ? btnOrEvent.target.closest('button') : null;
+  if(!btn) return;
+  const id = btn.dataset.id;
+  const activeTab = document.querySelector('#pagePayments .tab.active');
+  const view = activeTab ? activeTab.textContent.toLowerCase() : 'students';
+  const targetType = view === 'students' ? 'student' : (view === 'teachers' ? 'teacher' : 'staff');
+
+  const target = await resolveTargetByAnyId(view, id);
+  if(!target) return toast('Target not found');
+
+  // fetch transactions for that target
+  const snap = await getDocs(collection(db,'transactions'));
+  let txs = snap.docs.map(d=>({ id:d.id, ...d.data() })).filter(t => t.target_type === targetType && !t.is_deleted);
+  const idCandidates = [ String(target.id||''), String(target.studentId||''), String(target.teacherId||''), String(target.idNumber||'' ) ].filter(Boolean);
+  txs = txs.filter(t => idCandidates.includes(String(t.target_id || '')) || idCandidates.includes(String(t.target || '')) );
+  txs.sort((a,b) => (b.createdAt?.seconds||0) - (a.createdAt?.seconds||0));
+
+  const totalMonthly = txs.filter(t=> (t.type && String(t.type).toLowerCase() !== 'adjustment') && String(t.type).toLowerCase() === 'monthly').reduce((s,t)=>s+(t.amount_cents||0),0);
+  const totalAll = txs.filter(t => String(t.type).toLowerCase() !== 'adjustment').reduce((s,t)=>s+(t.amount_cents||0),0);
+  const totalAdj = txs.filter(t=>String(t.type).toLowerCase() === 'adjustment').reduce((s,t)=>s+(t.amount_cents||0),0);
+
+  const actorNames = await Promise.all(txs.map(t => resolveActorName(t.actor)));
+
+  let html = `<div style="display:flex;justify-content:space-between;align-items:center">
+      <div><div style="font-weight:900">${escape(target.fullName || target.teacherName || target.id)}</div><div class="muted">ID: ${escape(target.studentId||target.teacherId||target.staffId||target.id)}</div></div>
+      <div style="text-align:right"><div class="muted">Balance</div><div style="font-weight:900">${c2p(target.balance_cents||0)}</div></div>
+    </div>`;
+
+  html += `<div style="margin-top:10px;display:flex;gap:12px">
+    <div class="pill">Monthly paid: ${c2p(totalMonthly)}</div>
+    <div class="pill">Payments total: ${c2p(totalAll)}</div>
+    <div class="pill">Reesto Hore total: ${c2p(totalAdj)}</div>
+  </div>`;
+
+  html += `<div style="overflow:auto;margin-top:12px"><table style="width:100%;border-collapse:collapse"><thead><tr>
+    <th>Date</th><th>Type</th><th>Months</th><th style="text-align:right">Amount</th><th>Method</th><th>Note</th><th>Actions</th>
+  </tr></thead><tbody>`;
+
+  txs.forEach((tx, idx) => {
+    const defaultNote = tx.note || (tx.type==='monthly' ? (formatMonthLabel((tx.related_months||[])[0]||'')) : '');
+    const monthsLabel = (tx.related_months && tx.related_months.length) ? tx.related_months.map(m => formatMonthLabel(m)).join(', ') : (tx.related_month ? formatMonthLabel(tx.related_month) : '');
+    html += `<tr style="border-bottom:1px solid #f1f5f9">
+      <td style="padding:8px">${tx.createdAt ? new Date((tx.createdAt.seconds||tx.createdAt._seconds)*1000).toLocaleString() : ''}</td>
+      <td style="padding:8px">${escape(displayTypeLabel(tx.type))}</td>
+      <td style="padding:8px">${escape(monthsLabel)}</td>
+      <td style="padding:8px;text-align:right">${c2p(tx.amount_cents||0)}</td>
+      <td style="padding:8px">${escape(tx.payment_method||'')}${tx.mobile_provider ? ' / ' + escape(tx.mobile_provider) : ''}</td>
+      <td style="padding:8px">${escape(defaultNote)}</td>
+      <td style="padding:8px">
+        <button title="Edit" class="icon edit-tx" data-id="${tx.id}" style="border:0;background:transparent">✏️</button>
+        <button title="Delete" class="icon del-tx" data-id="${tx.id}" style="border:0;background:transparent">🗑️</button>
+      </td>
+    </tr>`;
+  });
+
+  html += `</tbody></table></div><div style="display:flex;justify-content:flex-end;margin-top:12px"><button id="closeTxView" class="btn btn-ghost">Close</button></div>`;
+  showModal('Transactions', html);
+
+  modalBody.querySelector('#closeTxView').onclick = closeModal;
+  modalBody.querySelectorAll('.edit-tx').forEach(b => b.addEventListener('click', ev => openEditTransactionModal(ev.currentTarget)));
+  modalBody.querySelectorAll('.del-tx').forEach(b => b.addEventListener('click', ev => deleteTransaction(ev.currentTarget)));
+}
+
+/* ---------- Render Payments (header + wiring) ---------- */
+async function renderPayments(){
+  // make sure classes & subjects & caches loaded before building header
+  await Promise.all([ loadClasses && loadClasses(), loadSubjects && loadSubjects(), loadStudents && loadStudents(), loadTeachers && loadTeachers(), loadStaff && loadStaff(), loadTransactions && loadTransactions() ]);
+
+  // ensure payments page exists
   let page = document.getElementById('pagePayments');
   if(!page){
     page = document.createElement('section');
@@ -2659,55 +3087,49 @@ async function renderPayments(){
 
   page.innerHTML = `
   <div class="page-header">
-    <div class="ph-row ph-left">
+    <div class="ph-row ph-left" style="display:flex;gap:8px;align-items:center">
       <div style="display:flex;gap:8px;align-items:center">
         <button id="paymentsTabStudents" class="tab active">Students</button>
         <button id="paymentsTabTeachers" class="tab">Teachers</button>
         <button id="paymentsTabStaff" class="tab">Staff</button>
         <button id="paymentsTabExpenses" class="tab">Expenses</button>
       </div>
-      <div style="flex:1;display:flex;justify-content:flex-end">
-        <input id="paymentsSearch" placeholder="Search name / ID / phone" style="width:100%;max-width:520px" />
+      <div style="margin-left:12px;display:flex;gap:8px;align-items:center">
+        <button id="openAddStaffBtn" class="btn btn-ghost">+ Add Staff</button>
+        <button id="openAddExpenseBtn" class="btn btn-ghost">+ New Expense</button>
       </div>
     </div>
 
- <div class="ph-row ph-right" style="justify-content:flex-start">
-  <select id="paymentsClassFilter" style="min-width:150px"><option value="">All classes</option></select>
-  <select id="paymentsStatusFilter" style="min-width:120px"><option value="all">All</option><option value="unpaid">Unpaid</option><option value="paid">Paid</option><option value="free">Free</option></select>
-  <button id="paymentsRefresh" class="btn btn-ghost" title="Refresh list" style="margin-left:8px">
-    <!-- refresh SVG -->
-    <svg class="icon-sm" viewBox="0 0 24 24" fill="none"><path d="M21 12a9 9 0 1 0-3 6.2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M21 12v-4h-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-  </button>
-  <button id="paymentsExport" class="btn btn-ghost" style="margin-left:auto">Export</button>
-</div>
-
+    <div class="ph-row ph-right" style="display:flex;gap:8px;align-items:center;justify-content:flex-end">
+      <input id="paymentsSearch" placeholder="Search name / ID / phone" style="width:360px" />
+      <select id="paymentsClassFilter" style="min-width:150px"><option value="">All classes</option></select>
+      <select id="paymentsStatusFilter" style="min-width:120px"><option value="all">All</option><option value="unpaid">Unpaid</option><option value="paid">Paid</option><option value="free">Free</option></select>
+      <select id="paymentsTeacherSubjectFilter" style="min-width:150px"><option value="">All subjects</option></select>
+      <button id="paymentsRefresh" class="btn btn-ghost" title="Refresh list" style="margin-left:4px">↻</button>
+      <button id="paymentsExport" class="btn btn-ghost">Export</button>
+    </div>
   </div>
 
   <div id="paymentsList" style="margin-top:10px"></div>
-`;
+  `;
 
+  // wire add staff/expense
+  document.getElementById('openAddStaffBtn').onclick = openAddStaffModal;
+  document.getElementById('openAddExpenseBtn').onclick = openAddExpenseModal;
 
-  // populate class filter (use id)
+  // populate class filter
   const sel = document.getElementById('paymentsClassFilter');
   if(sel){
     sel.innerHTML = '<option value="">All classes</option>' +
       (classesCache || []).map(c => `<option value="${escape(c.id||c.classId||c.name)}">${escape(c.name||c.displayName||c.id)}</option>`).join('');
   }
 
-  // add/ensure teacher subject filter (insert to header right before export)
-  if(!document.getElementById('paymentsTeacherSubjectFilter')){
-    await loadSubjects();
-    const selSub = document.createElement('select');
-    selSub.id = 'paymentsTeacherSubjectFilter';
-    selSub.style.minWidth = '150px';
-    selSub.innerHTML = '<option value="">All subjects</option>' + (window.subjectsCache||[]).map(s => `<option value="${escape(s.id||s.name)}">${escape(s.name)}</option>`).join('');
-    const headerRight = page.querySelector('.page-header > div:last-child');
-    headerRight && headerRight.insertBefore(selSub, headerRight.querySelector('#paymentsExport'));
-  }
+  // populate teacher subject filter (value: subject id)
+  const subjSel = document.getElementById('paymentsTeacherSubjectFilter');
+  subjSel.innerHTML = '<option value="">All subjects</option>' + (window.subjectsCache||[]).map(s => `<option value="${escape(s.id)}">${escape(s.name||s.id)}</option>`).join('');
 
   // Tab wiring
-  const tabs = ['students','teachers','staff','expenses'];
-  tabs.forEach(v => {
+  ['students','teachers','staff','expenses'].forEach(v => {
     const btn = document.getElementById('paymentsTab' + v[0].toUpperCase() + v.slice(1));
     if(btn){
       btn.onclick = () => {
@@ -2723,7 +3145,6 @@ async function renderPayments(){
   const classFilterEl = document.getElementById('paymentsClassFilter');
   const statusFilterEl = document.getElementById('paymentsStatusFilter');
   const teacherSubjectFilterEl = document.getElementById('paymentsTeacherSubjectFilter');
-
   [search, classFilterEl, statusFilterEl, teacherSubjectFilterEl].forEach(el => {
     if(!el) return;
     el.oninput = el.onchange = () => {
@@ -2735,28 +3156,30 @@ async function renderPayments(){
   document.getElementById('paymentsExport').onclick = exportCurrentPaymentsView;
 
   const refreshBtn = document.getElementById('paymentsRefresh');
-if (refreshBtn) refreshBtn.onclick = async () => {
-  try {
-    refreshBtn.disabled = true;
-    await Promise.all([ loadClasses(), loadSubjects(), loadStudents(), loadTeachers(), loadStaff(), loadTransactions() ]);
-    // re-populate filters in case classes changed
-    const sel = document.getElementById('paymentsClassFilter');
-    if(sel) sel.innerHTML = '<option value="">All classes</option>' + (classesCache || []).map(c => `<option value="${escape(c.id||c.classId||c.name)}">${escape(c.name||c.displayName||c.id)}</option>`).join('');
-    // re-render the currently active tab
-    const active = document.querySelector('#pagePayments .tab.active');
-    const viewName = active ? active.textContent.toLowerCase() : 'students';
-    await renderPaymentsList(viewName);
-  } catch(e){ console.error('refresh failed', e); toast('Refresh failed'); }
-  finally { refreshBtn.disabled = false; }
-};
+  if(refreshBtn) refreshBtn.onclick = async () => {
+    try{
+      refreshBtn.disabled = true;
+      await Promise.all([ loadClasses && loadClasses(), loadSubjects && loadSubjects(), loadStudents && loadStudents(), loadTeachers && loadTeachers(), loadStaff && loadStaff(), loadTransactions && loadTransactions() ]);
+      // re-populate filters
+      const sel = document.getElementById('paymentsClassFilter');
+      if(sel) sel.innerHTML = '<option value="">All classes</option>' + (classesCache || []).map(c => `<option value="${escape(c.id||c.classId||c.name)}">${escape(c.name||c.displayName||c.id)}</option>`).join('');
+      const subjSel = document.getElementById('paymentsTeacherSubjectFilter');
+      if(subjSel) subjSel.innerHTML = '<option value="">All subjects</option>' + (window.subjectsCache||[]).map(s => `<option value="${escape(s.id)}">${escape(s.name||s.id)}</option>`).join('');
+      const active = document.querySelector('#pagePayments .tab.active');
+      await renderPaymentsList(active ? active.textContent.toLowerCase() : 'students');
+      toast('Refreshed');
+    }catch(e){ console.error('refresh failed', e); toast('Refresh failed'); }
+    finally { refreshBtn.disabled = false; }
+  };
 
-
-  // initial render
+  // initial view
   await renderPaymentsList('students');
 }
 
+
+/* ---------- renderPaymentsList (replace your existing function) ---------- */
 async function renderPaymentsList(view = 'students'){
-  await loadTransactions();
+  await Promise.all([ loadClasses && loadClasses(), loadSubjects && loadSubjects(), loadStudents && loadStudents(), loadTeachers && loadTeachers(), loadStaff && loadStaff(), loadTransactions && loadTransactions() ]);
 
   const listRoot = document.getElementById('paymentsList');
   if(!listRoot) return;
@@ -2766,32 +3189,22 @@ async function renderPaymentsList(view = 'students'){
   const statusFilter = (document.getElementById('paymentsStatusFilter') && document.getElementById('paymentsStatusFilter').value) || 'all';
   const subjectFilter = (document.getElementById('paymentsTeacherSubjectFilter') && document.getElementById('paymentsTeacherSubjectFilter').value) || '';
 
-  // Helper to normalize class match
   function matchesClassFilter(item, val){
     if(!val) return true;
     const cf = String(val);
-    const itemClassIds = [ item.classId, item.class, item.className, item.class_id, item.className && item.className.toString() ].filter(Boolean).map(x => String(x));
-    // class doc id might be in classesCache id field
+    const itemClassIds = [ item.classId, item.class, item.className, item.class_id, (item.record && item.record.classId) ].filter(Boolean).map(x => String(x));
     if(itemClassIds.includes(cf)) return true;
-    // also compare using classesCache name -> id mapping
     const found = (classesCache||[]).find(c => String(c.id) === cf || String(c.name) === cf || String(c.displayName||'') === cf);
-    if(found){
-      return itemClassIds.includes(String(found.id)) || itemClassIds.includes(String(found.name));
-    }
-    // fallback: compare case-insensitive names
+    if(found) return itemClassIds.includes(String(found.id)) || itemClassIds.includes(String(found.name));
     return itemClassIds.some(x => x.toLowerCase() === cf.toLowerCase());
   }
 
-  // STUDENTS view
+  /* ---------- STUDENTS ---------- */
   if(view === 'students'){
     let list = (studentsCache || []).slice();
 
-    // class filter: normalized compare
-    if(classFilter){
-      list = list.filter(s => matchesClassFilter(s, classFilter));
-    }
+    if(classFilter) list = list.filter(s => matchesClassFilter(s, classFilter));
 
-    // search
     if(q){
       list = list.filter(s => {
         const hay = ((s.fullName||'') + ' ' + (s.studentId||s.id||'') + ' ' + (s.parentPhone||'') + ' ' + (s.phone||'') + ' ' + (s.className||s.class||'')).toLowerCase();
@@ -2802,176 +3215,175 @@ async function renderPaymentsList(view = 'students'){
     // status filter
     list = list.filter(s => {
       const balance = Number(s.balance_cents || 0);
-      const fee = Number(s.fee || 0);
+      const fee = (s.fee != null && !isNaN(Number(s.fee))) ? Number(s.fee) : 0;
       if(statusFilter === 'free') return fee === 0;
       if(statusFilter === 'paid') return fee > 0 && balance === 0;
       if(statusFilter === 'unpaid') return balance > 0;
       return true;
     });
 
+    // sort by descending current balance (largest owing first)
     list.sort((a,b) => (b.balance_cents||0) - (a.balance_cents||0));
 
-    // mobile layout if small viewport
+    // precompute totals so mobile + desktop both get same totals
+    let totalAssignedCents = 0, totalBalanceCents = 0, totalPaidThisMonthCents = 0;
+    list.forEach(s => {
+      const assigned = (s.fee != null && !isNaN(Number(s.fee))) ? Math.round(Number(s.fee)*100) : 0;
+      totalAssignedCents += assigned;
+      totalBalanceCents += Number(s.balance_cents || 0);
+      totalPaidThisMonthCents += getPaidThisMonthForTarget('student', s);
+    });
+
+    // Mobile list
     if(isMobileViewport()){
-      // compact card list for mobile — last 6 digits of ID
       let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
         <strong>Students — ${list.length}</strong>
-        <div class="muted">Tap "more" to see details</div>
-      </div>`;
-      html += `<div style="display:flex;flex-direction:column;gap:8px">`;
+        <div class="muted">Tap "more" to see actions</div>
+      </div><div style="display:flex;flex-direction:column;gap:8px">`;
       list.forEach((s, idx) => {
         const idFull = String(s.studentId||s.id||'');
         const idShort = idFull.slice(-6) || idFull;
-  // inside isMobileViewport() -> list.forEach
-const feeDisplay = (typeof s.fee === 'number' || (s.fee && !isNaN(Number(s.fee)))) ? (Number(s.fee) === 0 ? '0.00' : String(s.fee)) : '0.00';
-const balanceDisplay = c2p(s.balance_cents || 0);
-html += `<div class="card" style="display:flex;align-items:center;justify-content:space-between;gap:8px">
-  <div style="display:flex;gap:8px;align-items:center">
-    <div style="font-weight:800">${idx+1}</div>
-    <div style="min-width:60px"><div style="font-weight:900">${escape(idShort)}</div></div>
-    <div>
-      <div style="font-weight:900">${escape(s.fullName||'')}</div>
-      <div class="muted" style="font-size:12px"><span class="class-blue">${escape(s.className || s.class || s.classId || '')}</span></div>
-    </div>
-  </div>
-  <div style="display:flex;gap:8px;align-items:center">
-    <div style="text-align:right">
-      <div class="balance-red" style="font-weight:900">${balanceDisplay}</div>
-      <div class="fee-blue muted" style="font-size:12px">Fee: ${feeDisplay}</div>
-    </div>
-    <div>
-      <button class="btn btn-ghost more-info" data-id="${escape(s.studentId||s.id||'')}" title="More">⋯</button>
-    </div>
-  </div>
-</div>`;
-
+        const feeDisplay = (s.fee != null && !isNaN(Number(s.fee))) ? Number(s.fee).toFixed(2) : '0.00';
+        const balanceDisplay = c2p(s.balance_cents || 0);
+        const paidThisMonth = c2p(getPaidThisMonthForTarget('student', s));
+        const className = resolveClassName(s);
+        html += `<div class="card" style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+          <div style="display:flex;gap:8px;align-items:center">
+            <div style="font-weight:800">${idx+1}</div>
+            <div style="min-width:60px"><div style="font-weight:900">${escape(idShort)}</div></div>
+            <div>
+              <div style="font-weight:900">${escape(s.fullName||'')}</div>
+              <div class="muted" style="font-size:12px"><span class="class-blue">${escape(className)}</span></div>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <div style="text-align:right">
+              <div class="total-green" style="font-weight:900">${paidThisMonth}</div>
+              <div class="muted" style="font-size:12px">Fee: <span class="total-blue">${feeDisplay}</span> • <span class="total-red">${balanceDisplay}</span></div>
+            </div>
+            <div>
+              <button class="btn btn-ghost more-info" data-id="${escape(s.studentId||s.id||'')}" title="More">⋯</button>
+            </div>
+          </div>
+        </div>`;
       });
       html += `</div>`;
+
+      // add mobile totals bar (Paid green, Assigned fee blue, Current balance red)
+      html += `<div class="card" style="margin-top:10px;display:flex;gap:12px;justify-content:space-around;align-items:center">
+        <div style="text-align:center"><div class="total-green" style="font-weight:900">${c2p(totalPaidThisMonthCents)}</div><div class="muted" style="font-size:12px">Paid (this month)</div></div>
+        <div style="text-align:center"><div class="total-blue" style="font-weight:900">${c2p(totalAssignedCents)}</div><div class="muted" style="font-size:12px">Assigned Fee</div></div>
+        <div style="text-align:center"><div class="total-red" style="font-weight:900">${c2p(totalBalanceCents)}</div><div class="muted" style="font-size:12px">Current Balance</div></div>
+      </div>`;
+
       listRoot.innerHTML = html;
 
-      // wire more-info expand (show modal with full info)
-      listRoot.querySelectorAll('.more-info').forEach(b => {
-        b.onclick = (e) => {
-          const id = e.currentTarget.dataset.id;
-          const st = (studentsCache||[]).find(x => (x.studentId===id || x.id===id));
-          if(!st) return;
-// in more-info click handler
-const body = `<div style="font-weight:900">${escape(st.fullName||'')}</div>
-  <div class="muted">ID: ${escape(st.studentId||st.id||'')}</div>
-  <div style="margin-top:8px">Phone: ${escape(st.parentPhone||st.phone||'—')}</div>
-  <div>Class: <span class="class-blue">${escape(st.className || st.class || st.classId || '')}</span></div>
-  <div>Fee: <span class="fee-blue">${(typeof st.fee === 'number' || (st.fee && !isNaN(Number(st.fee)))) ? (Number(st.fee) === 0 ? '0.00' : String(st.fee)) : '0.00'}</span></div>
-  <div>Balance: <span class="balance-red">${c2p(st.balance_cents||0)}</span></div>
-  <div class="modal-more-actions">
-    <button class="btn btn-primary pay-btn" data-id="${escape(st.studentId||st.id||'')}">${svgPay()} Pay</button>
-    <button class="btn btn-secondary adj-btn" data-id="${escape(st.studentId||st.id||'')}">${svgReesto()} Reesto Hore</button>
-    <button class="btn btn-ghost view-trans-btn" data-id="${escape(st.studentId||st.id||'')}">${svgView()} View</button>
-  </div>`;
-showModal('Student details', body);
-// wire actions inside modal
-modalBody.querySelectorAll('.pay-btn').forEach(bb => bb.onclick = openPayModal);
-modalBody.querySelectorAll('.adj-btn').forEach(bb => bb.onclick = openAdjustmentModal);
-modalBody.querySelectorAll('.view-trans-btn').forEach(bb => bb.onclick = openViewTransactionsModal);
-
-        };
-      });
+      // more-info wiring
+      listRoot.querySelectorAll('.more-info').forEach(b => b.addEventListener('click', ev => {
+        const id = ev.currentTarget.dataset.id;
+        const st = (studentsCache||[]).find(x => (x.studentId===id || x.id===id));
+        if(!st) return;
+        const className = resolveClassName(st);
+        const body = `<div style="font-weight:900">${escape(st.fullName||'')}</div>
+          <div class="muted">ID: ${escape(st.studentId||st.id||'')}</div>
+          <div style="margin-top:8px">Phone: ${escape(st.parentPhone||st.phone||'—')}</div>
+          <div>Class: <span class="class-blue">${escape(className)}</span></div>
+          <div>Fee: <span class="fee-blue">${(st.fee!=null && !isNaN(Number(st.fee)))?Number(st.fee).toFixed(2):'0.00'}</span></div>
+          <div>Balance: <span class="balance-red">${c2p(st.balance_cents||0)}</span></div>
+          <div>Paid this month: <span class="total-green">${c2p(getPaidThisMonthForTarget('student', st))}</span></div>
+          <div class="modal-more-actions" style="margin-top:8px">
+            <button class="btn btn-primary pay-btn" data-id="${escape(st.studentId||st.id||'')}">${svgPay()} Pay</button>
+            <button class="btn btn-secondary adj-btn" data-id="${escape(st.studentId||st.id||'')}">${svgReesto()} Reesto Hore</button>
+            <button class="btn btn-ghost view-trans-btn" data-id="${escape(st.studentId||st.id||'')}">${svgView()} View</button>
+          </div>`;
+        showModal('Student details', body);
+        modalBody.querySelectorAll('.pay-btn').forEach(bb => bb.addEventListener('click', ev => openPayModal(ev.currentTarget)));
+        modalBody.querySelectorAll('.adj-btn').forEach(bb => bb.addEventListener('click', ev => openAdjustmentModal(ev.currentTarget)));
+        modalBody.querySelectorAll('.view-trans-btn').forEach(bb => bb.addEventListener('click', ev => openViewTransactionsModal(ev.currentTarget)));
+      }));
 
       return;
     }
 
- // DESKTOP students table (replace existing desktop table block)
-list.sort((a,b) => (b.balance_cents||0) - (a.balance_cents||0));
+    // DESKTOP table
+    let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <strong>Students — ${list.length}</strong><div class="muted">Columns: No, ID, Name, Phone, Class, Assigned Fee, Current Balance, Paid (this month), Actions</div></div>`;
+    html += `<div style="overflow:auto"><table style="width:100%;border-collapse:collapse"><thead><tr>
+      <th style="padding:8px">No</th>
+      <th style="padding:8px">ID</th>
+      <th style="padding:8px">Name</th>
+      <th style="padding:8px">Phone</th>
+      <th style="padding:8px">Class</th>
+      <th style="padding:8px;text-align:right">Assigned Fee</th>
+      <th style="padding:8px;text-align:right">Current Balance</th>
+      <th style="padding:8px;text-align:right">Paid (this month)</th>
+      <th style="padding:8px">Actions</th>
+    </tr></thead><tbody>`;
 
-let totalAssignedCents = 0;
-let totalBalanceCents = 0;
+    list.forEach((s, idx) => {
+      const assignedFeeCents = (s.fee != null && !isNaN(Number(s.fee))) ? Math.round(Number(s.fee)*100) : 0;
+      const balanceCents = Number(s.balance_cents || 0);
+      const paidThisMonthCents = getPaidThisMonthForTarget('student', s);
+      const className = resolveClassName(s);
 
-let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-  <strong>Students — ${list.length}</strong><div class="muted">Columns: No, ID, Name, Phone, Class, Assigned Fee, Current Balance, Paid, Actions</div></div>`;
-html += `<div style="overflow:auto"><table style="width:100%;border-collapse:collapse"><thead><tr>
-  <th style="padding:8px">No</th>
-  <th style="padding:8px">ID</th>
-  <th style="padding:8px">Name</th>
-  <th style="padding:8px">Phone</th>
-  <th style="padding:8px">Class</th>
-  <th style="padding:8px;text-align:right">Assigned Fee</th>
-  <th style="padding:8px;text-align:right">Current Balance</th>
-  <th style="padding:8px;text-align:right">Paid</th>
-  <th style="padding:8px">Actions</th>
-</tr></thead><tbody>`;
+      html += `<tr style="border-bottom:1px solid #f1f5f9">
+        <td style="padding:8px">${idx+1}</td>
+        <td style="padding:8px">${escape(s.studentId||s.id||'')}</td>
+        <td style="padding:8px">${escape(s.fullName||'')}</td>
+        <td style="padding:8px">${escape(s.parentPhone||s.phone||'—')}</td>
+        <td style="padding:8px">${escape(className||'')}</td>
+        <td style="padding:8px;text-align:right"><span class="total-blue" style="font-weight:900">${c2p(assignedFeeCents)}</span></td>
+        <td style="padding:8px;text-align:right"><span class="total-red" style="font-weight:900">${c2p(balanceCents)}</span></td>
+        <td style="padding:8px;text-align:right"><span class="total-green" style="font-weight:900">${c2p(paidThisMonthCents)}</span></td>
+        <td style="padding:8px">
+          <button class="btn btn-primary btn-sm pay-btn" data-id="${escape(s.studentId||s.id||'')}" title="Pay">${svgPay()}</button>
+          <button class="btn btn-secondary btn-sm adj-btn" data-id="${escape(s.studentId||s.id||'')}" title="Reesto Hore">${svgReesto()}</button>
+          <button class="btn btn-ghost btn-sm view-trans-btn" data-id="${escape(s.studentId||s.id||'')}" title="View">${svgView()}</button>
+        </td>
+      </tr>`;
+    });
 
-list.forEach((s, idx) => {
-  // attempt best-effort class name resolution
-  const className = s.className || s.class || (() => {
-    const c = (classesCache||[]).find(x => String(x.id) === String(s.classId || s.class || '') || String(x.name||'') === String(s.class||'')); 
-    return c ? c.name : (s.class || '');
-  })();
+    html += `</tbody></table></div>`;
 
-  const assignedFeeCents = (typeof s.fee === 'number') ? Math.round(Number(s.fee) * 100) : (s.fee && !isNaN(Number(s.fee)) ? Math.round(Number(s.fee) * 100) : 0);
-  const balanceCents = Number(s.balance_cents || 0);
-  const paidCents = assignedFeeCents - balanceCents;
+    // Totals block (colored)
+    const totalsHtml = `
+      <div class="totals-card card" style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">
+        <div style="font-weight:900">Totals</div>
+        <div class="totals-block" style="flex-direction:row;gap:18px;align-items:center">
+          <div class="tot-line"><div style="min-width:140px">Assigned fee total:</div><div class="total-blue">${c2p(totalAssignedCents)}</div></div>
+          <div class="tot-line"><div style="min-width:140px">Current balance total:</div><div class="total-red">${c2p(totalBalanceCents)}</div></div>
+          <div class="tot-line"><div style="min-width:140px">Total Paid (this month):</div><div class="total-green">${c2p(totalPaidThisMonthCents)}</div></div>
+        </div>
+      </div>
+    `;
 
-  totalAssignedCents += assignedFeeCents;
-  totalBalanceCents += balanceCents;
+    listRoot.innerHTML = html + totalsHtml;
 
-  html += `<tr style="border-bottom:1px solid #f1f5f9">
-    <td style="padding:8px">${idx+1}</td>
-    <td style="padding:8px">${escape(s.studentId||s.id||'')}</td>
-    <td style="padding:8px">${escape(s.fullName||'')}</td>
-    <td style="padding:8px">${escape(s.parentPhone||s.phone||'—')}</td>
-    <td style="padding:8px">${escape(className||'')}</td>
-    <td style="padding:8px;text-align:right"><span class="total-blue" style="font-weight:900">${c2p(assignedFeeCents)}</span></td>
-    <td style="padding:8px;text-align:right"><span class="total-red" style="font-weight:900">${c2p(balanceCents)}</span></td>
-    <td style="padding:8px;text-align:right"><span class="total-green" style="font-weight:900">${c2p(paidCents)}</span></td>
-    <td style="padding:8px">
-      <button class="btn btn-primary btn-sm pay-btn" data-id="${escape(s.studentId||s.id||'')}" title="Pay">${svgPay()}</button>
-      <button class="btn btn-secondary btn-sm adj-btn" data-id="${escape(s.studentId||s.id||'')}" title="Reesto Hore">${svgReesto()}</button>
-      <button class="btn btn-ghost btn-sm view-trans-btn" data-id="${escape(s.studentId||s.id||'')}" title="View">${svgView()}</button>
-    </td>
-  </tr>`;
-});
-
-html += `</tbody></table></div>`;
-
-// totals card (colored)
-const totalPaidCents = totalAssignedCents - totalBalanceCents;
-const totalsHtml = `
-  <div class="totals-card card" style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">
-    <div style="font-weight:900">Totals</div>
-    <div class="totals-block" style="flex-direction:row;gap:18px;align-items:center">
-      <div class="tot-line"><div style="min-width:120px">Assigned fee total:</div><div class="total-blue">${c2p(totalAssignedCents)}</div></div>
-      <div class="tot-line"><div style="min-width:120px">Current balance total:</div><div class="total-red">${c2p(totalBalanceCents)}</div></div>
-      <div class="tot-line"><div style="min-width:120px">Total Paid:</div><div class="total-green">${c2p(totalPaidCents)}</div></div>
-    </div>
-  </div>
-`;
-
-listRoot.innerHTML = html + totalsHtml;
-
-// wire buttons
-listRoot.querySelectorAll('.pay-btn').forEach(b => b.onclick = openPayModal);
-listRoot.querySelectorAll('.adj-btn').forEach(b => b.onclick = openAdjustmentModal);
-listRoot.querySelectorAll('.view-trans-btn').forEach(b => b.onclick = openViewTransactionsModal);
+    // wire actions
+    listRoot.querySelectorAll('.pay-btn').forEach(b => b.addEventListener('click', ev => openPayModal(ev.currentTarget)));
+    listRoot.querySelectorAll('.adj-btn').forEach(b => b.addEventListener('click', ev => openAdjustmentModal(ev.currentTarget)));
+    listRoot.querySelectorAll('.view-trans-btn').forEach(b => b.addEventListener('click', ev => openViewTransactionsModal(ev.currentTarget)));
 
     return;
   }
-  // TEACHERS / STAFF (mobile-first rendering plus desktop fallback)
+
+  /* ---------- TEACHERS & STAFF ---------- */
   if(view === 'teachers' || view === 'staff'){
     const isTeacherView = (view === 'teachers');
     const pool = isTeacherView ? (teachersCache || []) : (window.staffCache || []);
     let list = pool.slice();
 
-    // ensure subject names
     if(isTeacherView){
       if(!subjectsCache || !subjectsCache.length) await loadSubjects();
       list.forEach(t => {
         if(!t.subjectName){
           if(t.subjects && Array.isArray(t.subjects)){
             t.subjectName = t.subjects.map(id => {
-              const s = (subjectsCache||[]).find(x => x.id === id || x.name === id);
+              const s = (subjectsCache||[]).find(x => String(x.id) === String(id) || String(x.name||'') === String(id));
               return s ? s.name : id;
             }).join(', ');
           } else if(t.subjectId){
-            const s = (subjectsCache||[]).find(x => x.id === t.subjectId || x.name === t.subjectId);
+            const s = (subjectsCache||[]).find(x => String(x.id) === String(t.subjectId) || String(x.name||'') === String(t.subjectId));
             t.subjectName = s ? s.name : t.subjectId;
           } else {
             t.subjectName = t.subjectName || '';
@@ -2980,12 +3392,28 @@ listRoot.querySelectorAll('.view-trans-btn').forEach(b => b.onclick = openViewTr
       });
     }
 
-    // optional subject filter for teachers already applied earlier
+    // subject filter: id or name (more robust)
     if(subjectFilter && isTeacherView){
+      // find subject doc by id or name
+      const subjDoc = (subjectsCache||[]).find(s => String(s.id) === String(subjectFilter) || String(s.name||'').toLowerCase() === String(subjectFilter).toLowerCase());
       list = list.filter(t => {
-        if(!t.subjects && !t.subjectId) return false;
-        if(Array.isArray(t.subjects)) return t.subjects.includes(subjectFilter);
-        return String(t.subjectId||'') === String(subjectFilter);
+        if(!t.subjects && !t.subjectId && !t.subjectName) return false;
+        // teacher.subjects could be array of ids OR names
+        if(Array.isArray(t.subjects)){
+          if(t.subjects.includes(subjectFilter)) return true;
+          // match by subject doc id or name
+          if(subjDoc && t.subjects.includes(subjDoc.id)) return true;
+          if(subjDoc && t.subjects.includes(subjDoc.name)) return true;
+          // also check case-insensitive names
+          if(t.subjects.some(x => String(x).toLowerCase() === String(subjectFilter).toLowerCase())) return true;
+        }
+        if(t.subjectId && String(t.subjectId) === String(subjectFilter)) return true;
+        if(t.subjectName && String(t.subjectName).toLowerCase() === String(subjectFilter).toLowerCase()) return true;
+        // if subjDoc found, also allow matching by subjDoc.name -> teacher.subjectName
+        if(subjDoc){
+          if(String(t.subjectName||'').toLowerCase() === String(subjDoc.name||'').toLowerCase()) return true;
+        }
+        return false;
       });
     }
 
@@ -2998,16 +3426,24 @@ listRoot.querySelectorAll('.view-trans-btn').forEach(b => b.onclick = openViewTr
 
     list.sort((a,b) => (b.balance_cents||0) - (a.balance_cents||0));
 
-    // mobile rendering
+    // precompute totals for mobile and desktop
+    let totBalance = 0, totPaid = 0, totSalaryAssigned = 0;
+    list.forEach(t => {
+      totBalance += Number(t.balance_cents || 0);
+      totPaid += getPaidThisMonthForTarget('teacher', t);
+      if(t.salary != null && !isNaN(Number(t.salary))) totSalaryAssigned += Math.round(Number(t.salary)*100);
+    });
+
     if(isMobileViewport()){
       let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><strong>${capitalize(view)} — ${list.length}</strong><div class="muted">Tap "more" to see actions</div></div>`;
       html += `<div style="display:flex;flex-direction:column;gap:8px">`;
       list.forEach((t, idx) => {
         const idFull = String(t.teacherId||t.id||'');
         const idShort = idFull.slice(-4) || idFull;
-        const classLine = (t.classes && Array.isArray(t.classes) && t.classes.length) ? t.classes.join(', ') : (t.className || t.class || '');
-        const salary = t.salary != null ? String(t.salary) : '—';
+        const classLine = resolveClassName(t);
+        const salaryDisplay = t.salary != null ? (Number(t.salary).toFixed ? Number(t.salary).toFixed(2) : String(t.salary)) : '—';
         const balance = c2p(t.balance_cents||0);
+        const paidThisMonth = c2p(getPaidThisMonthForTarget('teacher', t));
         html += `<div class="card" style="display:flex;align-items:center;justify-content:space-between;gap:8px">
           <div style="display:flex;gap:8px;align-items:center">
             <div style="font-weight:800">${idx+1}</div>
@@ -3019,8 +3455,8 @@ listRoot.querySelectorAll('.view-trans-btn').forEach(b => b.onclick = openViewTr
           </div>
           <div style="display:flex;gap:8px;align-items:center">
             <div style="text-align:right">
-              <div class="balance-red" style="font-weight:900">${balance}</div>
-              <div class="muted" style="font-size:12px">Salary: <span class="fee-blue">${escape(salary)}</span></div>
+              <div class="total-green" style="font-weight:900">${paidThisMonth}</div>
+              <div class="muted" style="font-size:12px">Salary: <span class="fee-blue">${escape(salaryDisplay)}</span> • <span class="total-red">${balance}</span></div>
             </div>
             <div>
               <button class="btn btn-ghost more-info-teacher" data-id="${escape(t.teacherId||t.id||'')}" title="More">⋯</button>
@@ -3029,76 +3465,132 @@ listRoot.querySelectorAll('.view-trans-btn').forEach(b => b.onclick = openViewTr
         </div>`;
       });
       html += `</div>`;
+
+      // totals bar for teachers mobile
+      html += `<div class="card" style="margin-top:10px;display:flex;gap:12px;justify-content:space-around;align-items:center">
+        <div style="text-align:center"><div class="total-green" style="font-weight:900">${c2p(totPaid)}</div><div class="muted" style="font-size:12px">Paid (this month)</div></div>
+        <div style="text-align:center"><div class="total-blue" style="font-weight:900">${c2p(totSalaryAssigned)}</div><div class="muted" style="font-size:12px">Assigned Salary</div></div>
+        <div style="text-align:center"><div class="total-red" style="font-weight:900">${c2p(totBalance)}</div><div class="muted" style="font-size:12px">Current Balance</div></div>
+      </div>`;
+
       listRoot.innerHTML = html;
 
-      listRoot.querySelectorAll('.more-info-teacher').forEach(b => {
-        b.onclick = (e) => {
-          const id = e.currentTarget.dataset.id;
-          const tt = (teachersCache||[]).find(x => (x.teacherId===id || x.id===id));
-          if(!tt) return;
-          const classLine = (tt.classes && Array.isArray(tt.classes) && tt.classes.length) ? tt.classes.join(', ') : (tt.className || tt.class || '');
-          const body = `<div style="font-weight:900">${escape(tt.fullName||'')}</div>
-            <div class="muted">ID: ${escape(tt.teacherId||tt.id||'')}</div>
-            <div style="margin-top:8px">Classes: <span class="muted">${escape(classLine)}</span></div>
-            <div>Phone: ${escape(tt.phone||'—')}</div>
-            <div style="margin-top:8px">Balance: <span class="balance-red">${c2p(tt.balance_cents||0)}</span></div>
-            <div>Salary: <span class="fee-blue">${tt.salary != null ? escape(String(tt.salary)) : '—'}</span></div>
-            <div class="modal-more-actions">
-              <button class="btn btn-primary pay-btn" data-id="${escape(tt.teacherId||tt.id||'')}">${svgPay()} Pay</button>
-              <button class="btn btn-secondary adj-btn" data-id="${escape(tt.teacherId||tt.id||'')}">${svgReesto()} Reesto Hore</button>
-              <button class="btn btn-ghost view-trans-btn" data-id="${escape(tt.teacherId||tt.id||'')}">${svgView()} View</button>
-            </div>`;
-          showModal('Teacher details', body);
-          modalBody.querySelectorAll('.pay-btn').forEach(bb => bb.onclick = openPayModal);
-          modalBody.querySelectorAll('.adj-btn').forEach(bb => bb.onclick = openAdjustmentModal);
-          modalBody.querySelectorAll('.view-trans-btn').forEach(bb => bb.onclick = openViewTransactionsModal);
-        };
-      });
+      listRoot.querySelectorAll('.more-info-teacher').forEach(b => b.addEventListener('click', ev => {
+        const id = ev.currentTarget.dataset.id;
+        const pool = isTeacherView ? teachersCache : window.staffCache;
+        const item = pool.find(x => (x.teacherId===id || x.id===id)) || null;
+        if(!item) return;
+        const classLine = resolveClassName(item);
+        const body = `<div style="font-weight:900">${escape(item.fullName||'')}</div>
+          <div class="muted">ID: ${escape(item.teacherId||item.id||'')}</div>
+          <div style="margin-top:8px">Classes: <span class="muted">${escape(classLine)}</span></div>
+          <div>Phone: ${escape(item.phone||'—')}</div>
+          <div style="margin-top:8px">Balance: <span class="balance-red">${c2p(item.balance_cents||0)}</span></div>
+          <div>Salary: <span class="fee-blue">${item.salary != null ? escape(String(item.salary)) : '—'}</span></div>
+          <div>Paid this month: <span class="total-green">${c2p(getPaidThisMonthForTarget(isTeacherView?'teacher':'staff', item))}</span></div>
+          <div class="modal-more-actions" style="margin-top:8px">
+            <button class="btn btn-primary pay-btn" data-id="${escape(item.teacherId||item.id||'')}">${svgPay()} Pay</button>
+            <button class="btn btn-secondary adj-btn" data-id="${escape(item.teacherId||item.id||'')}">${svgReesto()} Reesto Hore</button>
+            <button class="btn btn-ghost view-trans-btn" data-id="${escape(item.teacherId||item.id||'')}">${svgView()} View</button>
+          </div>`;
+        showModal('Details', body);
+        modalBody.querySelectorAll('.pay-btn').forEach(bb => bb.addEventListener('click', ev => openPayModal(ev.currentTarget)));
+        modalBody.querySelectorAll('.adj-btn').forEach(bb => bb.addEventListener('click', ev => openAdjustmentModal(ev.currentTarget)));
+        modalBody.querySelectorAll('.view-trans-btn').forEach(bb => bb.addEventListener('click', ev => openViewTransactionsModal(ev.currentTarget)));
+      }));
 
       return;
     }
 
-    // desktop fallback (table)
-    let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><strong>${capitalize(view)} — ${list.length}</strong><div class="muted">Columns: No, ID, Name, Subject, Class, Salary, Balance, Actions</div></div>`;
-    html += `<div style="overflow:auto"><table style="width:100%;border-collapse:collapse"><thead><tr>
-      <th>No</th><th>ID</th><th>Name</th><th>Subject</th><th>Class</th><th>Salary</th><th>Balance</th><th>Actions</th>
-    </tr></thead><tbody>`;
-    list.forEach((t, idx) => {
-      html += `<tr style="border-bottom:1px solid #f1f5f9">
-        <td style="padding:8px">${idx+1}</td>
-        <td style="padding:8px">${escape(t.teacherId||t.id||'')}</td>
-        <td style="padding:8px">${escape(t.fullName||'')}</td>
-        <td style="padding:8px">${escape(t.subjectName||t.subject||'')}</td>
-        <td style="padding:8px">${escape(t.className||t.class||'')}</td>
-        <td style="padding:8px">${t.salary != null ? (String(t.salary)) : '—'}</td>
-        <td style="padding:8px">${c2p(t.balance_cents||0)}</td>
-        <td style="padding:8px">
-          <button class="btn btn-primary btn-sm pay-btn" data-id="${escape(t.teacherId||t.id||'')}" title="Pay">${svgPay()}</button>
-          <button class="btn btn-secondary btn-sm adj-btn" data-id="${escape(t.teacherId||t.id||'')}" title="Reesto Hore">${svgReesto()}</button>
-          <button class="btn btn-ghost btn-sm view-trans-btn" data-id="${escape(t.teacherId||t.id||'')}" title="View">${svgView()}</button>
-        </td>
-      </tr>`;
-    });
-    html += `</tbody></table></div>`;
-    listRoot.innerHTML = html;
-
-    listRoot.querySelectorAll('.pay-btn').forEach(b => b.onclick = openPayModal);
-    listRoot.querySelectorAll('.adj-btn').forEach(b => b.onclick = openAdjustmentModal);
-    listRoot.querySelectorAll('.view-trans-btn').forEach(b => b.onclick = openViewTransactionsModal);
-    return;
+    // desktop teachers table
+    if(isTeacherView){
+      let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><strong>Teachers — ${list.length}</strong><div class="muted">Columns: No, ID, Name, Subject, Class, Salary, Balance, Paid(this month), Actions</div></div>`;
+      html += `<div style="overflow:auto"><table style="width:100%;border-collapse:collapse"><thead><tr>
+        <th>No</th><th>ID</th><th>Name</th><th>Subject</th><th>Class</th><th style="text-align:right">Salary</th><th style="text-align:right">Balance</th><th style="text-align:right">Paid (this month)</th><th>Actions</th>
+      </tr></thead><tbody>`;
+      list.forEach((t, idx) => {
+        const salaryVal = t.salary != null && !isNaN(Number(t.salary)) ? Math.round(Number(t.salary)*100) : 0;
+        const balance = Number(t.balance_cents||0);
+        const paidThisMonth = getPaidThisMonthForTarget('teacher', t);
+        const className = resolveClassName(t);
+        html += `<tr style="border-bottom:1px solid #f1f5f9">
+          <td style="padding:8px">${idx+1}</td>
+          <td style="padding:8px">${escape(t.teacherId||t.id||'')}</td>
+          <td style="padding:8px">${escape(t.fullName||'')}</td>
+          <td style="padding:8px">${escape(t.subjectName||t.subject||'')}</td>
+          <td style="padding:8px">${escape(className||'')}</td>
+          <td style="padding:8px;text-align:right">${salaryVal? c2p(salaryVal): '—'}</td>
+          <td style="padding:8px;text-align:right">${c2p(balance)}</td>
+          <td style="padding:8px;text-align:right">${c2p(paidThisMonth)}</td>
+          <td style="padding:8px">
+            <button class="btn btn-primary btn-sm pay-btn" data-id="${escape(t.teacherId||t.id||'')}" title="Pay">${svgPay()}</button>
+            <button class="btn btn-secondary btn-sm adj-btn" data-id="${escape(t.teacherId||t.id||'')}" title="Reesto Hore">${svgReesto()}</button>
+            <button class="btn btn-ghost btn-sm view-trans-btn" data-id="${escape(t.teacherId||t.id||'')}" title="View">${svgView()}</button>
+          </td>
+        </tr>`;
+      });
+      html += `</tbody></table></div>`;
+      // totals
+      html += `<div class="totals-card card" style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">
+        <div style="font-weight:900">Totals</div>
+        <div class="totals-block" style="flex-direction:row;gap:18px;align-items:center">
+          <div class="tot-line"><div style="min-width:140px">Assigned salary (sum):</div><div class="total-blue">${c2p(totSalaryAssigned)}</div></div>
+          <div class="tot-line"><div style="min-width:140px">Current balance total:</div><div class="total-red">${c2p(totBalance)}</div></div>
+          <div class="tot-line"><div style="min-width:140px">Total Paid (this month):</div><div class="total-green">${c2p(totPaid)}</div></div>
+        </div>
+      </div>`;
+      listRoot.innerHTML = html;
+      listRoot.querySelectorAll('.pay-btn').forEach(b => b.addEventListener('click', ev => openPayModal(ev.currentTarget)));
+      listRoot.querySelectorAll('.adj-btn').forEach(b => b.addEventListener('click', ev => openAdjustmentModal(ev.currentTarget)));
+      listRoot.querySelectorAll('.view-trans-btn').forEach(b => b.addEventListener('click', ev => openViewTransactionsModal(ev.currentTarget)));
+      return;
+    } else {
+      // staff view table (unchanged)
+      let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><strong>Staff — ${list.length}</strong></div>`;
+      html += `<div style="overflow:auto"><table style="width:100%;border-collapse:collapse"><thead><tr>
+        <th>No</th><th>ID</th><th>Name</th><th>Phone</th><th>Role</th><th style="text-align:right">Balance</th><th>Actions</th>
+      </tr></thead><tbody>`;
+      list.forEach((s, idx) => {
+        html += `<tr style="border-bottom:1px solid #f1f5f9">
+          <td style="padding:8px">${idx+1}</td>
+          <td style="padding:8px">${escape(s.staffId||s.id||'')}</td>
+          <td style="padding:8px">${escape(s.fullName||'')}</td>
+          <td style="padding:8px">${escape(s.phone||'—')}</td>
+          <td style="padding:8px">${escape(s.role||'')}</td>
+          <td style="padding:8px;text-align:right">${c2p(s.balance_cents||0)}</td>
+          <td style="padding:8px">
+            <button class="btn btn-primary btn-sm pay-btn" data-id="${escape(s.staffId||s.id||'')}" title="Pay">${svgPay()}</button>
+            <button class="btn btn-secondary btn-sm adj-btn" data-id="${escape(s.staffId||s.id||'')}" title="Reesto Hore">${svgReesto()}</button>
+            <button class="btn btn-ghost btn-sm view-trans-btn" data-id="${escape(s.staffId||s.id||'')}" title="View">${svgView()}</button>
+            <button class="btn btn-ghost btn-sm edit-staff" data-id="${escape(s.id||'')}" title="Edit">✏️</button>
+            <button class="btn btn-danger btn-sm del-staff" data-id="${escape(s.id||'')}" title="Delete">🗑️</button>
+          </td>
+        </tr>`;
+      });
+      html += `</tbody></table></div>`;
+      listRoot.innerHTML = html;
+      listRoot.querySelectorAll('.pay-btn').forEach(b => b.addEventListener('click', ev => openPayModal(ev.currentTarget)));
+      listRoot.querySelectorAll('.adj-btn').forEach(b => b.addEventListener('click', ev => openAdjustmentModal(ev.currentTarget)));
+      listRoot.querySelectorAll('.view-trans-btn').forEach(b => b.addEventListener('click', ev => openViewTransactionsModal(ev.currentTarget)));
+      listRoot.querySelectorAll('.edit-staff').forEach(b => b.addEventListener('click', (e)=> { toast('Edit staff not implemented - tell me if you want it'); }));
+      listRoot.querySelectorAll('.del-staff').forEach(b => b.addEventListener('click', async (e)=> {
+        const id = e.currentTarget.dataset.id;
+        if(!confirm('Delete staff?')) return;
+        try{ await deleteDoc(doc(db,'staff', id)); toast('Staff deleted'); await loadStaff(); renderPaymentsList('staff'); }catch(err){ console.error(err); toast('Failed to delete'); }
+      }));
+      return;
+    }
   }
-   // EXPENSES view (mobile cards + desktop table)
 
-   if(view === 'expenses'){
+  /* ---------- EXPENSES ---------- */
+  if(view === 'expenses'){
     const rows = (transactionsCache || []).filter(t => t.target_type === 'expense' && !t.is_deleted).sort((a,b) => (b.createdAt?.seconds||0) - (a.createdAt?.seconds||0));
-  
-    // mobile view -> cards
+
     if(isMobileViewport()){
-      let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><strong>Expenses — ${rows.length}</strong><div class="muted">Tap an item for actions</div></div>`;
-      html += `<div style="display:flex;flex-direction:column;gap:8px">`;
+      let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><strong>Expenses — ${rows.length}</strong><div class="muted">Tap an item for actions</div></div><div style="display:flex;flex-direction:column;gap:8px">`;
       rows.forEach((tx, idx) => {
         const amount = c2p(tx.amount_cents || 0);
-        const dateStr = tx.createdAt ? new Date(tx.createdAt.seconds*1000).toLocaleDateString() : '';
+        const dateStr = tx.createdAt ? new Date((tx.createdAt.seconds||tx.createdAt._seconds)*1000).toLocaleDateString() : '';
         html += `<div class="card" style="display:flex;align-items:center;justify-content:space-between;gap:8px">
           <div style="display:flex;gap:8px;align-items:center">
             <div style="font-weight:800">${idx+1}</div>
@@ -3121,31 +3613,26 @@ listRoot.querySelectorAll('.view-trans-btn').forEach(b => b.onclick = openViewTr
       });
       html += `</div>`;
       listRoot.innerHTML = html;
-  
-      // wire more-info-expense
-      listRoot.querySelectorAll('.more-info-expense').forEach(b => {
-        b.onclick = (ev) => {
-          const id = ev.currentTarget.dataset.id;
-          const tx = (rows||[]).find(r => r.id === id);
-          if(!tx) return;
-          const body = `<div style="font-weight:900">${escape(tx.note || tx.expense_name || 'Expense')}</div>
-            <div class="muted">Category: ${escape(tx.subtype||'')}</div>
-            <div style="margin-top:8px">Amount: <strong>${c2p(tx.amount_cents||0)}</strong></div>
-            <div>Date: ${tx.createdAt ? new Date(tx.createdAt.seconds*1000).toLocaleString() : ''}</div>
-            <div style="margin-top:10px;display:flex;gap:8px;justify-content:flex-end">
-              <button class="btn btn-ghost edit-expense" data-id="${escape(id)}">Edit</button>
-              <button class="btn btn-danger del-expense" data-id="${escape(id)}">Delete</button>
-            </div>`;
-          showModal('Expense', body);
-          modalBody.querySelectorAll('.edit-expense').forEach(bb => bb.onclick = openEditTransactionModal);
-          modalBody.querySelectorAll('.del-expense').forEach(bb => bb.onclick = deleteTransaction);
-        };
-      });
-  
+      listRoot.querySelectorAll('.more-info-expense').forEach(b => b.addEventListener('click', ev => {
+        const id = ev.currentTarget.dataset.id;
+        const tx = (rows||[]).find(r => r.id === id);
+        if(!tx) return;
+        const body = `<div style="font-weight:900">${escape(tx.note || tx.expense_name || 'Expense')}</div>
+          <div class="muted">Category: ${escape(tx.subtype||'')}</div>
+          <div style="margin-top:8px">Amount: <strong>${c2p(tx.amount_cents||0)}</strong></div>
+          <div>Date: ${tx.createdAt ? new Date((tx.createdAt.seconds||tx.createdAt._seconds)*1000).toLocaleString() : ''}</div>
+          <div style="margin-top:10px;display:flex;gap:8px;justify-content:flex-end">
+            <button class="btn btn-ghost edit-expense" data-id="${escape(id)}">Edit</button>
+            <button class="btn btn-danger del-expense" data-id="${escape(id)}">Delete</button>
+          </div>`;
+        showModal('Expense', body);
+        modalBody.querySelectorAll('.edit-expense').forEach(bb => bb.addEventListener('click', ev => openEditTransactionModal(ev.currentTarget)));
+        modalBody.querySelectorAll('.del-expense').forEach(bb => bb.addEventListener('click', ev => deleteTransaction(ev.currentTarget)));
+      }));
       return;
     }
-  
-    // desktop table fallback
+
+    // desktop table
     let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><strong>Expenses — ${rows.length}</strong><div class="muted">Columns: No, Name, Category, Amount, Date, Actions</div></div>`;
     html += `<div style="overflow:auto"><table style="width:100%;border-collapse:collapse"><thead><tr><th>No</th><th>Name</th><th>Category</th><th>Amount</th><th>Date</th><th>Actions</th></tr></thead><tbody>`;
     rows.forEach((tx, idx) => {
@@ -3154,7 +3641,7 @@ listRoot.querySelectorAll('.view-trans-btn').forEach(b => b.onclick = openViewTr
         <td style="padding:8px">${escape(tx.note || tx.expense_name || 'Expense')}</td>
         <td style="padding:8px">${escape(tx.subtype || '')}</td>
         <td style="padding:8px">${c2p(tx.amount_cents || 0)}</td>
-        <td style="padding:8px">${tx.createdAt ? new Date(tx.createdAt.seconds * 1000).toLocaleString() : ''}</td>
+        <td style="padding:8px">${tx.createdAt ? new Date((tx.createdAt.seconds||tx.createdAt._seconds)*1000).toLocaleString() : ''}</td>
         <td style="padding:8px">
           <button class="btn btn-ghost edit-expense" data-id="${tx.id}" title="Edit">✏️</button>
           <button class="btn btn-danger del-expense" data-id="${tx.id}" title="Delete">🗑️</button>
@@ -3163,15 +3650,13 @@ listRoot.querySelectorAll('.view-trans-btn').forEach(b => b.onclick = openViewTr
     });
     html += `</tbody></table></div>`;
     listRoot.innerHTML = html;
-    listRoot.querySelectorAll('.edit-expense').forEach(b => b.onclick = openEditTransactionModal);
-    listRoot.querySelectorAll('.del-expense').forEach(b => b.onclick = deleteTransaction);
+    listRoot.querySelectorAll('.edit-expense').forEach(b => b.addEventListener('click', ev => openEditTransactionModal(ev.currentTarget)));
+    listRoot.querySelectorAll('.del-expense').forEach(b => b.addEventListener('click', ev => deleteTransaction(ev.currentTarget)));
     return;
   }
+} // end renderPaymentsList
 
-}
-
-
-/* ---- Export modal + worker ---- */
+/* ---- Export modal + worker (doExport updated) ---- */
 async function exportCurrentPaymentsView(){
   showModal('Export', `<div style="padding:8px">Choose format</div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
@@ -3196,44 +3681,45 @@ async function doExport(format){
   if(statusFilter && statusFilter !== 'all') titleParts.push(capitalize(statusFilter));
   const title = titleParts.join(' • ');
 
-  // build rows for CSV / for PDF autoTable body
-  // build rows for CSV / for PDF autoTable body (REPLACE existing rows building)
   const rows = [];
   if(view === 'students'){
-    rows.push(['No','ID','Name','Phone','Class','AssignedFee','CurrentBalance','Paid']);
+    rows.push(['No','ID','Name','Phone','Class','AssignedFee','CurrentBalance','Paid (this month)']);
     let idx = 0;
-    let totalAssignedCents = 0, totalBalanceCents = 0;
+    let totalAssignedCents = 0, totalBalanceCents = 0, totalPaidCents = 0;
     (studentsCache||[]).forEach(s => {
       idx++;
-      const className = s.className || s.class || ((classesCache||[]).find(c => String(c.id) === String(s.classId||'') || String(c.name||'') === String(s.class||'')) || {}).name || '';
+      const className = resolveClassName(s);
       const assignedCents = (s.fee != null && !isNaN(Number(s.fee))) ? Math.round(Number(s.fee)*100) : 0;
       const balanceCents = Number(s.balance_cents || 0);
-      const paidCents = assignedCents - balanceCents;
+      const paidCents = getPaidThisMonthForTarget('student', s);
       totalAssignedCents += assignedCents;
       totalBalanceCents += balanceCents;
+      totalPaidCents += paidCents;
       rows.push([idx, s.studentId||s.id, s.fullName||'', s.parentPhone||'', className, c2p(assignedCents), c2p(balanceCents), c2p(paidCents)]);
     });
-    // totals row appended
     rows.push([]);
-    rows.push(['Totals','','','','', c2p(totalAssignedCents), c2p(totalBalanceCents), c2p(totalAssignedCents - totalBalanceCents)]);
+    rows.push(['Totals','','','','', c2p(totalAssignedCents), c2p(totalBalanceCents), c2p(totalPaidCents)]);
   } else if(view === 'teachers'){
-    rows.push(['No','ID','Name','Subject','Phone','Salary','CurrentBalance']);
+    rows.push(['No','ID','Name','Subject','Phone','Salary','CurrentBalance','Paid (this month)']);
     let i = 0;
-    (teachersCache||[]).forEach(t => { i++; rows.push([i, t.teacherId||t.id, t.fullName||'', t.subjectName||t.subjectId||'', t.phone||'', (t.salary!=null?String(t.salary):''), c2p(t.balance_cents||0)]); });
+    (teachersCache||[]).forEach(t => {
+      i++;
+      const paidCents = getPaidThisMonthForTarget('teacher', t);
+      rows.push([i, t.teacherId||t.id, t.fullName||'', t.subjectName||t.subjectId||'', t.phone||'', (t.salary!=null?String(t.salary):''), c2p(t.balance_cents||0), c2p(paidCents)]);
+    });
   } else if(view === 'staff'){
     rows.push(['No','ID','Name','Phone','Role','CurrentBalance']);
     let i = 0;
-    (window.staffCache||[]).forEach(s => { i++; rows.push([i, s.id, s.fullName||'', s.phone||'', s.role||'', c2p(s.balance_cents||0)]); });
+    (window.staffCache||[]).forEach(s => { i++; rows.push([i, s.staffId||s.id, s.fullName||'', s.phone||'', s.role||'', c2p(s.balance_cents||0)]); });
   } else {
     rows.push(['TransactionID','Note','Category','Amount','Date']);
     (transactionsCache||[]).filter(t=> t.target_type === 'expense' && !t.is_deleted).forEach(t => {
-      rows.push([t.id, t.note||'', t.subtype||'', c2p(t.amount_cents||0), t.createdAt ? new Date(t.createdAt.seconds*1000).toISOString() : '']);
+      rows.push([t.id, t.note||'', t.subtype||'', c2p(t.amount_cents||0), t.createdAt ? new Date((t.createdAt.seconds||t.createdAt._seconds)*1000).toISOString() : '']);
     });
   }
 
-  // CSV branch unchanged (keeps title + rows)
   if(format === 'csv'){
-    const csvrows = [[title], [], ...rows];
+    const csvrows = [[title], [ `Generated by ${school.name} on ${new Date().toLocaleString()}` ], [], ...rows];
     const csv = csvrows.map(r => r.map(c => '"' + String(c||'').replace(/"/g,'""') + '"').join(',')).join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
@@ -3246,68 +3732,81 @@ async function doExport(format){
     if (JsPDF) {
       try {
         const doc = new JsPDF({ orientation: 'landscape' });
-        // try to embed logo (if accessible) before the table
-        if (school.logo) {
-          try {
-            // fetch logo and convert to dataURL
+        const marginTop = 20;
+        try{
+          if (school.logo) {
             const resp = await fetch(school.logo);
             const blob = await resp.blob();
             const reader = new FileReader();
-            const imgData = await new Promise((res, rej) => {
-              reader.onload = () => res(reader.result);
-              reader.onerror = rej;
-              reader.readAsDataURL(blob);
-            });
-            // draw image (fit left)
-            doc.addImage(imgData, 'PNG', 20, 12, 48, 48);
-            doc.setFontSize(14);
-            doc.text(String(title), 80, 32);
-          } catch(e){ console.warn('logo embedding failed', e); doc.text(String(title), 20, 32); }
-        } else {
-          doc.text(String(title), 20, 32);
-        }
+            const imgData = await new Promise((res, rej) => { reader.onload = () => res(reader.result); reader.onerror = rej; reader.readAsDataURL(blob); });
+            doc.addImage(imgData, 'PNG', 20, marginTop, 36, 36); // smaller logo
+            doc.setFontSize(12);
+            doc.text(String(title), 70, marginTop + 22);
+          } else {
+            doc.text(String(title), 20, marginTop + 12);
+          }
+        }catch(e){ doc.text(String(title), 20, marginTop + 12); console.warn('logo embed fail', e); }
 
-        // build autoTable head/body
         if (doc.autoTable) {
-          // ensure head row is the first rows item (if we added No/ID etc.)
           const head = [ rows[0] ];
           const body = rows.slice(1);
           doc.autoTable({
-            startY: 56,
+            startY: marginTop + 56,
             head,
             body,
             styles: { fontSize: 8, cellPadding: 4 },
             headStyles: { fillColor: [240,240,240], textColor: [20,20,20], fontStyle: 'bold' },
             margin: { left: 14, right: 14 }
           });
+          // footer
+          doc.setFontSize(9);
+          doc.text(`Generated by ${school.name} on ${new Date().toLocaleString()}`, 14, doc.internal.pageSize.getHeight() - 12);
           doc.save(`export-${view}.pdf`);
           return;
         }
       } catch (e) {
-        console.warn('jsPDF/autoTable attempt failed, falling back to image export', e);
+        console.warn('jsPDF/autoTable failed, fallback', e);
       }
     }
 
-    // fallback to html2canvas method (unchanged)
+    // fallback to html2canvas rendering
     try {
       const container = document.createElement('div');
-      container.style.padding = '12px';
+      container.style.padding = '18px';
       container.style.background = '#fff';
+      container.style.position = 'relative';
+      // watermark
+      const watermark = document.createElement('div');
+      watermark.style.position = 'absolute';
+      watermark.style.left = '50%';
+      watermark.style.top = '45%';
+      watermark.style.transform = 'translate(-50%,-50%) rotate(-18deg)';
+      watermark.style.opacity = '0.06';
+      watermark.style.fontSize = '72px';
+      watermark.style.fontWeight = '900';
+      watermark.style.pointerEvents = 'none';
+      watermark.textContent = school.name || '';
+      container.appendChild(watermark);
+
+      const header = document.createElement('div');
+      header.style.display = 'flex';
+      header.style.alignItems = 'center';
+      header.style.gap = '12px';
       const logo = document.createElement('img');
       logo.src = school.logo || 'assets/logo.png';
-      logo.style.maxHeight = '48px';
+      logo.style.maxHeight = '36px';
       logo.style.display = 'block';
-      logo.style.marginBottom = '6px';
-      container.appendChild(logo);
+      logo.style.opacity = '0.95';
+      header.appendChild(logo);
       const h = document.createElement('div');
-      h.textContent = title;
-      h.style.fontWeight = '800';
-      h.style.marginBottom = '8px';
-      container.appendChild(h);
+      h.innerHTML = `<div style="font-weight:900">${escape(String(title))}</div><div style="font-size:11px;color:#666">Generated by ${escape(school.name)} on ${new Date().toLocaleString()}</div>`;
+      header.appendChild(h);
+      container.appendChild(header);
 
       const table = document.createElement('table');
       table.style.borderCollapse = 'collapse';
       table.style.width = '100%';
+      table.style.marginTop = '12px';
       const thead = document.createElement('thead');
       const trh = document.createElement('tr');
       rows[0].forEach(col => {
@@ -3337,316 +3836,316 @@ async function doExport(format){
       document.body.appendChild(container);
       const ok = await exportElementToPdfFallback(`export-${view}.pdf`, container);
       container.remove();
-      if (!ok) alert('PDF export not available');
+      if(!ok) alert('PDF export not available');
       return;
     } catch(e){
       console.error('PDF fallback failed', e);
       alert('PDF export failed');
     }
   }
-
 }
 
 
 
-/* ---- Pay modal (improved) ---- */
-async function openPayModal(e){
-  // robustly find the element that carries data-id (works whether user clicked svg, icon, or button)
-  const triggerEl = (e.currentTarget && e.currentTarget.dataset && e.currentTarget.dataset.id) ? e.currentTarget
-                   : (e.target && e.target.closest && e.target.closest('[data-id]')) ? e.target.closest('[data-id]')
-                   : null;
-  const id = triggerEl ? (triggerEl.dataset && triggerEl.dataset.id) : null;
-  if(!id) return toast('Missing ID for action');
 
-  const activeTab = document.querySelector('#pagePayments .tab.active');
-  const view = activeTab ? activeTab.textContent.toLowerCase() : 'students';
-  const targetType = view === 'students' ? 'student' : (view === 'teachers' ? 'teacher' : 'staff');
+// /* ---- Pay modal (improved) ---- */
+// async function openPayModal(e){
+//   // robustly find the element that carries data-id (works whether user clicked svg, icon, or button)
+//   const triggerEl = (e.currentTarget && e.currentTarget.dataset && e.currentTarget.dataset.id) ? e.currentTarget
+//                    : (e.target && e.target.closest && e.target.closest('[data-id]')) ? e.target.closest('[data-id]')
+//                    : null;
+//   const id = triggerEl ? (triggerEl.dataset && triggerEl.dataset.id) : null;
+//   if(!id) return toast('Missing ID for action');
 
-  // allow flexible resolution (matches last-4 / last-6 or doc id)
-  let target = await resolveTargetByAnyId(view, id);
-  if (!target) return toast('Target not found');
+//   const activeTab = document.querySelector('#pagePayments .tab.active');
+//   const view = activeTab ? activeTab.textContent.toLowerCase() : 'students';
+//   const targetType = view === 'students' ? 'student' : (view === 'teachers' ? 'teacher' : 'staff');
 
-  const currentBalance = Number(target.balance_cents || 0);
-  const defaultPhone = target.parentPhone || target.phone || '';
-  const now = new Date();
-  const curMonth = now.getMonth()+1;
-  const curYear = now.getFullYear();
-  // ... rest of original function unchanged ...
-    const html = `
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-        <div><label>Student / Staff</label><div style="font-weight:900;margin-bottom:6px">${escape(target.fullName||target.teacherName||target.id||'')}</div></div>
-        <div><label>Current balance</label><div style="font-weight:900;margin-bottom:6px">${c2p(currentBalance)}</div></div>
+//   // allow flexible resolution (matches last-4 / last-6 or doc id)
+//   let target = await resolveTargetByAnyId(view, id);
+//   if (!target) return toast('Target not found');
+
+//   const currentBalance = Number(target.balance_cents || 0);
+//   const defaultPhone = target.parentPhone || target.phone || '';
+//   const now = new Date();
+//   const curMonth = now.getMonth()+1;
+//   const curYear = now.getFullYear();
+//   // ... rest of original function unchanged ...
+//     const html = `
+//       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+//         <div><label>Student / Staff</label><div style="font-weight:900;margin-bottom:6px">${escape(target.fullName||target.teacherName||target.id||'')}</div></div>
+//         <div><label>Current balance</label><div style="font-weight:900;margin-bottom:6px">${c2p(currentBalance)}</div></div>
   
-        <div><label>Amount</label><input id="payAmount" type="number" step="0.01" value="${c2p(currentBalance)}" /></div>
-        <div><label>Payment Type</label>
-          <select id="payType">
-            <option value="monthly">Monthly</option>
-            <option value="id-card">ID Card</option>
-            <option value="registration">Registration</option>
-            ${targetType!=='student'?'<option value="salary">Salary</option>':''}
-            <option value="other">Other</option>
-          </select>
-        </div>
+//         <div><label>Amount</label><input id="payAmount" type="number" step="0.01" value="${c2p(currentBalance)}" /></div>
+//         <div><label>Payment Type</label>
+//           <select id="payType">
+//             <option value="monthly">Monthly</option>
+//             <option value="id-card">ID Card</option>
+//             <option value="registration">Registration</option>
+//             ${targetType!=='student'?'<option value="salary">Salary</option>':''}
+//             <option value="other">Other</option>
+//           </select>
+//         </div>
   
-        <div id="monthPicker"><label>Month</label>
-          <select id="payMonth">${Array.from({length:12},(_,i)=>`<option value="${i+1}" ${i+1===curMonth?'selected':''}>${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][i]}</option>`).join('')}</select>
-        </div>
+//         <div id="monthPicker"><label>Month</label>
+//           <select id="payMonth">${Array.from({length:12},(_,i)=>`<option value="${i+1}" ${i+1===curMonth?'selected':''}>${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][i]}</option>`).join('')}</select>
+//         </div>
   
-        <div><label>Year</label><input id="payYear" type="number" min="${curYear-5}" max="${curYear+5}" value="${curYear}" /></div>
+//         <div><label>Year</label><input id="payYear" type="number" min="${curYear-5}" max="${curYear+5}" value="${curYear}" /></div>
   
-        <div id="multiMonthsWrapper" style="display:none;grid-column:1 / -1">
-          <label>Select months (multi)</label>
-          <select id="payMonths" multiple size="6">${Array.from({length:12},(_,i)=>`<option value="${i+1}">${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][i]}</option>`).join('')}</select>
-        </div>
+//         <div id="multiMonthsWrapper" style="display:none;grid-column:1 / -1">
+//           <label>Select months (multi)</label>
+//           <select id="payMonths" multiple size="6">${Array.from({length:12},(_,i)=>`<option value="${i+1}">${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][i]}</option>`).join('')}</select>
+//         </div>
   
-        <div><label>Payment method</label><select id="payMethod"><option value="mobile">Mobile</option><option value="cash">Cash</option><option value="card">Card</option></select></div>
-        <div id="mobileProviderWrapper"><label>Mobile provider</label><select id="mobileProvider"><option>Hormuud</option><option>Somnet</option><option>Somtel</option><option>Telesom</option><option>Amtel</option><option>Other</option></select></div>
-        <div><label>Payer Phone</label><input id="payerPhone" value="${escape(defaultPhone)}" /></div>
-        <div style="grid-column:1 / -1"><label>Note</label><input id="payNote" placeholder="Optional note (auto-filled for monthly/salary)" /></div>
-      </div>
+//         <div><label>Payment method</label><select id="payMethod"><option value="mobile">Mobile</option><option value="cash">Cash</option><option value="card">Card</option></select></div>
+//         <div id="mobileProviderWrapper"><label>Mobile provider</label><select id="mobileProvider"><option>Hormuud</option><option>Somnet</option><option>Somtel</option><option>Telesom</option><option>Amtel</option><option>Other</option></select></div>
+//         <div><label>Payer Phone</label><input id="payerPhone" value="${escape(defaultPhone)}" /></div>
+//         <div style="grid-column:1 / -1"><label>Note</label><input id="payNote" placeholder="Optional note (auto-filled for monthly/salary)" /></div>
+//       </div>
   
-      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
-        <button id="payClose" class="btn btn-ghost">Close</button>
-        <button id="toggleMultiMonths" class="btn btn-ghost">Select multiple months</button>
-        <button id="paySave" class="btn btn-primary">Save</button>
-      </div>
-    `;
-    showModal(`Pay • ${escape(target.fullName||target.teacherName||target.id||'')}`, html);
+//       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+//         <button id="payClose" class="btn btn-ghost">Close</button>
+//         <button id="toggleMultiMonths" class="btn btn-ghost">Select multiple months</button>
+//         <button id="paySave" class="btn btn-primary">Save</button>
+//       </div>
+//     `;
+//     showModal(`Pay • ${escape(target.fullName||target.teacherName||target.id||'')}`, html);
   
-    const payType = modalBody.querySelector('#payType');
-    const multiWrapper = modalBody.querySelector('#multiMonthsWrapper');
-    const toggleMulti = modalBody.querySelector('#toggleMultiMonths');
-    const payMonth = modalBody.querySelector('#payMonth');
-    const payYear = modalBody.querySelector('#payYear');
-    const payMonths = modalBody.querySelector('#payMonths');
-    const payNote = modalBody.querySelector('#payNote');
-    const payMethodEl = modalBody.querySelector('#payMethod');
-    const mobileProviderWrapper = modalBody.querySelector('#mobileProviderWrapper');
+//     const payType = modalBody.querySelector('#payType');
+//     const multiWrapper = modalBody.querySelector('#multiMonthsWrapper');
+//     const toggleMulti = modalBody.querySelector('#toggleMultiMonths');
+//     const payMonth = modalBody.querySelector('#payMonth');
+//     const payYear = modalBody.querySelector('#payYear');
+//     const payMonths = modalBody.querySelector('#payMonths');
+//     const payNote = modalBody.querySelector('#payNote');
+//     const payMethodEl = modalBody.querySelector('#payMethod');
+//     const mobileProviderWrapper = modalBody.querySelector('#mobileProviderWrapper');
   
-    function fillDefaultNote(){
-      const t = payType.value;
-      if(!payNote.value){
-        if(t==='monthly') payNote.value = `lacagta bish ${payYear.value}-${String(payMonth.value).padStart(2,'0')}`;
-        else if(t==='id-card') payNote.value = 'lacagta id card';
-        else if(t==='registration') payNote.value = 'lacagta registration';
-        else if(t==='salary') payNote.value = 'lacagta mushaar';
-      }
-    }
+//     function fillDefaultNote(){
+//       const t = payType.value;
+//       if(!payNote.value){
+//         if(t==='monthly') payNote.value = `lacagta bish ${payYear.value}-${String(payMonth.value).padStart(2,'0')}`;
+//         else if(t==='id-card') payNote.value = 'lacagta id card';
+//         else if(t==='registration') payNote.value = 'lacagta registration';
+//         else if(t==='salary') payNote.value = 'lacagta mushaar';
+//       }
+//     }
   
-    payType.onchange = () => { modalBody.querySelector('#monthPicker').style.display = payType.value==='monthly' ? 'block' : 'none'; fillDefaultNote(); };
-    payMethodEl.onchange = () => { mobileProviderWrapper.style.display = payMethodEl.value === 'mobile' ? 'block' : 'none'; };
-    toggleMulti.onclick = () => {
-      multiWrapper.style.display = multiWrapper.style.display === 'none' ? 'block' : 'none';
-      modalBody.querySelector('#monthPicker').style.display = multiWrapper.style.display === 'none' ? 'block' : 'none';
-    };
-    payMethodEl.onchange();
-    fillDefaultNote();
+//     payType.onchange = () => { modalBody.querySelector('#monthPicker').style.display = payType.value==='monthly' ? 'block' : 'none'; fillDefaultNote(); };
+//     payMethodEl.onchange = () => { mobileProviderWrapper.style.display = payMethodEl.value === 'mobile' ? 'block' : 'none'; };
+//     toggleMulti.onclick = () => {
+//       multiWrapper.style.display = multiWrapper.style.display === 'none' ? 'block' : 'none';
+//       modalBody.querySelector('#monthPicker').style.display = multiWrapper.style.display === 'none' ? 'block' : 'none';
+//     };
+//     payMethodEl.onchange();
+//     fillDefaultNote();
   
-    modalBody.querySelector('#payClose').onclick = closeModal;
-    modalBody.querySelector('#paySave').onclick = async () => {
-      const btn = modalBody.querySelector('#paySave');
-      const oldHtml = putButtonLoader(btn);
-      try{
-        const raw = modalBody.querySelector('#payAmount').value;
-        if(!raw) { toast('Amount required'); restoreButton(btn, oldHtml); return; }
-        const amountCents = p2c(raw);
-        if(amountCents <= 0) { toast('Amount must be > 0'); restoreButton(btn, oldHtml); return; }
-        const type = payType.value;
-        let relatedMonths = [];
-        if(multiWrapper.style.display !== 'none'){
-          relatedMonths = Array.from(payMonths.selectedOptions).map(o => `${payYear.value}-${String(o.value).padStart(2,'0')}`);
-        } else {
-          relatedMonths = [`${payYear.value}-${String(payMonth.value).padStart(2,'0')}`];
-        }
-        const payment_method = payMethodEl.value;
-        const mobile_provider = modalBody.querySelector('#mobileProvider') ? modalBody.querySelector('#mobileProvider').value : null;
-        const payer_phone = modalBody.querySelector('#payerPhone').value.trim() || null;
-        const note = modalBody.querySelector('#payNote').value.trim() || null;
+//     modalBody.querySelector('#payClose').onclick = closeModal;
+//     modalBody.querySelector('#paySave').onclick = async () => {
+//       const btn = modalBody.querySelector('#paySave');
+//       const oldHtml = putButtonLoader(btn);
+//       try{
+//         const raw = modalBody.querySelector('#payAmount').value;
+//         if(!raw) { toast('Amount required'); restoreButton(btn, oldHtml); return; }
+//         const amountCents = p2c(raw);
+//         if(amountCents <= 0) { toast('Amount must be > 0'); restoreButton(btn, oldHtml); return; }
+//         const type = payType.value;
+//         let relatedMonths = [];
+//         if(multiWrapper.style.display !== 'none'){
+//           relatedMonths = Array.from(payMonths.selectedOptions).map(o => `${payYear.value}-${String(o.value).padStart(2,'0')}`);
+//         } else {
+//           relatedMonths = [`${payYear.value}-${String(payMonth.value).padStart(2,'0')}`];
+//         }
+//         const payment_method = payMethodEl.value;
+//         const mobile_provider = modalBody.querySelector('#mobileProvider') ? modalBody.querySelector('#mobileProvider').value : null;
+//         const payer_phone = modalBody.querySelector('#payerPhone').value.trim() || null;
+//         const note = modalBody.querySelector('#payNote').value.trim() || null;
     
   
-        const tx = {
-          actor: currentUser ? currentUser.uid : null,
-          target_type: targetType,
-          target_id: target.id || target.studentId || target.teacherId || target.id
-          ,
-          type,
-          amount_cents: amountCents,
-          payment_method,
-          mobile_provider,
-          payer_phone,
-          note,
-          related_months: type === 'monthly' ? relatedMonths : [],
-          createdAt: Timestamp.now(),
-        };
+//         const tx = {
+//           actor: currentUser ? currentUser.uid : null,
+//           target_type: targetType,
+//           target_id: target.id || target.studentId || target.teacherId || target.id
+//           ,
+//           type,
+//           amount_cents: amountCents,
+//           payment_method,
+//           mobile_provider,
+//           payer_phone,
+//           note,
+//           related_months: type === 'monthly' ? relatedMonths : [],
+//           createdAt: Timestamp.now(),
+//         };
     
-        await addDoc(collection(db,'transactions'), tx);
+//         await addDoc(collection(db,'transactions'), tx);
     
-        if(type === 'monthly' && targetType === 'student'){
-          await updateTargetBalanceGeneric('student', tx.target_id, -amountCents);
-        }
-        if(type === 'salary' && (targetType === 'teacher' || targetType === 'staff')){
-          await updateTargetBalanceGeneric(targetType, tx.target_id, -amountCents);
-        }
+//         if(type === 'monthly' && targetType === 'student'){
+//           await updateTargetBalanceGeneric('student', tx.target_id, -amountCents);
+//         }
+//         if(type === 'salary' && (targetType === 'teacher' || targetType === 'staff')){
+//           await updateTargetBalanceGeneric(targetType, tx.target_id, -amountCents);
+//         }
     
-        toast('Payment recorded');
-        closeModal();
-        await loadTransactions();
-        const active = document.querySelector('#pagePayments .tab.active');
-        const viewName = active ? active.textContent.toLowerCase() : 'students';
-        await renderPaymentsList(viewName);
-        renderDashboard && renderDashboard();
-      }catch(err){
-        console.error(err); toast('Failed to save payment');
-      } finally {
-        restoreButton(btn, oldHtml);
-      }
-    };
+//         toast('Payment recorded');
+//         closeModal();
+//         await loadTransactions();
+//         const active = document.querySelector('#pagePayments .tab.active');
+//         const viewName = active ? active.textContent.toLowerCase() : 'students';
+//         await renderPaymentsList(viewName);
+//         renderDashboard && renderDashboard();
+//       }catch(err){
+//         console.error(err); toast('Failed to save payment');
+//       } finally {
+//         restoreButton(btn, oldHtml);
+//       }
+//     };
     
     
-  }
+//   }
 
 
-/* ---- Adjustment modal (Adj) ---- */
-/* ---- Adjustment modal (Adj) ---- */
-// Replace start of openAdjustmentModal(...)
-async function openAdjustmentModal(e){
-  const triggerEl = (e.currentTarget && e.currentTarget.dataset && e.currentTarget.dataset.id) ? e.currentTarget
-                   : (e.target && e.target.closest && e.target.closest('[data-id]')) ? e.target.closest('[data-id]')
-                   : null;
-  const id = triggerEl ? (triggerEl.dataset && triggerEl.dataset.id) : null;
-  if(!id) return toast('Missing ID for action');
+// /* ---- Adjustment modal (Adj) ---- */
+// /* ---- Adjustment modal (Adj) ---- */
+// // Replace start of openAdjustmentModal(...)
+// async function openAdjustmentModal(e){
+//   const triggerEl = (e.currentTarget && e.currentTarget.dataset && e.currentTarget.dataset.id) ? e.currentTarget
+//                    : (e.target && e.target.closest && e.target.closest('[data-id]')) ? e.target.closest('[data-id]')
+//                    : null;
+//   const id = triggerEl ? (triggerEl.dataset && triggerEl.dataset.id) : null;
+//   if(!id) return toast('Missing ID for action');
 
-  const activeTab = document.querySelector('#pagePayments .tab.active');
-  const view = activeTab ? activeTab.textContent.toLowerCase() : 'students';
-  const targetType = view === 'students' ? 'student' : (view === 'teachers' ? 'teacher' : 'staff');
+//   const activeTab = document.querySelector('#pagePayments .tab.active');
+//   const view = activeTab ? activeTab.textContent.toLowerCase() : 'students';
+//   const targetType = view === 'students' ? 'student' : (view === 'teachers' ? 'teacher' : 'staff');
 
-  let target = await resolveTargetByAnyId(view, id);
-  if(!target) return toast('Target not found');
-
-
-
-
-  // now proceed to build modal...
-
-  const html = `
-    <div style="display:grid;grid-template-columns:1fr;gap:8px">
-      <div><label>Amount (use negative to decrease balance)</label><input id="adjAmount" type="number" step="0.01" value="0" /></div>
-      <div><label>Reason / Note</label><input id="adjNote" placeholder="e.g., refund, penalty, manual add" /></div>
-    </div>
-    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
-      <button id="adjClose" class="btn btn-ghost">Close</button>
-      <button id="adjSave" class="btn btn-primary">Save</button>
-    </div>
-  `;
-// where you call showModal(...)
-showModal(`Reesto Hore • ${escape(target.fullName || target.id || '')}`, html);
-  modalBody.querySelector('#adjClose').onclick = closeModal;
-  modalBody.querySelector('#adjSave').onclick = async () => {
-    try{
-
-
-      const raw = modalBody.querySelector('#adjAmount').value;
-      if(raw === '' || raw === null) return toast('Amount required');
-      const signedCents = Math.round(Number(raw)*100);
-      if(signedCents === 0) return toast('Amount should not be zero');
-      const note = modalBody.querySelector('#adjNote').value.trim() || 'Adjustment';
-      const tx = {
-        actor: currentUser ? currentUser.uid : null,
-        target_type: targetType,
-        target_id: target.id || target.studentId || target.teacherId || target.id
-        ,
-        type: 'adjustment',
-        amount_cents: signedCents,
-        payment_method: 'manual',
-        note,
-        related_months: [],
-        createdAt: Timestamp.now()
-      };
-      await addDoc(collection(db,'transactions'), tx);
-      await updateTargetBalanceGeneric(targetType, tx.target_id, signedCents); // signedCents may be negative or positive
-      toast('Adjustment saved');
-      closeModal();
-      await loadTransactions();
-      renderPaymentsList('students');
-      renderPaymentsList('teachers');
-      renderPaymentsList('staff');
-      renderDashboard && renderDashboard();
-    }catch(err){ console.error(err); toast('Failed to save adjustment'); }
-  };
-}
-
-/* ---- View transactions (icons + actor name + default note) ---- */
-async function openViewTransactionsModal(e){
-  const triggerEl = (e.currentTarget && e.currentTarget.dataset && e.currentTarget.dataset.id) ? e.currentTarget
-                   : (e.target && e.target.closest && e.target.closest('[data-id]')) ? e.target.closest('[data-id]')
-                   : null;
-  const id = triggerEl ? (triggerEl.dataset && triggerEl.dataset.id) : null;
-  if(!id) return toast('Missing ID for action');
-
-  const activeTab = document.querySelector('#pagePayments .tab.active');
-  const view = activeTab ? activeTab.textContent.toLowerCase() : 'students';
-  const targetType = view === 'students' ? 'student' : (view === 'teachers' ? 'teacher' : 'staff');
-
-  let target = await resolveTargetByAnyId(view, id);
-  if(!target) return toast('Target not found');
+//   let target = await resolveTargetByAnyId(view, id);
+//   if(!target) return toast('Target not found');
 
 
 
-  // Now fetch transactions for that resolved target (we will filter by multiple idCandidates)
-  const snap = await getDocs(collection(db,'transactions'));
-  let txs = snap.docs.map(d=>({ id:d.id, ...d.data() })).filter(t => t.target_type === targetType);
-  const idCandidates = [ String(target.id||''), String(target.studentId||''), String(target.teacherId||''), String(target.idNumber||'' ) ].filter(Boolean);
-  txs = txs.filter(t => idCandidates.includes(String(t.target_id || '')) || idCandidates.includes(String(t.target || '')) );
-  txs.sort((a,b) => (b.createdAt?.seconds||0) - (a.createdAt?.seconds||0));
+
+//   // now proceed to build modal...
+
+//   const html = `
+//     <div style="display:grid;grid-template-columns:1fr;gap:8px">
+//       <div><label>Amount (use negative to decrease balance)</label><input id="adjAmount" type="number" step="0.01" value="0" /></div>
+//       <div><label>Reason / Note</label><input id="adjNote" placeholder="e.g., refund, penalty, manual add" /></div>
+//     </div>
+//     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+//       <button id="adjClose" class="btn btn-ghost">Close</button>
+//       <button id="adjSave" class="btn btn-primary">Save</button>
+//     </div>
+//   `;
+// // where you call showModal(...)
+// showModal(`Reesto Hore • ${escape(target.fullName || target.id || '')}`, html);
+//   modalBody.querySelector('#adjClose').onclick = closeModal;
+//   modalBody.querySelector('#adjSave').onclick = async () => {
+//     try{
+
+
+//       const raw = modalBody.querySelector('#adjAmount').value;
+//       if(raw === '' || raw === null) return toast('Amount required');
+//       const signedCents = Math.round(Number(raw)*100);
+//       if(signedCents === 0) return toast('Amount should not be zero');
+//       const note = modalBody.querySelector('#adjNote').value.trim() || 'Adjustment';
+//       const tx = {
+//         actor: currentUser ? currentUser.uid : null,
+//         target_type: targetType,
+//         target_id: target.id || target.studentId || target.teacherId || target.id
+//         ,
+//         type: 'adjustment',
+//         amount_cents: signedCents,
+//         payment_method: 'manual',
+//         note,
+//         related_months: [],
+//         createdAt: Timestamp.now()
+//       };
+//       await addDoc(collection(db,'transactions'), tx);
+//       await updateTargetBalanceGeneric(targetType, tx.target_id, signedCents); // signedCents may be negative or positive
+//       toast('Adjustment saved');
+//       closeModal();
+//       await loadTransactions();
+//       renderPaymentsList('students');
+//       renderPaymentsList('teachers');
+//       renderPaymentsList('staff');
+//       renderDashboard && renderDashboard();
+//     }catch(err){ console.error(err); toast('Failed to save adjustment'); }
+//   };
+// }
+
+// /* ---- View transactions (icons + actor name + default note) ---- */
+// async function openViewTransactionsModal(e){
+//   const triggerEl = (e.currentTarget && e.currentTarget.dataset && e.currentTarget.dataset.id) ? e.currentTarget
+//                    : (e.target && e.target.closest && e.target.closest('[data-id]')) ? e.target.closest('[data-id]')
+//                    : null;
+//   const id = triggerEl ? (triggerEl.dataset && triggerEl.dataset.id) : null;
+//   if(!id) return toast('Missing ID for action');
+
+//   const activeTab = document.querySelector('#pagePayments .tab.active');
+//   const view = activeTab ? activeTab.textContent.toLowerCase() : 'students';
+//   const targetType = view === 'students' ? 'student' : (view === 'teachers' ? 'teacher' : 'staff');
+
+//   let target = await resolveTargetByAnyId(view, id);
+//   if(!target) return toast('Target not found');
 
 
 
-  const totalMonthly = txs.filter(t=>t.type==='monthly').reduce((s,t)=>s+(t.amount_cents||0),0);
-  const totalAll = txs.reduce((s,t)=>s+(t.amount_cents||0),0);
-  const totalAdj = txs.filter(t=>t.type==='adjustment').reduce((s,t)=>s+(t.amount_cents||0),0);
+//   // Now fetch transactions for that resolved target (we will filter by multiple idCandidates)
+//   const snap = await getDocs(collection(db,'transactions'));
+//   let txs = snap.docs.map(d=>({ id:d.id, ...d.data() })).filter(t => t.target_type === targetType);
+//   const idCandidates = [ String(target.id||''), String(target.studentId||''), String(target.teacherId||''), String(target.idNumber||'' ) ].filter(Boolean);
+//   txs = txs.filter(t => idCandidates.includes(String(t.target_id || '')) || idCandidates.includes(String(t.target || '')) );
+//   txs.sort((a,b) => (b.createdAt?.seconds||0) - (a.createdAt?.seconds||0));
 
-  // resolve actor names in parallel (but we do not show the By column now)
-  const actorNames = await Promise.all(txs.map(t => resolveActorName(t.actor)));
 
-  let html = `<div style="display:flex;justify-content:space-between;align-items:center">
-      <div><div style="font-weight:900">${escape(target.fullName || target.teacherName || target.id)}</div><div class="muted">ID: ${escape(target.studentId||target.teacherId||target.id)}</div></div>
-      <div style="text-align:right"><div class="muted">Balance</div><div style="font-weight:900">${c2p(target.balance_cents||0)}</div></div>
-    </div>`;
 
-  html += `<div style="margin-top:10px;display:flex;gap:12px">
-    <div class="pill">Monthly paid: ${c2p(totalMonthly)}</div>
-    <div class="pill">All: ${c2p(totalAll)}</div>
-    <div class="pill">Reesto Hore: ${c2p(totalAdj)}</div>
-  </div>`;
+//   const totalMonthly = txs.filter(t=>t.type==='monthly').reduce((s,t)=>s+(t.amount_cents||0),0);
+//   const totalAll = txs.reduce((s,t)=>s+(t.amount_cents||0),0);
+//   const totalAdj = txs.filter(t=>t.type==='adjustment').reduce((s,t)=>s+(t.amount_cents||0),0);
 
-  html += `<div style="overflow:auto;margin-top:12px"><table style="width:100%;border-collapse:collapse"><thead><tr>
-    <th>Date</th><th>Type</th><th>Months</th><th style="text-align:right">Amount</th><th>Method</th><th>Note</th><th>Actions</th>
-  </tr></thead><tbody>`;
+//   // resolve actor names in parallel (but we do not show the By column now)
+//   const actorNames = await Promise.all(txs.map(t => resolveActorName(t.actor)));
 
-  txs.forEach((tx, idx) => {
-    const defaultNote = tx.note || (tx.type==='monthly' ? (formatMonthLabel((tx.related_months||[])[0]||'')) : '');
-    const monthsLabel = (tx.related_months && tx.related_months.length) ? tx.related_months.map(m => formatMonthLabel(m)).join(', ') : (tx.related_month ? formatMonthLabel(tx.related_month) : '');
-    html += `<tr style="border-bottom:1px solid #f1f5f9">
-      <td style="padding:8px">${tx.createdAt ? new Date(tx.createdAt.seconds*1000).toLocaleString() : ''}</td>
-      <td style="padding:8px">${escape(displayTypeLabel(tx.type))}</td>
-      <td style="padding:8px">${escape(monthsLabel)}</td>
-      <td style="padding:8px;text-align:right">${c2p(tx.amount_cents||0)}</td>
-      <td style="padding:8px">${escape(tx.payment_method||'')}${tx.mobile_provider ? ' / ' + escape(tx.mobile_provider) : ''}</td>
-      <td style="padding:8px">${escape(defaultNote)}</td>
-      <td style="padding:8px">
-        <button title="Edit" class="icon edit-tx" data-id="${tx.id}" style="border:0;background:transparent">✏️</button>
-        <button title="Delete" class="icon del-tx" data-id="${tx.id}" style="border:0;background:transparent">🗑️</button>
-      </td>
-    </tr>`;
-  });
+//   let html = `<div style="display:flex;justify-content:space-between;align-items:center">
+//       <div><div style="font-weight:900">${escape(target.fullName || target.teacherName || target.id)}</div><div class="muted">ID: ${escape(target.studentId||target.teacherId||target.id)}</div></div>
+//       <div style="text-align:right"><div class="muted">Balance</div><div style="font-weight:900">${c2p(target.balance_cents||0)}</div></div>
+//     </div>`;
 
-  html += `</tbody></table></div><div style="display:flex;justify-content:flex-end;margin-top:12px"><button id="closeTxView" class="btn btn-ghost">Close</button></div>`;
-  showModal('Transactions', html);
+//   html += `<div style="margin-top:10px;display:flex;gap:12px">
+//     <div class="pill">Monthly paid: ${c2p(totalMonthly)}</div>
+//     <div class="pill">All: ${c2p(totalAll)}</div>
+//     <div class="pill">Reesto Hore: ${c2p(totalAdj)}</div>
+//   </div>`;
 
-  modalBody.querySelector('#closeTxView').onclick = closeModal;
-  modalBody.querySelectorAll('.edit-tx').forEach(b => b.onclick = openEditTransactionModal);
-  modalBody.querySelectorAll('.del-tx').forEach(b => b.onclick = deleteTransaction);
-}
+//   html += `<div style="overflow:auto;margin-top:12px"><table style="width:100%;border-collapse:collapse"><thead><tr>
+//     <th>Date</th><th>Type</th><th>Months</th><th style="text-align:right">Amount</th><th>Method</th><th>Note</th><th>Actions</th>
+//   </tr></thead><tbody>`;
+
+//   txs.forEach((tx, idx) => {
+//     const defaultNote = tx.note || (tx.type==='monthly' ? (formatMonthLabel((tx.related_months||[])[0]||'')) : '');
+//     const monthsLabel = (tx.related_months && tx.related_months.length) ? tx.related_months.map(m => formatMonthLabel(m)).join(', ') : (tx.related_month ? formatMonthLabel(tx.related_month) : '');
+//     html += `<tr style="border-bottom:1px solid #f1f5f9">
+//       <td style="padding:8px">${tx.createdAt ? new Date(tx.createdAt.seconds*1000).toLocaleString() : ''}</td>
+//       <td style="padding:8px">${escape(displayTypeLabel(tx.type))}</td>
+//       <td style="padding:8px">${escape(monthsLabel)}</td>
+//       <td style="padding:8px;text-align:right">${c2p(tx.amount_cents||0)}</td>
+//       <td style="padding:8px">${escape(tx.payment_method||'')}${tx.mobile_provider ? ' / ' + escape(tx.mobile_provider) : ''}</td>
+//       <td style="padding:8px">${escape(defaultNote)}</td>
+//       <td style="padding:8px">
+//         <button title="Edit" class="icon edit-tx" data-id="${tx.id}" style="border:0;background:transparent">✏️</button>
+//         <button title="Delete" class="icon del-tx" data-id="${tx.id}" style="border:0;background:transparent">🗑️</button>
+//       </td>
+//     </tr>`;
+//   });
+
+//   html += `</tbody></table></div><div style="display:flex;justify-content:flex-end;margin-top:12px"><button id="closeTxView" class="btn btn-ghost">Close</button></div>`;
+//   showModal('Transactions', html);
+
+//   modalBody.querySelector('#closeTxView').onclick = closeModal;
+//   modalBody.querySelectorAll('.edit-tx').forEach(b => b.onclick = openEditTransactionModal);
+//   modalBody.querySelectorAll('.del-tx').forEach(b => b.onclick = deleteTransaction);
+// }
 
 
 
