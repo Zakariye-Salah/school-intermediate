@@ -178,11 +178,26 @@ async function loadClasses(){
   const snap = await getDocs(collection(db,'classes'));
   classesCache = snap.docs.map(d=>({ id:d.id, ...d.data() }));
 }
+// async function loadSubjects(){
+//   const snap = await getDocs(collection(db,'subjects'));
+//   // subject docs now only keep id + name (we removed max field from admin side)
+//   subjectsCache = snap.docs.map(d=>({ id:d.id, ...d.data() }));
+// }
+// REPLACE your existing loadSubjects() with this block
 async function loadSubjects(){
-  const snap = await getDocs(collection(db,'subjects'));
-  // subject docs now only keep id + name (we removed max field from admin side)
-  subjectsCache = snap.docs.map(d=>({ id:d.id, ...d.data() }));
+  try {
+    const snap = await getDocs(collection(db,'subjects'));
+    const arr = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    // keep both names to avoid mismatched usage in other parts of code
+    subjectsCache = arr;
+    window.subjectsCache = arr;
+  } catch (err) {
+    console.error('loadSubjects failed', err);
+    subjectsCache = [];
+    window.subjectsCache = [];
+  }
 }
+
 async function loadStudents(){
   const snap = await getDocs(collection(db,'students'));
   studentsCache = snap.docs.map(d=>({ id:d.id, ...d.data() }));
@@ -2376,6 +2391,59 @@ function capitalize(str){
   return str.charAt(0).toUpperCase() + str.slice(1);
 }
 
+
+/* ---------------- Robust PDF export + export helpers ---------------- */
+
+function getJsPDFConstructor() {
+  // prefer window.jspdf.jsPDF (umd), then window.jsPDF (global), return null if none
+  try {
+    if (window.jspdf && window.jspdf.jsPDF) return window.jspdf.jsPDF;
+    if (window.jsPDF) return window.jsPDF;
+    if (window.jspdf && window.jspdf.default && window.jspdf.default.jsPDF) return window.jspdf.default.jsPDF;
+  } catch(e){ /* ignore */ }
+  return null;
+}
+
+/** Render element to PNG using html2canvas and add to a pdf (fallback) */
+async function exportElementToPdfFallback(filename, el) {
+  // detect html2canvas (it normally exposes global html2canvas)
+  const h2c = (typeof html2canvas !== 'undefined') ? html2canvas : (window.html2canvas || null);
+  if (!h2c) {
+    alert('PDF export not available (no jsPDF and no html2canvas).');
+    return false;
+  }
+  try {
+    const canvas = await h2c(el, { scale: 2, useCORS: true, logging: false });
+    const img = canvas.toDataURL('image/png');
+    const JsPDF = getJsPDFConstructor();
+    if (!JsPDF) {
+      // try older shape
+      if (window.jspdf && window.jspdf.jsPDF) {
+        const doc = new window.jspdf.jsPDF({ unit:'pt', format:'a4', orientation: 'portrait' });
+        const w = doc.internal.pageSize.getWidth();
+        const h = (canvas.height * (w / canvas.width));
+        doc.addImage(img, 'PNG', 20, 20, w - 40, h);
+        doc.save(filename);
+        return true;
+      }
+      alert('PDF export not available');
+      return false;
+    }
+    const doc = new JsPDF({ unit:'pt', format:'a4', orientation: 'portrait' });
+    const w = doc.internal.pageSize.getWidth();
+    const h = (canvas.height * (w / canvas.width));
+    doc.addImage(img, 'PNG', 20, 20, w - 40, h);
+    doc.save(filename);
+    return true;
+  } catch (e) {
+    console.error('exportElementToPdfFallback failed', e);
+    return false;
+  }
+}
+
+
+
+
 /* ---------- inline SVG helpers & loader utilities ---------- */
 
 function svgPay(){ 
@@ -2396,6 +2464,47 @@ function svgView(){
     <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z" stroke="currentColor" stroke-width="1.4" fill="none"/>
     <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.4" fill="none"/>
   </svg>`; 
+}
+
+/* ---------------- Resolve target robustly ---------------- */
+async function resolveTargetByAnyId(view, id) {
+  // view: 'students'|'teachers'|'staff'
+  id = String(id || '').trim();
+  if(!id) return null;
+
+  // local caches first (try multiple id fields)
+  const tryFind = (pool) => {
+    if(!pool || !pool.length) return null;
+    return pool.find(x => {
+      const fields = [x.id, x.studentId, x.teacherId, x.staffId, x.uid, x.code, x.regId, x.idNumber, x.documentId];
+      for(const f of fields){
+        if(!f) continue;
+        if(String(f) === id) return true;
+        // try match last digits
+        const s = String(f);
+        if(s.endsWith(id) || s.slice(-4) === id || s.slice(-6) === id) return true;
+      }
+      return false;
+    }) || null;
+  };
+
+  let pool = (view === 'students') ? (studentsCache||[]) : (view === 'teachers' ? (teachersCache||[]) : (window.staffCache||[]));
+  let found = tryFind(pool);
+  if(found) return found;
+
+  // try alternate caches
+  found = tryFind(studentsCache||[]) || tryFind(teachersCache||[]) || tryFind(window.staffCache||[]) || null;
+  if(found) return found;
+
+  // final resort: try Firestore get by id (document id)
+  try {
+    const col = (view==='students'?'students': (view==='teachers'?'teachers':'staff'));
+    const snap = await getDoc(doc(db, col, id));
+    if(snap.exists()) return { id: snap.id, ...snap.data() };
+  } catch(e){ /* ignore */ }
+
+  // not found
+  return null;
 }
 
 /** Put a loader inside a button: returns old content so caller can restore. */
@@ -2562,12 +2671,16 @@ async function renderPayments(){
       </div>
     </div>
 
-    <div class="ph-row ph-right" style="justify-content:flex-start">
-      <select id="paymentsClassFilter" style="min-width:150px"><option value="">All classes</option></select>
-      <select id="paymentsStatusFilter" style="min-width:120px"><option value="all">All</option><option value="unpaid">Unpaid</option><option value="paid">Paid</option><option value="free">Free</option></select>
-      <!-- teacher subject filter gets inserted programmatically if needed -->
-      <button id="paymentsExport" class="btn btn-ghost" style="margin-left:auto">Export</button>
-    </div>
+ <div class="ph-row ph-right" style="justify-content:flex-start">
+  <select id="paymentsClassFilter" style="min-width:150px"><option value="">All classes</option></select>
+  <select id="paymentsStatusFilter" style="min-width:120px"><option value="all">All</option><option value="unpaid">Unpaid</option><option value="paid">Paid</option><option value="free">Free</option></select>
+  <button id="paymentsRefresh" class="btn btn-ghost" title="Refresh list" style="margin-left:8px">
+    <!-- refresh SVG -->
+    <svg class="icon-sm" viewBox="0 0 24 24" fill="none"><path d="M21 12a9 9 0 1 0-3 6.2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M21 12v-4h-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </button>
+  <button id="paymentsExport" class="btn btn-ghost" style="margin-left:auto">Export</button>
+</div>
+
   </div>
 
   <div id="paymentsList" style="margin-top:10px"></div>
@@ -2620,6 +2733,23 @@ async function renderPayments(){
   });
 
   document.getElementById('paymentsExport').onclick = exportCurrentPaymentsView;
+
+  const refreshBtn = document.getElementById('paymentsRefresh');
+if (refreshBtn) refreshBtn.onclick = async () => {
+  try {
+    refreshBtn.disabled = true;
+    await Promise.all([ loadClasses(), loadSubjects(), loadStudents(), loadTeachers(), loadStaff(), loadTransactions() ]);
+    // re-populate filters in case classes changed
+    const sel = document.getElementById('paymentsClassFilter');
+    if(sel) sel.innerHTML = '<option value="">All classes</option>' + (classesCache || []).map(c => `<option value="${escape(c.id||c.classId||c.name)}">${escape(c.name||c.displayName||c.id)}</option>`).join('');
+    // re-render the currently active tab
+    const active = document.querySelector('#pagePayments .tab.active');
+    const viewName = active ? active.textContent.toLowerCase() : 'students';
+    await renderPaymentsList(viewName);
+  } catch(e){ console.error('refresh failed', e); toast('Refresh failed'); }
+  finally { refreshBtn.disabled = false; }
+};
+
 
   // initial render
   await renderPaymentsList('students');
@@ -2749,51 +2879,91 @@ modalBody.querySelectorAll('.view-trans-btn').forEach(bb => bb.onclick = openVie
       return;
     }
 
-    // desktop table layout (students)
-    let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-      <strong>Students — ${list.length}</strong><div class="muted">Columns: No, ID, Name, Class, Phone, Fee, Balance, Status, Actions</div></div>`;
-    html += `<div style="overflow:auto"><table style="width:100%;border-collapse:collapse"><thead><tr>
-      <th>No</th><th>ID</th><th>Name</th><th>Class</th><th>Phone</th><th>Fee</th><th>Balance</th><th>Status</th><th>Actions</th>
-    </tr></thead><tbody>`;
+ // DESKTOP students table (replace existing desktop table block)
+list.sort((a,b) => (b.balance_cents||0) - (a.balance_cents||0));
 
-    list.forEach((s, idx) => {
-      const status = (Number(s.fee||0) === 0) ? 'Free' : ((Number(s.balance_cents||0) > 0) ? 'Unpaid' : 'Paid');
-      const feeDisplay = (typeof s.fee === 'number' || (s.fee && !isNaN(Number(s.fee)))) ? (Number(s.fee) === 0 ? '0.00' : String(s.fee)) : '0.00';
-      html += `<tr style="border-bottom:1px solid #f1f5f9">
-        <td style="padding:8px">${idx+1}</td>
-        <td style="padding:8px">${escape(s.studentId||s.id||'')}</td>
-        <td style="padding:8px">${escape(s.fullName||'')}</td>
-        <td style="padding:8px">${escape(s.className || s.class || s.classId || '')}</td>
-        <td style="padding:8px">${escape(s.parentPhone||s.phone||'—')}</td>
-        <td style="padding:8px">${feeDisplay}</td>
-        <td style="padding:8px">${c2p(s.balance_cents||0)}</td>
-        <td style="padding:8px"><span class="badge">${escape(status)}</span></td>
-        <td style="padding:8px">
-  <button class="btn btn-primary btn-sm pay-btn" data-id="${escape(s.studentId||s.id||'')}" title="Pay">${svgPay()}</button>
-<button class="btn btn-secondary btn-sm adj-btn" data-id="${escape(s.studentId||s.id||'')}" title="Reesto Hore">${svgReesto()}</button>
-<button class="btn btn-ghost btn-sm view-trans-btn" data-id="${escape(s.studentId||s.id||'')}" title="View">${svgView()}</button>
+let totalAssignedCents = 0;
+let totalBalanceCents = 0;
 
-        </td>
-      </tr>`;
-    });
+let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+  <strong>Students — ${list.length}</strong><div class="muted">Columns: No, ID, Name, Phone, Class, Assigned Fee, Current Balance, Paid, Actions</div></div>`;
+html += `<div style="overflow:auto"><table style="width:100%;border-collapse:collapse"><thead><tr>
+  <th style="padding:8px">No</th>
+  <th style="padding:8px">ID</th>
+  <th style="padding:8px">Name</th>
+  <th style="padding:8px">Phone</th>
+  <th style="padding:8px">Class</th>
+  <th style="padding:8px;text-align:right">Assigned Fee</th>
+  <th style="padding:8px;text-align:right">Current Balance</th>
+  <th style="padding:8px;text-align:right">Paid</th>
+  <th style="padding:8px">Actions</th>
+</tr></thead><tbody>`;
 
-    html += `</tbody></table></div>`;
-    listRoot.innerHTML = html;
+list.forEach((s, idx) => {
+  // attempt best-effort class name resolution
+  const className = s.className || s.class || (() => {
+    const c = (classesCache||[]).find(x => String(x.id) === String(s.classId || s.class || '') || String(x.name||'') === String(s.class||'')); 
+    return c ? c.name : (s.class || '');
+  })();
 
-    listRoot.querySelectorAll('.pay-btn').forEach(b => b.onclick = openPayModal);
-    listRoot.querySelectorAll('.adj-btn').forEach(b => b.onclick = openAdjustmentModal);
-    listRoot.querySelectorAll('.view-trans-btn').forEach(b => b.onclick = openViewTransactionsModal);
+  const assignedFeeCents = (typeof s.fee === 'number') ? Math.round(Number(s.fee) * 100) : (s.fee && !isNaN(Number(s.fee)) ? Math.round(Number(s.fee) * 100) : 0);
+  const balanceCents = Number(s.balance_cents || 0);
+  const paidCents = assignedFeeCents - balanceCents;
+
+  totalAssignedCents += assignedFeeCents;
+  totalBalanceCents += balanceCents;
+
+  html += `<tr style="border-bottom:1px solid #f1f5f9">
+    <td style="padding:8px">${idx+1}</td>
+    <td style="padding:8px">${escape(s.studentId||s.id||'')}</td>
+    <td style="padding:8px">${escape(s.fullName||'')}</td>
+    <td style="padding:8px">${escape(s.parentPhone||s.phone||'—')}</td>
+    <td style="padding:8px">${escape(className||'')}</td>
+    <td style="padding:8px;text-align:right"><span class="total-blue" style="font-weight:900">${c2p(assignedFeeCents)}</span></td>
+    <td style="padding:8px;text-align:right"><span class="total-red" style="font-weight:900">${c2p(balanceCents)}</span></td>
+    <td style="padding:8px;text-align:right"><span class="total-green" style="font-weight:900">${c2p(paidCents)}</span></td>
+    <td style="padding:8px">
+      <button class="btn btn-primary btn-sm pay-btn" data-id="${escape(s.studentId||s.id||'')}" title="Pay">${svgPay()}</button>
+      <button class="btn btn-secondary btn-sm adj-btn" data-id="${escape(s.studentId||s.id||'')}" title="Reesto Hore">${svgReesto()}</button>
+      <button class="btn btn-ghost btn-sm view-trans-btn" data-id="${escape(s.studentId||s.id||'')}" title="View">${svgView()}</button>
+    </td>
+  </tr>`;
+});
+
+html += `</tbody></table></div>`;
+
+// totals card (colored)
+const totalPaidCents = totalAssignedCents - totalBalanceCents;
+const totalsHtml = `
+  <div class="totals-card card" style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">
+    <div style="font-weight:900">Totals</div>
+    <div class="totals-block" style="flex-direction:row;gap:18px;align-items:center">
+      <div class="tot-line"><div style="min-width:120px">Assigned fee total:</div><div class="total-blue">${c2p(totalAssignedCents)}</div></div>
+      <div class="tot-line"><div style="min-width:120px">Current balance total:</div><div class="total-red">${c2p(totalBalanceCents)}</div></div>
+      <div class="tot-line"><div style="min-width:120px">Total Paid:</div><div class="total-green">${c2p(totalPaidCents)}</div></div>
+    </div>
+  </div>
+`;
+
+listRoot.innerHTML = html + totalsHtml;
+
+// wire buttons
+listRoot.querySelectorAll('.pay-btn').forEach(b => b.onclick = openPayModal);
+listRoot.querySelectorAll('.adj-btn').forEach(b => b.onclick = openAdjustmentModal);
+listRoot.querySelectorAll('.view-trans-btn').forEach(b => b.onclick = openViewTransactionsModal);
+
     return;
   }
-
-  // TEACHERS / STAFF (desktop & mobile same table for simplicity)
+  // TEACHERS / STAFF (mobile-first rendering plus desktop fallback)
   if(view === 'teachers' || view === 'staff'){
-    const pool = view === 'teachers' ? (teachersCache || []) : (window.staffCache || []);
+    const isTeacherView = (view === 'teachers');
+    const pool = isTeacherView ? (teachersCache || []) : (window.staffCache || []);
     let list = pool.slice();
 
-    // ensure teacher subject names resolved (map subject ids to names)
-    if(view === 'teachers'){
-      (list || []).forEach(t => {
+    // ensure subject names
+    if(isTeacherView){
+      if(!subjectsCache || !subjectsCache.length) await loadSubjects();
+      list.forEach(t => {
         if(!t.subjectName){
           if(t.subjects && Array.isArray(t.subjects)){
             t.subjectName = t.subjects.map(id => {
@@ -2810,7 +2980,8 @@ modalBody.querySelectorAll('.view-trans-btn').forEach(bb => bb.onclick = openVie
       });
     }
 
-    if(subjectFilter && view === 'teachers'){
+    // optional subject filter for teachers already applied earlier
+    if(subjectFilter && isTeacherView){
       list = list.filter(t => {
         if(!t.subjects && !t.subjectId) return false;
         if(Array.isArray(t.subjects)) return t.subjects.includes(subjectFilter);
@@ -2827,11 +2998,71 @@ modalBody.querySelectorAll('.view-trans-btn').forEach(bb => bb.onclick = openVie
 
     list.sort((a,b) => (b.balance_cents||0) - (a.balance_cents||0));
 
+    // mobile rendering
+    if(isMobileViewport()){
+      let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><strong>${capitalize(view)} — ${list.length}</strong><div class="muted">Tap "more" to see actions</div></div>`;
+      html += `<div style="display:flex;flex-direction:column;gap:8px">`;
+      list.forEach((t, idx) => {
+        const idFull = String(t.teacherId||t.id||'');
+        const idShort = idFull.slice(-4) || idFull;
+        const classLine = (t.classes && Array.isArray(t.classes) && t.classes.length) ? t.classes.join(', ') : (t.className || t.class || '');
+        const salary = t.salary != null ? String(t.salary) : '—';
+        const balance = c2p(t.balance_cents||0);
+        html += `<div class="card" style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+          <div style="display:flex;gap:8px;align-items:center">
+            <div style="font-weight:800">${idx+1}</div>
+            <div style="min-width:48px"><div style="font-weight:900">${escape(idShort)}</div></div>
+            <div>
+              <div style="font-weight:900">${escape(t.fullName||'')}</div>
+              <div class="muted" style="font-size:12px">${escape(classLine)}</div>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <div style="text-align:right">
+              <div class="balance-red" style="font-weight:900">${balance}</div>
+              <div class="muted" style="font-size:12px">Salary: <span class="fee-blue">${escape(salary)}</span></div>
+            </div>
+            <div>
+              <button class="btn btn-ghost more-info-teacher" data-id="${escape(t.teacherId||t.id||'')}" title="More">⋯</button>
+            </div>
+          </div>
+        </div>`;
+      });
+      html += `</div>`;
+      listRoot.innerHTML = html;
+
+      listRoot.querySelectorAll('.more-info-teacher').forEach(b => {
+        b.onclick = (e) => {
+          const id = e.currentTarget.dataset.id;
+          const tt = (teachersCache||[]).find(x => (x.teacherId===id || x.id===id));
+          if(!tt) return;
+          const classLine = (tt.classes && Array.isArray(tt.classes) && tt.classes.length) ? tt.classes.join(', ') : (tt.className || tt.class || '');
+          const body = `<div style="font-weight:900">${escape(tt.fullName||'')}</div>
+            <div class="muted">ID: ${escape(tt.teacherId||tt.id||'')}</div>
+            <div style="margin-top:8px">Classes: <span class="muted">${escape(classLine)}</span></div>
+            <div>Phone: ${escape(tt.phone||'—')}</div>
+            <div style="margin-top:8px">Balance: <span class="balance-red">${c2p(tt.balance_cents||0)}</span></div>
+            <div>Salary: <span class="fee-blue">${tt.salary != null ? escape(String(tt.salary)) : '—'}</span></div>
+            <div class="modal-more-actions">
+              <button class="btn btn-primary pay-btn" data-id="${escape(tt.teacherId||tt.id||'')}">${svgPay()} Pay</button>
+              <button class="btn btn-secondary adj-btn" data-id="${escape(tt.teacherId||tt.id||'')}">${svgReesto()} Reesto Hore</button>
+              <button class="btn btn-ghost view-trans-btn" data-id="${escape(tt.teacherId||tt.id||'')}">${svgView()} View</button>
+            </div>`;
+          showModal('Teacher details', body);
+          modalBody.querySelectorAll('.pay-btn').forEach(bb => bb.onclick = openPayModal);
+          modalBody.querySelectorAll('.adj-btn').forEach(bb => bb.onclick = openAdjustmentModal);
+          modalBody.querySelectorAll('.view-trans-btn').forEach(bb => bb.onclick = openViewTransactionsModal);
+        };
+      });
+
+      return;
+    }
+
+    // desktop fallback (table)
     let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><strong>${capitalize(view)} — ${list.length}</strong><div class="muted">Columns: No, ID, Name, Subject, Class, Salary, Balance, Actions</div></div>`;
     html += `<div style="overflow:auto"><table style="width:100%;border-collapse:collapse"><thead><tr>
       <th>No</th><th>ID</th><th>Name</th><th>Subject</th><th>Class</th><th>Salary</th><th>Balance</th><th>Actions</th>
     </tr></thead><tbody>`;
-
     list.forEach((t, idx) => {
       html += `<tr style="border-bottom:1px solid #f1f5f9">
         <td style="padding:8px">${idx+1}</td>
@@ -2842,16 +3073,12 @@ modalBody.querySelectorAll('.view-trans-btn').forEach(bb => bb.onclick = openVie
         <td style="padding:8px">${t.salary != null ? (String(t.salary)) : '—'}</td>
         <td style="padding:8px">${c2p(t.balance_cents||0)}</td>
         <td style="padding:8px">
- 
-
           <button class="btn btn-primary btn-sm pay-btn" data-id="${escape(t.teacherId||t.id||'')}" title="Pay">${svgPay()}</button>
           <button class="btn btn-secondary btn-sm adj-btn" data-id="${escape(t.teacherId||t.id||'')}" title="Reesto Hore">${svgReesto()}</button>
           <button class="btn btn-ghost btn-sm view-trans-btn" data-id="${escape(t.teacherId||t.id||'')}" title="View">${svgView()}</button>
-
         </td>
       </tr>`;
     });
-
     html += `</tbody></table></div>`;
     listRoot.innerHTML = html;
 
@@ -2860,10 +3087,65 @@ modalBody.querySelectorAll('.view-trans-btn').forEach(bb => bb.onclick = openVie
     listRoot.querySelectorAll('.view-trans-btn').forEach(b => b.onclick = openViewTransactionsModal);
     return;
   }
+   // EXPENSES view (mobile cards + desktop table)
 
-  // EXPENSES view (unchanged except actions)
-  if(view === 'expenses'){
+   if(view === 'expenses'){
     const rows = (transactionsCache || []).filter(t => t.target_type === 'expense' && !t.is_deleted).sort((a,b) => (b.createdAt?.seconds||0) - (a.createdAt?.seconds||0));
+  
+    // mobile view -> cards
+    if(isMobileViewport()){
+      let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><strong>Expenses — ${rows.length}</strong><div class="muted">Tap an item for actions</div></div>`;
+      html += `<div style="display:flex;flex-direction:column;gap:8px">`;
+      rows.forEach((tx, idx) => {
+        const amount = c2p(tx.amount_cents || 0);
+        const dateStr = tx.createdAt ? new Date(tx.createdAt.seconds*1000).toLocaleDateString() : '';
+        html += `<div class="card" style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+          <div style="display:flex;gap:8px;align-items:center">
+            <div style="font-weight:800">${idx+1}</div>
+            <div style="min-width:48px"><div style="font-weight:900">${escape((tx.id||'').slice(-4) || tx.id || '')}</div></div>
+            <div>
+              <div style="font-weight:900">${escape(tx.note || tx.expense_name || 'Expense')}</div>
+              <div class="muted" style="font-size:12px">${escape(tx.subtype || '')}</div>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <div style="text-align:right">
+              <div class="balance-red" style="font-weight:900">${amount}</div>
+              <div class="muted" style="font-size:12px">${escape(dateStr)}</div>
+            </div>
+            <div>
+              <button class="btn btn-ghost more-info-expense" data-id="${escape(tx.id||'')}" title="More">⋯</button>
+            </div>
+          </div>
+        </div>`;
+      });
+      html += `</div>`;
+      listRoot.innerHTML = html;
+  
+      // wire more-info-expense
+      listRoot.querySelectorAll('.more-info-expense').forEach(b => {
+        b.onclick = (ev) => {
+          const id = ev.currentTarget.dataset.id;
+          const tx = (rows||[]).find(r => r.id === id);
+          if(!tx) return;
+          const body = `<div style="font-weight:900">${escape(tx.note || tx.expense_name || 'Expense')}</div>
+            <div class="muted">Category: ${escape(tx.subtype||'')}</div>
+            <div style="margin-top:8px">Amount: <strong>${c2p(tx.amount_cents||0)}</strong></div>
+            <div>Date: ${tx.createdAt ? new Date(tx.createdAt.seconds*1000).toLocaleString() : ''}</div>
+            <div style="margin-top:10px;display:flex;gap:8px;justify-content:flex-end">
+              <button class="btn btn-ghost edit-expense" data-id="${escape(id)}">Edit</button>
+              <button class="btn btn-danger del-expense" data-id="${escape(id)}">Delete</button>
+            </div>`;
+          showModal('Expense', body);
+          modalBody.querySelectorAll('.edit-expense').forEach(bb => bb.onclick = openEditTransactionModal);
+          modalBody.querySelectorAll('.del-expense').forEach(bb => bb.onclick = deleteTransaction);
+        };
+      });
+  
+      return;
+    }
+  
+    // desktop table fallback
     let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><strong>Expenses — ${rows.length}</strong><div class="muted">Columns: No, Name, Category, Amount, Date, Actions</div></div>`;
     html += `<div style="overflow:auto"><table style="width:100%;border-collapse:collapse"><thead><tr><th>No</th><th>Name</th><th>Category</th><th>Amount</th><th>Date</th><th>Actions</th></tr></thead><tbody>`;
     rows.forEach((tx, idx) => {
@@ -2874,8 +3156,8 @@ modalBody.querySelectorAll('.view-trans-btn').forEach(bb => bb.onclick = openVie
         <td style="padding:8px">${c2p(tx.amount_cents || 0)}</td>
         <td style="padding:8px">${tx.createdAt ? new Date(tx.createdAt.seconds * 1000).toLocaleString() : ''}</td>
         <td style="padding:8px">
-          <button class="btn btn-ghost btn-sm edit-expense" data-id="${tx.id}" title="Edit">✏️</button>
-          <button class="btn btn-danger btn-sm del-expense" data-id="${tx.id}" title="Delete">🗑️</button>
+          <button class="btn btn-ghost edit-expense" data-id="${tx.id}" title="Edit">✏️</button>
+          <button class="btn btn-danger del-expense" data-id="${tx.id}" title="Delete">🗑️</button>
         </td>
       </tr>`;
     });
@@ -2885,6 +3167,7 @@ modalBody.querySelectorAll('.view-trans-btn').forEach(bb => bb.onclick = openVie
     listRoot.querySelectorAll('.del-expense').forEach(b => b.onclick = deleteTransaction);
     return;
   }
+
 }
 
 
@@ -2913,29 +3196,45 @@ async function doExport(format){
   if(statusFilter && statusFilter !== 'all') titleParts.push(capitalize(statusFilter));
   const title = titleParts.join(' • ');
 
+  // build rows for CSV / for PDF autoTable body
+  // build rows for CSV / for PDF autoTable body (REPLACE existing rows building)
   const rows = [];
   if(view === 'students'){
-    rows.push([title]);
-    rows.push(['ID','Name','Class','Phone','AssignedFee','CurrentBalance']);
-    (studentsCache||[]).forEach(s => rows.push([s.studentId||s.id, s.fullName||'', s.className||s.class||'', s.parentPhone||'', s.fee||'0.00', c2p(s.balance_cents||0)]));
+    rows.push(['No','ID','Name','Phone','Class','AssignedFee','CurrentBalance','Paid']);
+    let idx = 0;
+    let totalAssignedCents = 0, totalBalanceCents = 0;
+    (studentsCache||[]).forEach(s => {
+      idx++;
+      const className = s.className || s.class || ((classesCache||[]).find(c => String(c.id) === String(s.classId||'') || String(c.name||'') === String(s.class||'')) || {}).name || '';
+      const assignedCents = (s.fee != null && !isNaN(Number(s.fee))) ? Math.round(Number(s.fee)*100) : 0;
+      const balanceCents = Number(s.balance_cents || 0);
+      const paidCents = assignedCents - balanceCents;
+      totalAssignedCents += assignedCents;
+      totalBalanceCents += balanceCents;
+      rows.push([idx, s.studentId||s.id, s.fullName||'', s.parentPhone||'', className, c2p(assignedCents), c2p(balanceCents), c2p(paidCents)]);
+    });
+    // totals row appended
+    rows.push([]);
+    rows.push(['Totals','','','','', c2p(totalAssignedCents), c2p(totalBalanceCents), c2p(totalAssignedCents - totalBalanceCents)]);
   } else if(view === 'teachers'){
-    rows.push([title]);
-    rows.push(['ID','Name','Subject','Phone','Salary','CurrentBalance']);
-    (teachersCache||[]).forEach(t => rows.push([t.teacherId||t.id, t.fullName||'', (t.subjectName||t.subjectId||''), t.phone||'', t.salary||'', c2p(t.balance_cents||0)]));
+    rows.push(['No','ID','Name','Subject','Phone','Salary','CurrentBalance']);
+    let i = 0;
+    (teachersCache||[]).forEach(t => { i++; rows.push([i, t.teacherId||t.id, t.fullName||'', t.subjectName||t.subjectId||'', t.phone||'', (t.salary!=null?String(t.salary):''), c2p(t.balance_cents||0)]); });
   } else if(view === 'staff'){
-    rows.push([title]);
-    rows.push(['ID','Name','Phone','Role','CurrentBalance']);
-    (window.staffCache||[]).forEach(s => rows.push([s.id, s.fullName||'', s.phone||'', s.role||'', c2p(s.balance_cents||0)]));
+    rows.push(['No','ID','Name','Phone','Role','CurrentBalance']);
+    let i = 0;
+    (window.staffCache||[]).forEach(s => { i++; rows.push([i, s.id, s.fullName||'', s.phone||'', s.role||'', c2p(s.balance_cents||0)]); });
   } else {
-    rows.push([title]);
     rows.push(['TransactionID','Note','Category','Amount','Date']);
     (transactionsCache||[]).filter(t=> t.target_type === 'expense' && !t.is_deleted).forEach(t => {
       rows.push([t.id, t.note||'', t.subtype||'', c2p(t.amount_cents||0), t.createdAt ? new Date(t.createdAt.seconds*1000).toISOString() : '']);
     });
   }
 
+  // CSV branch unchanged (keeps title + rows)
   if(format === 'csv'){
-    const csv = rows.map(r => r.map(c => '"' + String(c||'').replace(/"/g,'""') + '"').join(',')).join('\n');
+    const csvrows = [[title], [], ...rows];
+    const csv = csvrows.map(r => r.map(c => '"' + String(c||'').replace(/"/g,'""') + '"').join(',')).join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a'); a.href = url; a.download = `export-${view}.csv`; a.click(); URL.revokeObjectURL(url);
@@ -2943,182 +3242,291 @@ async function doExport(format){
   }
 
   if(format === 'pdf'){
-    const { jsPDF } = window.jspdf || {};
-    if(!jsPDF) {
-      try{ const doc = new window.jspdf.jsPDF({orientation:'landscape'}); doc.autoTable({ head:[rows[1]], body:rows.slice(2), styles:{fontSize:8} }); doc.save(`export-${view}.pdf`); }
-      catch(e){ alert('PDF export not available'); }
-      return;
+    const JsPDF = getJsPDFConstructor();
+    if (JsPDF) {
+      try {
+        const doc = new JsPDF({ orientation: 'landscape' });
+        // try to embed logo (if accessible) before the table
+        if (school.logo) {
+          try {
+            // fetch logo and convert to dataURL
+            const resp = await fetch(school.logo);
+            const blob = await resp.blob();
+            const reader = new FileReader();
+            const imgData = await new Promise((res, rej) => {
+              reader.onload = () => res(reader.result);
+              reader.onerror = rej;
+              reader.readAsDataURL(blob);
+            });
+            // draw image (fit left)
+            doc.addImage(imgData, 'PNG', 20, 12, 48, 48);
+            doc.setFontSize(14);
+            doc.text(String(title), 80, 32);
+          } catch(e){ console.warn('logo embedding failed', e); doc.text(String(title), 20, 32); }
+        } else {
+          doc.text(String(title), 20, 32);
+        }
+
+        // build autoTable head/body
+        if (doc.autoTable) {
+          // ensure head row is the first rows item (if we added No/ID etc.)
+          const head = [ rows[0] ];
+          const body = rows.slice(1);
+          doc.autoTable({
+            startY: 56,
+            head,
+            body,
+            styles: { fontSize: 8, cellPadding: 4 },
+            headStyles: { fillColor: [240,240,240], textColor: [20,20,20], fontStyle: 'bold' },
+            margin: { left: 14, right: 14 }
+          });
+          doc.save(`export-${view}.pdf`);
+          return;
+        }
+      } catch (e) {
+        console.warn('jsPDF/autoTable attempt failed, falling back to image export', e);
+      }
     }
-    const doc = new jsPDF({orientation:'landscape'});
-    // title as a header
-    doc.setFontSize(14);
-    doc.text(title, 20, 30);
-    doc.autoTable({ startY: 40, head:[rows[1]], body:rows.slice(2), styles:{fontSize:8} });
-    doc.save(`export-${view}.pdf`);
+
+    // fallback to html2canvas method (unchanged)
+    try {
+      const container = document.createElement('div');
+      container.style.padding = '12px';
+      container.style.background = '#fff';
+      const logo = document.createElement('img');
+      logo.src = school.logo || 'assets/logo.png';
+      logo.style.maxHeight = '48px';
+      logo.style.display = 'block';
+      logo.style.marginBottom = '6px';
+      container.appendChild(logo);
+      const h = document.createElement('div');
+      h.textContent = title;
+      h.style.fontWeight = '800';
+      h.style.marginBottom = '8px';
+      container.appendChild(h);
+
+      const table = document.createElement('table');
+      table.style.borderCollapse = 'collapse';
+      table.style.width = '100%';
+      const thead = document.createElement('thead');
+      const trh = document.createElement('tr');
+      rows[0].forEach(col => {
+        const th = document.createElement('th');
+        th.textContent = col;
+        th.style.border = '1px solid #ddd';
+        th.style.padding = '6px';
+        th.style.fontWeight = '800';
+        trh.appendChild(th);
+      });
+      thead.appendChild(trh);
+      table.appendChild(thead);
+      const tbody = document.createElement('tbody');
+      rows.slice(1).forEach(r => {
+        const tr = document.createElement('tr');
+        r.forEach(cell => {
+          const td = document.createElement('td');
+          td.textContent = String(cell||'');
+          td.style.border = '1px solid #eee';
+          td.style.padding = '6px';
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      container.appendChild(table);
+      document.body.appendChild(container);
+      const ok = await exportElementToPdfFallback(`export-${view}.pdf`, container);
+      container.remove();
+      if (!ok) alert('PDF export not available');
+      return;
+    } catch(e){
+      console.error('PDF fallback failed', e);
+      alert('PDF export failed');
+    }
   }
+
 }
+
 
 
 /* ---- Pay modal (improved) ---- */
 async function openPayModal(e){
-  const id = e.target.dataset.id;
+  // robustly find the element that carries data-id (works whether user clicked svg, icon, or button)
+  const triggerEl = (e.currentTarget && e.currentTarget.dataset && e.currentTarget.dataset.id) ? e.currentTarget
+                   : (e.target && e.target.closest && e.target.closest('[data-id]')) ? e.target.closest('[data-id]')
+                   : null;
+  const id = triggerEl ? (triggerEl.dataset && triggerEl.dataset.id) : null;
+  if(!id) return toast('Missing ID for action');
+
   const activeTab = document.querySelector('#pagePayments .tab.active');
   const view = activeTab ? activeTab.textContent.toLowerCase() : 'students';
   const targetType = view === 'students' ? 'student' : (view === 'teachers' ? 'teacher' : 'staff');
-  let target = null;
-  if(targetType === 'student') target = (studentsCache||[]).find(s => s.studentId === id || s.id === id);
-  else if(targetType === 'teacher') target = (teachersCache||[]).find(t => t.teacherId === id || t.id === id);
-  else target = (window.staffCache||[]).find(s => s.id === id);
-  if(!target) return toast('Target not found');
+
+  // allow flexible resolution (matches last-4 / last-6 or doc id)
+  let target = await resolveTargetByAnyId(view, id);
+  if (!target) return toast('Target not found');
 
   const currentBalance = Number(target.balance_cents || 0);
   const defaultPhone = target.parentPhone || target.phone || '';
   const now = new Date();
   const curMonth = now.getMonth()+1;
   const curYear = now.getFullYear();
-
-  const html = `
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-      <div><label>Student / Staff</label><div style="font-weight:900;margin-bottom:6px">${escape(target.fullName||target.teacherName||target.id||'')}</div></div>
-      <div><label>Current balance</label><div style="font-weight:900;margin-bottom:6px">${c2p(currentBalance)}</div></div>
-
-      <div><label>Amount</label><input id="payAmount" type="number" step="0.01" value="${c2p(currentBalance)}" /></div>
-      <div><label>Payment Type</label>
-        <select id="payType">
-          <option value="monthly">Monthly</option>
-          <option value="id-card">ID Card</option>
-          <option value="registration">Registration</option>
-          ${targetType!=='student'?'<option value="salary">Salary</option>':''}
-          <option value="other">Other</option>
-        </select>
+  // ... rest of original function unchanged ...
+    const html = `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div><label>Student / Staff</label><div style="font-weight:900;margin-bottom:6px">${escape(target.fullName||target.teacherName||target.id||'')}</div></div>
+        <div><label>Current balance</label><div style="font-weight:900;margin-bottom:6px">${c2p(currentBalance)}</div></div>
+  
+        <div><label>Amount</label><input id="payAmount" type="number" step="0.01" value="${c2p(currentBalance)}" /></div>
+        <div><label>Payment Type</label>
+          <select id="payType">
+            <option value="monthly">Monthly</option>
+            <option value="id-card">ID Card</option>
+            <option value="registration">Registration</option>
+            ${targetType!=='student'?'<option value="salary">Salary</option>':''}
+            <option value="other">Other</option>
+          </select>
+        </div>
+  
+        <div id="monthPicker"><label>Month</label>
+          <select id="payMonth">${Array.from({length:12},(_,i)=>`<option value="${i+1}" ${i+1===curMonth?'selected':''}>${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][i]}</option>`).join('')}</select>
+        </div>
+  
+        <div><label>Year</label><input id="payYear" type="number" min="${curYear-5}" max="${curYear+5}" value="${curYear}" /></div>
+  
+        <div id="multiMonthsWrapper" style="display:none;grid-column:1 / -1">
+          <label>Select months (multi)</label>
+          <select id="payMonths" multiple size="6">${Array.from({length:12},(_,i)=>`<option value="${i+1}">${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][i]}</option>`).join('')}</select>
+        </div>
+  
+        <div><label>Payment method</label><select id="payMethod"><option value="mobile">Mobile</option><option value="cash">Cash</option><option value="card">Card</option></select></div>
+        <div id="mobileProviderWrapper"><label>Mobile provider</label><select id="mobileProvider"><option>Hormuud</option><option>Somnet</option><option>Somtel</option><option>Telesom</option><option>Amtel</option><option>Other</option></select></div>
+        <div><label>Payer Phone</label><input id="payerPhone" value="${escape(defaultPhone)}" /></div>
+        <div style="grid-column:1 / -1"><label>Note</label><input id="payNote" placeholder="Optional note (auto-filled for monthly/salary)" /></div>
       </div>
-
-      <div id="monthPicker"><label>Month</label>
-        <select id="payMonth">${Array.from({length:12},(_,i)=>`<option value="${i+1}" ${i+1===curMonth?'selected':''}>${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][i]}</option>`).join('')}</select>
+  
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+        <button id="payClose" class="btn btn-ghost">Close</button>
+        <button id="toggleMultiMonths" class="btn btn-ghost">Select multiple months</button>
+        <button id="paySave" class="btn btn-primary">Save</button>
       </div>
-
-      <div><label>Year</label><input id="payYear" type="number" min="${curYear-5}" max="${curYear+5}" value="${curYear}" /></div>
-
-      <div id="multiMonthsWrapper" style="display:none;grid-column:1 / -1">
-        <label>Select months (multi)</label>
-        <select id="payMonths" multiple size="6">${Array.from({length:12},(_,i)=>`<option value="${i+1}">${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][i]}</option>`).join('')}</select>
-      </div>
-
-      <div><label>Payment method</label><select id="payMethod"><option value="mobile">Mobile</option><option value="cash">Cash</option><option value="card">Card</option></select></div>
-      <div id="mobileProviderWrapper"><label>Mobile provider</label><select id="mobileProvider"><option>Hormuud</option><option>Somnet</option><option>Somtel</option><option>Telesom</option><option>Amtel</option><option>Other</option></select></div>
-      <div><label>Payer Phone</label><input id="payerPhone" value="${escape(defaultPhone)}" /></div>
-      <div style="grid-column:1 / -1"><label>Note</label><input id="payNote" placeholder="Optional note (auto-filled for monthly/salary)" /></div>
-    </div>
-
-    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
-      <button id="payClose" class="btn btn-ghost">Close</button>
-      <button id="toggleMultiMonths" class="btn btn-ghost">Select multiple months</button>
-      <button id="paySave" class="btn btn-primary">Save</button>
-    </div>
-  `;
-  showModal(`Pay • ${escape(target.fullName||target.teacherName||target.id||'')}`, html);
-
-  const payType = modalBody.querySelector('#payType');
-  const multiWrapper = modalBody.querySelector('#multiMonthsWrapper');
-  const toggleMulti = modalBody.querySelector('#toggleMultiMonths');
-  const payMonth = modalBody.querySelector('#payMonth');
-  const payYear = modalBody.querySelector('#payYear');
-  const payMonths = modalBody.querySelector('#payMonths');
-  const payNote = modalBody.querySelector('#payNote');
-  const payMethodEl = modalBody.querySelector('#payMethod');
-  const mobileProviderWrapper = modalBody.querySelector('#mobileProviderWrapper');
-
-  function fillDefaultNote(){
-    const t = payType.value;
-    if(!payNote.value){
-      if(t==='monthly') payNote.value = `lacagta bish ${payYear.value}-${String(payMonth.value).padStart(2,'0')}`;
-      else if(t==='id-card') payNote.value = 'lacagta id card';
-      else if(t==='registration') payNote.value = 'lacagta registration';
-      else if(t==='salary') payNote.value = 'lacagta mushaar';
+    `;
+    showModal(`Pay • ${escape(target.fullName||target.teacherName||target.id||'')}`, html);
+  
+    const payType = modalBody.querySelector('#payType');
+    const multiWrapper = modalBody.querySelector('#multiMonthsWrapper');
+    const toggleMulti = modalBody.querySelector('#toggleMultiMonths');
+    const payMonth = modalBody.querySelector('#payMonth');
+    const payYear = modalBody.querySelector('#payYear');
+    const payMonths = modalBody.querySelector('#payMonths');
+    const payNote = modalBody.querySelector('#payNote');
+    const payMethodEl = modalBody.querySelector('#payMethod');
+    const mobileProviderWrapper = modalBody.querySelector('#mobileProviderWrapper');
+  
+    function fillDefaultNote(){
+      const t = payType.value;
+      if(!payNote.value){
+        if(t==='monthly') payNote.value = `lacagta bish ${payYear.value}-${String(payMonth.value).padStart(2,'0')}`;
+        else if(t==='id-card') payNote.value = 'lacagta id card';
+        else if(t==='registration') payNote.value = 'lacagta registration';
+        else if(t==='salary') payNote.value = 'lacagta mushaar';
+      }
     }
+  
+    payType.onchange = () => { modalBody.querySelector('#monthPicker').style.display = payType.value==='monthly' ? 'block' : 'none'; fillDefaultNote(); };
+    payMethodEl.onchange = () => { mobileProviderWrapper.style.display = payMethodEl.value === 'mobile' ? 'block' : 'none'; };
+    toggleMulti.onclick = () => {
+      multiWrapper.style.display = multiWrapper.style.display === 'none' ? 'block' : 'none';
+      modalBody.querySelector('#monthPicker').style.display = multiWrapper.style.display === 'none' ? 'block' : 'none';
+    };
+    payMethodEl.onchange();
+    fillDefaultNote();
+  
+    modalBody.querySelector('#payClose').onclick = closeModal;
+    modalBody.querySelector('#paySave').onclick = async () => {
+      const btn = modalBody.querySelector('#paySave');
+      const oldHtml = putButtonLoader(btn);
+      try{
+        const raw = modalBody.querySelector('#payAmount').value;
+        if(!raw) { toast('Amount required'); restoreButton(btn, oldHtml); return; }
+        const amountCents = p2c(raw);
+        if(amountCents <= 0) { toast('Amount must be > 0'); restoreButton(btn, oldHtml); return; }
+        const type = payType.value;
+        let relatedMonths = [];
+        if(multiWrapper.style.display !== 'none'){
+          relatedMonths = Array.from(payMonths.selectedOptions).map(o => `${payYear.value}-${String(o.value).padStart(2,'0')}`);
+        } else {
+          relatedMonths = [`${payYear.value}-${String(payMonth.value).padStart(2,'0')}`];
+        }
+        const payment_method = payMethodEl.value;
+        const mobile_provider = modalBody.querySelector('#mobileProvider') ? modalBody.querySelector('#mobileProvider').value : null;
+        const payer_phone = modalBody.querySelector('#payerPhone').value.trim() || null;
+        const note = modalBody.querySelector('#payNote').value.trim() || null;
+    
+  
+        const tx = {
+          actor: currentUser ? currentUser.uid : null,
+          target_type: targetType,
+          target_id: target.id || target.studentId || target.teacherId || target.id
+          ,
+          type,
+          amount_cents: amountCents,
+          payment_method,
+          mobile_provider,
+          payer_phone,
+          note,
+          related_months: type === 'monthly' ? relatedMonths : [],
+          createdAt: Timestamp.now(),
+        };
+    
+        await addDoc(collection(db,'transactions'), tx);
+    
+        if(type === 'monthly' && targetType === 'student'){
+          await updateTargetBalanceGeneric('student', tx.target_id, -amountCents);
+        }
+        if(type === 'salary' && (targetType === 'teacher' || targetType === 'staff')){
+          await updateTargetBalanceGeneric(targetType, tx.target_id, -amountCents);
+        }
+    
+        toast('Payment recorded');
+        closeModal();
+        await loadTransactions();
+        const active = document.querySelector('#pagePayments .tab.active');
+        const viewName = active ? active.textContent.toLowerCase() : 'students';
+        await renderPaymentsList(viewName);
+        renderDashboard && renderDashboard();
+      }catch(err){
+        console.error(err); toast('Failed to save payment');
+      } finally {
+        restoreButton(btn, oldHtml);
+      }
+    };
+    
+    
   }
 
-  payType.onchange = () => { modalBody.querySelector('#monthPicker').style.display = payType.value==='monthly' ? 'block' : 'none'; fillDefaultNote(); };
-  payMethodEl.onchange = () => { mobileProviderWrapper.style.display = payMethodEl.value === 'mobile' ? 'block' : 'none'; };
-  toggleMulti.onclick = () => {
-    multiWrapper.style.display = multiWrapper.style.display === 'none' ? 'block' : 'none';
-    modalBody.querySelector('#monthPicker').style.display = multiWrapper.style.display === 'none' ? 'block' : 'none';
-  };
-  payMethodEl.onchange();
-  fillDefaultNote();
-
-  modalBody.querySelector('#payClose').onclick = closeModal;
-  modalBody.querySelector('#paySave').onclick = async () => {
-    const btn = modalBody.querySelector('#paySave');
-    const oldHtml = putButtonLoader(btn);
-    try{
-      const raw = modalBody.querySelector('#payAmount').value;
-      if(!raw) { toast('Amount required'); restoreButton(btn, oldHtml); return; }
-      const amountCents = p2c(raw);
-      if(amountCents <= 0) { toast('Amount must be > 0'); restoreButton(btn, oldHtml); return; }
-      const type = payType.value;
-      let relatedMonths = [];
-      if(multiWrapper.style.display !== 'none'){
-        relatedMonths = Array.from(payMonths.selectedOptions).map(o => `${payYear.value}-${String(o.value).padStart(2,'0')}`);
-      } else {
-        relatedMonths = [`${payYear.value}-${String(payMonth.value).padStart(2,'0')}`];
-      }
-      const payment_method = payMethodEl.value;
-      const mobile_provider = modalBody.querySelector('#mobileProvider') ? modalBody.querySelector('#mobileProvider').value : null;
-      const payer_phone = modalBody.querySelector('#payerPhone').value.trim() || null;
-      const note = modalBody.querySelector('#payNote').value.trim() || null;
-  
-      const tx = {
-        actor: currentUser ? currentUser.uid : null,
-        target_type: targetType,
-        target_id: target.studentId || target.teacherId || target.id,
-        type,
-        amount_cents: amountCents,
-        payment_method,
-        mobile_provider,
-        payer_phone,
-        note,
-        related_months: type === 'monthly' ? relatedMonths : [],
-        createdAt: Timestamp.now(),
-      };
-  
-      await addDoc(collection(db,'transactions'), tx);
-  
-      if(type === 'monthly' && targetType === 'student'){
-        await updateTargetBalanceGeneric('student', tx.target_id, -amountCents);
-      }
-      if(type === 'salary' && (targetType === 'teacher' || targetType === 'staff')){
-        await updateTargetBalanceGeneric(targetType, tx.target_id, -amountCents);
-      }
-  
-      toast('Payment recorded');
-      closeModal();
-      await loadTransactions();
-      const active = document.querySelector('#pagePayments .tab.active');
-      const viewName = active ? active.textContent.toLowerCase() : 'students';
-      await renderPaymentsList(viewName);
-      renderDashboard && renderDashboard();
-    }catch(err){
-      console.error(err); toast('Failed to save payment');
-    } finally {
-      restoreButton(btn, oldHtml);
-    }
-  };
-  
-  
-}
 
 /* ---- Adjustment modal (Adj) ---- */
+/* ---- Adjustment modal (Adj) ---- */
+// Replace start of openAdjustmentModal(...)
 async function openAdjustmentModal(e){
-  const id = e.target.dataset.id;
+  const triggerEl = (e.currentTarget && e.currentTarget.dataset && e.currentTarget.dataset.id) ? e.currentTarget
+                   : (e.target && e.target.closest && e.target.closest('[data-id]')) ? e.target.closest('[data-id]')
+                   : null;
+  const id = triggerEl ? (triggerEl.dataset && triggerEl.dataset.id) : null;
+  if(!id) return toast('Missing ID for action');
+
   const activeTab = document.querySelector('#pagePayments .tab.active');
   const view = activeTab ? activeTab.textContent.toLowerCase() : 'students';
   const targetType = view === 'students' ? 'student' : (view === 'teachers' ? 'teacher' : 'staff');
-  let target = null;
-  if(targetType === 'student') target = (studentsCache||[]).find(s => s.studentId === id || s.id === id);
-  else if(targetType === 'teacher') target = (teachersCache||[]).find(t => t.teacherId === id || t.id === id);
-  else target = (window.staffCache||[]).find(s => s.id === id);
+
+  let target = await resolveTargetByAnyId(view, id);
   if(!target) return toast('Target not found');
+
+
+
+
+  // now proceed to build modal...
 
   const html = `
     <div style="display:grid;grid-template-columns:1fr;gap:8px">
@@ -3135,6 +3543,8 @@ showModal(`Reesto Hore • ${escape(target.fullName || target.id || '')}`, html)
   modalBody.querySelector('#adjClose').onclick = closeModal;
   modalBody.querySelector('#adjSave').onclick = async () => {
     try{
+
+
       const raw = modalBody.querySelector('#adjAmount').value;
       if(raw === '' || raw === null) return toast('Amount required');
       const signedCents = Math.round(Number(raw)*100);
@@ -3143,7 +3553,8 @@ showModal(`Reesto Hore • ${escape(target.fullName || target.id || '')}`, html)
       const tx = {
         actor: currentUser ? currentUser.uid : null,
         target_type: targetType,
-        target_id: target.studentId || target.teacherId || target.id,
+        target_id: target.id || target.studentId || target.teacherId || target.id
+        ,
         type: 'adjustment',
         amount_cents: signedCents,
         payment_method: 'manual',
@@ -3166,22 +3577,29 @@ showModal(`Reesto Hore • ${escape(target.fullName || target.id || '')}`, html)
 
 /* ---- View transactions (icons + actor name + default note) ---- */
 async function openViewTransactionsModal(e){
-  const id = e.target.dataset.id;
-  let targetType = 'student';
-  let target = (studentsCache||[]).find(s => s.studentId === id || s.id === id);
-  if(!target){
-    target = (teachersCache||[]).find(t => t.teacherId === id || t.id === id);
-    if(target) targetType = 'teacher';
-  }
-  if(!target){
-    target = (window.staffCache||[]).find(s => s.id === id);
-    if(target) targetType = 'staff';
-  }
+  const triggerEl = (e.currentTarget && e.currentTarget.dataset && e.currentTarget.dataset.id) ? e.currentTarget
+                   : (e.target && e.target.closest && e.target.closest('[data-id]')) ? e.target.closest('[data-id]')
+                   : null;
+  const id = triggerEl ? (triggerEl.dataset && triggerEl.dataset.id) : null;
+  if(!id) return toast('Missing ID for action');
+
+  const activeTab = document.querySelector('#pagePayments .tab.active');
+  const view = activeTab ? activeTab.textContent.toLowerCase() : 'students';
+  const targetType = view === 'students' ? 'student' : (view === 'teachers' ? 'teacher' : 'staff');
+
+  let target = await resolveTargetByAnyId(view, id);
   if(!target) return toast('Target not found');
 
-  const qRef = query(collection(db,'transactions'), where('target_type','==', targetType), where('target_id','==', (target.studentId||target.teacherId||target.id)));
-  const snap = await getDocs(qRef);
-  const txs = snap.docs.map(d=>({ id:d.id, ...d.data() })).sort((a,b) => (b.createdAt?.seconds||0) - (a.createdAt?.seconds||0));
+
+
+  // Now fetch transactions for that resolved target (we will filter by multiple idCandidates)
+  const snap = await getDocs(collection(db,'transactions'));
+  let txs = snap.docs.map(d=>({ id:d.id, ...d.data() })).filter(t => t.target_type === targetType);
+  const idCandidates = [ String(target.id||''), String(target.studentId||''), String(target.teacherId||''), String(target.idNumber||'' ) ].filter(Boolean);
+  txs = txs.filter(t => idCandidates.includes(String(t.target_id || '')) || idCandidates.includes(String(t.target || '')) );
+  txs.sort((a,b) => (b.createdAt?.seconds||0) - (a.createdAt?.seconds||0));
+
+
 
   const totalMonthly = txs.filter(t=>t.type==='monthly').reduce((s,t)=>s+(t.amount_cents||0),0);
   const totalAll = txs.reduce((s,t)=>s+(t.amount_cents||0),0);
