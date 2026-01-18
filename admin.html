@@ -98,6 +98,11 @@
 /* small icon wrappers to keep inline SVGs tidy */
 .icon-sm { width:18px; height:18px; display:inline-block; vertical-align:middle; }
 
+/* export logo smaller in export render */
+@media print {
+  img[export-logo] { max-height: 36px; }
+}
+
 </style>
 
 </head>
