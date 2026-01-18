@@ -102,6 +102,11 @@
 @media print {
   img[export-logo] { max-height: 36px; }
 }
+/* make sure ID block doesn't force a gap when absent; allow id button to shrink/break */
+.payments-card .id-block { flex: 0 0 auto; min-width:0; }
+.payments-card .payments-id-btn { min-width:0; word-break:break-all; text-align:left; }
+.payments-card .id-block.hidden { display:none; }
+
 
 </style>
 
