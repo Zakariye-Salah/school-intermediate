@@ -193,10 +193,30 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js"></script>
 
-<!-- your module scripts -->
-<script type="module" src="firebase-config.js"></script>
-<script type="module" src="database.js"></script>
+<!-- Chart.js (for charts) -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
+<!-- Ensure html2canvas, jspdf, etc. are loaded already (you already included them). -->
+<!-- Then load firebase-config.js and database.js (your existing scripts). -->
+
+<!-- After database.js loads, ensure the dashboard opens on page load -->
+<script>
+  // If renderDashboard is exported globally in database.js, call it on page load.
+  // Wait a tick to let your module load caches; adjust if your init flow differs.
+  window.addEventListener('load', () => {
+    try {
+      // show dashboard page and call renderDashboard
+      if (typeof renderDashboard === 'function') {
+        renderDashboard({ defaultFilter: 'This Month' }).catch(err => console.error('renderDashboard failed', err));
+      } else {
+        // if module exports differently, try a short delay
+        setTimeout(() => {
+          if (typeof renderDashboard === 'function') renderDashboard({ defaultFilter: 'This Month' });
+        }, 400);
+      }
+    } catch (e) { console.error(e); }
+  });
+</script>
 
   <!-- Firebase config + app logic -->
   <!-- Make sure database.js path is correct and it's type=module -->
