@@ -5346,7 +5346,7 @@ lastRefEl =
  
  
  function renderOutstandingTable(range){
-  // helpers
+  // helpers (keep same logic as your original)
   function monthsCountBetween(startMs, endMs){
     if(!startMs || !endMs) return 0;
     const s = new Date(startMs); s.setDate(1); s.setHours(0,0,0,0);
@@ -5362,43 +5362,37 @@ lastRefEl =
     if(!tx || !student) return false;
     const candidates = [ String(student.studentId||''), String(student.id||''), String(student.uid||''), String(student._id||'') ].filter(Boolean);
     const targetId = String(tx.target_id||tx.target||'');
-    if(candidates.includes(targetId)) return true;
-    return false;
+    return candidates.includes(targetId);
   }
- 
+
   const monthsInRange = monthsCountBetween(range.start, range.end) || 1;
   const students = (studentsCache || []);
- 
+
+  // build normalized rows (and filter conservatively to student-like records only)
   const rows = students.map(s => {
-    // normalize monthly fee (units) -> cents
     let feeVal = 0;
     if (s.fee != null && s.fee !== '') feeVal = Number(s.fee) || 0;
     else if (s.monthlyFee != null) feeVal = Number(s.monthlyFee) || 0;
     const feeCents = Math.round(feeVal * 100);
- 
     const assignedForRange = feeCents * monthsInRange;
- 
-    // payments in range
+
     const payments = (transactionsCache || []).filter(tx => {
       if(tx.is_deleted) return false;
       const ms = (tx.createdAt && (tx.createdAt.seconds || tx.createdAt._seconds)) ? ((tx.createdAt.seconds || tx.createdAt._seconds) * 1000) : (tsToMs(tx.createdAt) || 0);
       if(ms < range.start || ms > range.end) return false;
-      // only count student payments / monthly types
       const ttype = String(tx.type || '').toLowerCase();
       const isPaymentType = ttype === 'monthly' || ttype === 'payment' || String(tx.target_type||'').toLowerCase()==='student';
       if(!isPaymentType) return false;
       return txMatchesStudent(tx, s);
     });
     const paymentsReceivedCents = payments.reduce((sum,tx)=> sum + (Number(tx.amount_cents || 0)), 0);
- 
+
     let outstandingCents = Math.max(0, Math.round(assignedForRange || 0) - Math.round(paymentsReceivedCents || 0));
- 
-    // fallback to record balance if zero
     if (outstandingCents === 0) {
       const bal = getBalanceCents(s);
       if (Number(bal) !== 0) outstandingCents = Math.abs(Number(bal) || 0);
     }
- 
+
     return {
       id: s.studentId || s.id || s.uid || s._id || '',
       name: s.fullName || s.name || s.displayName || '—',
@@ -5409,10 +5403,28 @@ lastRefEl =
       phone: s.parentPhone || s.phone || '—',
       sourceRecord: s
     };
+  }).filter(r => {
+    // Conservative student filter: require at least one student-identifying field.
+    const sr = r.sourceRecord || {};
+    const isStudentLike = Boolean(r.id) || Boolean(sr.class) || Boolean(sr.monthlyFee) || Boolean(sr.fee) || Boolean(sr.parentPhone);
+    return isStudentLike;
   });
- 
+
+  // Top 10 owe rows
+  const oweRows = rows.filter(r => Number(r.owing_cents || 0) > 0).sort((a,b)=> b.owing_cents - a.owing_cents);
+  const top10 = oweRows.slice(0,10);
+
+  // update range display if present
+  if (typeof outstandingRange !== 'undefined' && outstandingRange) outstandingRange.textContent = `${new Date(range.start).toLocaleDateString()} — ${new Date(range.end).toLocaleDateString()}`;
+
+  if(!top10.length){
+    outstandingTableRoot.innerHTML = `<div class="muted" style="padding:12px">No outstanding student payments found for the selected period.</div>`;
+    return;
+  }
+
+  // Build mobile header (mobile-only)
   const headerHtml = `
-<div class="mobile-top10-header">
+<div class="mobile-top10-header mobile-only">
   <div class="h-title">Top 10 Outstanding Student Payments</div>
   <div class="h-sub">${new Date(range.start).toLocaleDateString()} — ${new Date(range.end).toLocaleDateString()}</div>
 
@@ -5427,81 +5439,60 @@ lastRefEl =
 </div>
 `;
 
-  // only students who owe > 0
-  const oweRows = rows.filter(r => Number(r.owing_cents || 0) > 0).sort((a,b)=> b.owing_cents - a.owing_cents);
-  const top10 = oweRows.slice(0,10);
- 
-  outstandingRange.textContent = `${new Date(range.start).toLocaleDateString()} — ${new Date(range.end).toLocaleDateString()}`;
- 
-  if(!top10.length){
-    
-    outstandingTableRoot.innerHTML = `<div class="muted" style="padding:12px">No outstanding student payments found for the selected period.</div>`;
-    return;
-  }
- 
-  // render (mobile + desktop)
-  if (isMobileViewport()) {
-
-    const listHtml = `<div style="display:flex;flex-direction:column;gap:8px">
-      ${top10.map((r,idx)=>`
-        <div class="list-row" style="align-items:center">
-          <div class="row-left">
-            <div class="no-badge">${idx+1}</div>
-            <div style="min-width:0">
-              <div class="title">${escape(r.name)}</div>
-              <div class="sub id">ID: ${escape(String(r.id))} • ${escape(r.className)}</div>
-            </div>
-          </div>
-          <div style="display:flex;align-items:center;gap:12px">
-            <div style="text-align:right;font-weight:900;color:#b91c1c">
-              ${formatMoney(r.owing_cents)}
-            </div>
-            <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end">
-              <button class="btn btn-primary record-pay" data-id="${escape(r.id)}">${svgPay()}</button>
-              <button class="btn btn-ghost view-trans" data-id="${escape(r.id)}">${svgView()}</button>
-            </div>
+  // Build mobile rows (using classes so CSS rules apply)
+  let mobileListHtml = `<div class="mobile-only" style="display:flex;flex-direction:column;gap:8px">`;
+  top10.forEach((r, idx) => {
+    mobileListHtml += `
+      <div class="list-row" data-name="${escape(String(r.name||'').toLowerCase())}" data-id="${escape(String(r.id||'').toLowerCase())}">
+        <div class="row-left">
+          <div class="no-badge">${idx+1}</div>
+          <div style="min-width:0">
+            <div class="title">${escape(r.name)}</div>
+            <div class="sub id">ID: ${escape(String(r.id))} • ${escape(r.className)}</div>
           </div>
         </div>
-      `).join('')}
-    </div>`;
-  
-    outstandingTableRoot.innerHTML = headerHtml + listHtml;
-  }
-  
-   else {
-    let html = `<div style="overflow:auto"><table style="width:100%;border-collapse:collapse"><thead><tr>
+
+        <div class="amount">${formatMoney(r.owing_cents)}</div>
+
+        <div class="row-actions" aria-hidden="false">
+          <button class="btn record-pay btn-primary" data-id="${escape(r.id)}" title="Record payment">${svgPay()}</button>
+          <button class="btn view-trans" data-id="${escape(r.id)}" title="View transactions">${svgView()}</button>
+        </div>
+      </div>
+    `;
+  });
+  mobileListHtml += `</div>`;
+
+  // Build desktop table (kept separate)
+  let desktopHtml = `<div class="desktop-only"><div style="overflow:auto"><table style="width:100%;border-collapse:collapse"><thead><tr>
       <th>No</th><th>Name (ID)</th><th>Class</th><th style="text-align:right">Outstanding</th><th>Assigned</th><th>Paid (period)</th><th>Actions</th>
     </tr></thead><tbody>`;
-    top10.forEach((r,idx)=> {
-      html += `<tr style="border-bottom:1px solid #f1f5f9">
-        <td style="padding:8px">${idx+1}</td>
-     <td style="padding:8px">
-   <div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
-     <div style="min-width:0">
-       <div style="font-weight:900">${escape(r.name)}</div>
-       <div class="muted">${escape(r.id)}</div>
-     </div>
-     <div style="text-align:right;font-weight:900;color:#b91c1c">${formatMoney(r.owing_cents)}</div>
-   </div>
- </td>
- 
-        <td style="padding:8px;text-align:right">${formatMoney(r.rawAssignedCents)}</td>
-        <td style="padding:8px;text-align:right;color:#059669">${formatMoney(r.rawPaymentsReceivedCents)}</td>
- 
-    
- 
- <td style="padding:8px">
-   <button class="btn btn-primary btn-sm record-pay" data-id="${escape(r.id)}" title="Record payment">${svgPay()}</button>
-   <button class="btn btn-ghost btn-sm view-trans" data-id="${escape(r.id)}" title="View transactions">${svgView()}</button>
- </td>
- 
-      </tr>`;
-    });
-    html += `</tbody></table></div>`;
-    outstandingTableRoot.innerHTML = html;
-  }
- 
-  // wire actions
+  top10.forEach((r, idx) => {
+    desktopHtml += `<tr style="border-bottom:1px solid #f1f5f9">
+      <td style="padding:8px">${idx+1}</td>
+      <td style="padding:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
+          <div style="min-width:0">
+            <div style="font-weight:900">${escape(r.name)}</div>
+            <div class="muted">${escape(r.id)}</div>
+          </div>
+          <div style="text-align:right;font-weight:900;color:#b91c1c">${formatMoney(r.owing_cents)}</div>
+        </div>
+      </td>
+      <td style="padding:8px;text-align:right">${formatMoney(r.rawAssignedCents)}</td>
+      <td style="padding:8px;text-align:right;color:#059669">${formatMoney(r.rawPaymentsReceivedCents)}</td>
+      <td style="padding:8px">
+        <button class="btn btn-primary btn-sm record-pay" data-id="${escape(r.id)}" title="Record payment">${svgPay()}</button>
+        <button class="btn btn-ghost btn-sm view-trans" data-id="${escape(r.id)}" title="View transactions">${svgView()}</button>
+      </td>
+    </tr>`;
+  });
+  desktopHtml += `</tbody></table></div></div>`;
+
+  // Inject into DOM
+  outstandingTableRoot.innerHTML = headerHtml + mobileListHtml + desktopHtml;
+
+  // Wire actions for record-pay & view-trans (both mobile & desktop)
   outstandingTableRoot.querySelectorAll('.record-pay').forEach(b => {
     b.addEventListener('click', ev => {
       const id = ev.currentTarget.dataset.id;
@@ -5515,7 +5506,29 @@ lastRefEl =
       else if (typeof openViewTransactions === 'function') openViewTransactions(id);
     });
   });
- }
+
+  // Live search filter for mobile rows (no re-render)
+  const searchInput = outstandingTableRoot.querySelector('#outstandingSearch');
+  if (searchInput) {
+    searchInput.value = ''; // reset
+    searchInput.addEventListener('input', (ev) => {
+      const q = String(ev.target.value || '').trim().toLowerCase();
+      outstandingTableRoot.querySelectorAll('.mobile-only .list-row').forEach(row => {
+        const name = row.dataset.name || '';
+        const idv = row.dataset.id || '';
+        if (!q || name.includes(q) || idv.includes(q)) row.style.display = '';
+        else row.style.display = 'none';
+      });
+    });
+  }
+
+  // Export / reminder hooks (if you have handlers)
+  const expBtn = outstandingTableRoot.querySelector('#exportOutstandingCsv');
+  if (expBtn) expBtn.onclick = () => { if (typeof exportOutstandingCsv === 'function') exportOutstandingCsv(); else if (typeof exportCsvFromDashboard === 'function') exportCsvFromDashboard(); else toast && toast('Export not implemented'); };
+  const remBtn = outstandingTableRoot.querySelector('#sendOutstandingReminder');
+  if (remBtn) remBtn.onclick = () => { if (typeof sendOutstandingReminder === 'function') sendOutstandingReminder(); else toast && toast('Reminder not implemented'); };
+}
+
  
  
  // New helper: show full marks for a student + exam with exam picker + ranks/summary
