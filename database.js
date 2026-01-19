@@ -2794,82 +2794,117 @@ async function openAddExpenseModal(){
   const curMonth = now.getMonth()+1;
   const curYear = now.getFullYear();
 
-  // months horizontal UI (buttons). We'll keep hidden inputs/selects for compatibility if needed.
+  // months horizontal UI (buttons)
   const monthsShort = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   const monthButtonsHtml = Array.from({length:12}, (_,i) => {
-    const selectedClass = (i+1) === curMonth ? 'month-selected' : '';
-    return `<button type="button" class="month-btn ${selectedClass}" data-month="${i+1}" style="padding:6px 8px;border-radius:6px;border:1px solid #e5e7eb;background:#fff;cursor:pointer">${monthsShort[i]}</button>`;
+    const sel = (i+1) === curMonth ? 'month-selected' : '';
+    return `<button type="button" class="month-btn ${sel}" data-month="${i+1}" style="padding:6px 8px;border-radius:6px;border:1px solid #e5e7eb;background:${sel? '#0b74de':'#fff'};color:${sel? '#fff':'#111'};cursor:pointer">${monthsShort[i]}</button>`;
   }).join('');
 
+  // build year options 2025..2100 - present in a list (size=10)
+  const yearOptions = Array.from({length: (2100-2025+1)}, (_,i) => {
+    const y = 2025 + i;
+    return `<option value="${y}" ${y===curYear? 'selected' : ''}>${y}</option>`;
+  }).join('');
+
+  // header label (e.g. STUDENTS PAYMENTS)
+  const headerTitle = `${(view||'').toUpperCase()} PAYMENTS`;
+
   const html = `
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:start">
-      <div style="grid-column:1 / span 2"><label style="display:block;font-weight:700;margin-bottom:6px">Person</label><div style="font-weight:900;margin-bottom:6px">${escape(target.fullName||target.teacherName||target.id||'')}</div></div>
-      <div><label style="display:block;font-weight:700;margin-bottom:6px">Current balance</label><div style="font-weight:900;margin-bottom:6px">${c2p(currentBalance)}</div></div>
-
-      <div><label style="display:block;font-weight:700;margin-bottom:6px">Amount</label><input id="payAmount" type="number" step="0.01" value="${c2p(Math.max(0,currentBalance))}" style="width:100%;padding:8px;border-radius:6px;border:1px solid #e5e7eb" /></div>
-
-      <div><label style="display:block;font-weight:700;margin-bottom:6px">Payment Type</label>
-        <select id="payType" style="width:100%;padding:8px;border-radius:6px;border:1px solid #e5e7eb">
-          <option value="monthly">Monthly</option>
-          <option value="id-card">ID Card</option>
-          <option value="registration">Registration</option>
-          ${targetType!=='student'?'<option value="salary">Salary</option>':''}
-          <option value="other">Other</option>
-        </select>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <div style="font-size:0.85rem;font-weight:700;color:#374151">${escape(headerTitle)}</div>
+          <div style="font-weight:900;font-size:1.05rem;margin-top:6px">${escape(target.fullName || target.teacherName || target.id || '')}</div>
+          <div class="muted" style="font-size:0.85rem;margin-top:4px">ID: ${escape(target.studentId || target.teacherId || target.staffId || target.id || '')}</div>
+        </div>
+        <div style="text-align:right">
+          <div class="muted" style="font-size:0.85rem">Balance</div>
+          <div style="font-weight:900;color:#b91c1c;font-size:1.05rem">$${c2p(currentBalance)}</div>
+        </div>
       </div>
 
-      <div id="monthPicker" style="grid-column:1 / -1">
-        <label style="display:block;font-weight:700;margin-bottom:6px">Month</label>
-        <div id="monthsRow" style="display:flex;gap:6px;flex-wrap:wrap">${monthButtonsHtml}</div>
-        <!-- hidden single-month input for legacy logic -->
-        <input id="payMonth" type="hidden" value="${curMonth}" />
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;align-items:start">
+        <div>
+          <label style="display:block;font-weight:700;margin-bottom:6px">Amount</label>
+          <input id="payAmount" type="number" step="0.01" value="${c2p(Math.max(0,currentBalance))}" style="width:6.5ch;padding:8px;border-radius:6px;border:1px solid #e5e7eb" />
+        </div>
+
+        <div>
+          <label style="display:block;font-weight:700;margin-bottom:6px">Payment Type</label>
+          <select id="payType" style="width:100%;padding:8px;border-radius:6px;border:1px solid #e5e7eb">
+            <option value="monthly">Monthly</option>
+            <option value="id-card">ID Card</option>
+            <option value="registration">Registration</option>
+            ${targetType!=='student'?'<option value="salary">Salary</option>':''}
+            <option value="other">Other</option>
+          </select>
+        </div>
+
+        <div style="grid-column:1 / -1">
+          <label style="display:block;font-weight:700;margin-bottom:6px">Month</label>
+          <div id="monthsRow" style="display:flex;gap:6px;flex-wrap:wrap">${monthButtonsHtml}</div>
+          <input id="payMonth" type="hidden" value="${curMonth}" />
+        </div>
+
+        <div>
+          <label style="display:block;font-weight:700;margin-bottom:6px">Year</label>
+          <select id="payYear" size="10" style="width:100%;padding:6px;border-radius:6px;border:1px solid #e5e7eb;max-height:10rem;overflow:auto">
+            ${yearOptions}
+          </select>
+        </div>
+
+        <div id="multiMonthsWrapper" style="display:none;grid-column:1 / -1">
+          <label style="display:block;font-weight:700;margin-bottom:6px">Select months (multi)</label>
+          <div id="monthsRowMulti" style="display:flex;gap:6px;flex-wrap:wrap">${monthButtonsHtml}</div>
+        </div>
+
+        <div>
+          <label style="display:block;font-weight:700;margin-bottom:6px">Payment method</label>
+          <select id="payMethod" style="width:100%;padding:8px;border-radius:6px;border:1px solid #e5e7eb">
+            <option value="mobile" selected>Mobile</option>
+            <option value="cash">Cash</option>
+            <option value="card">Card</option>
+          </select>
+        </div>
+
+        <div id="mobileProviderWrapper">
+          <label style="display:block;font-weight:700;margin-bottom:6px">Mobile provider</label>
+          <select id="mobileProvider" style="width:100%;padding:8px;border-radius:6px;border:1px solid #e5e7eb">
+            <option value="Hormuud" selected>Hormuud (EVC)</option>
+            <option value="Somtel">Somtel (Edahab)</option>
+            <option value="Somnet">Somnet (Jeeb)</option>
+            <option value="Telesom">Telesom</option>
+            <option value="Amtel">Amtel</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
+
+        <div>
+          <label style="display:block;font-weight:700;margin-bottom:6px">Payer Phone</label>
+          <input id="payerPhone" value="${escape(defaultPhone)}" style="width:100%;padding:8px;border-radius:6px;border:1px solid #e5e7eb" />
+        </div>
+
+        <div style="grid-column:1 / -1">
+          <label style="display:block;font-weight:700;margin-bottom:6px">Note</label>
+          <input id="payNote" placeholder="Optional note" style="width:100%;padding:8px;border-radius:6px;border:1px solid #e5e7eb" />
+        </div>
       </div>
 
-      <div><label style="display:block;font-weight:700;margin-bottom:6px">Year</label><input id="payYear" type="number" min="${curYear-5}" max="${curYear+5}" value="${curYear}" style="width:100%;padding:8px;border-radius:6px;border:1px solid #e5e7eb" /></div>
-
-      <div id="multiMonthsWrapper" style="display:none;grid-column:1 / -1">
-        <label style="display:block;font-weight:700;margin-bottom:6px">Select months (multi)</label>
-        <div id="monthsRowMulti" style="display:flex;gap:6px;flex-wrap:wrap">${monthButtonsHtml}</div>
-        <!-- for compatibility we keep a hidden container that will be read on save -->
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button id="payClose" class="btn btn-ghost">Close</button>
+        <button id="toggleMultiMonths" class="btn btn-ghost">Select multiple months</button>
+        <button id="paySave" class="btn btn-primary">Save</button>
       </div>
-
-      <div><label style="display:block;font-weight:700;margin-bottom:6px">Payment method</label>
-        <select id="payMethod" style="width:100%;padding:8px;border-radius:6px;border:1px solid #e5e7eb">
-          <option value="mobile" selected>Mobile</option>
-          <option value="cash">Cash</option>
-          <option value="card">Card</option>
-        </select>
-      </div>
-
-      <div id="mobileProviderWrapper"><label style="display:block;font-weight:700;margin-bottom:6px">Mobile provider</label>
-        <select id="mobileProvider" style="width:100%;padding:8px;border-radius:6px;border:1px solid #e5e7eb">
-          <option value="Hormuud" selected>Hormuud (EVC)</option>
-          <option value="Somtel">Somtel (Edahab)</option>
-          <option value="Somnet">Somnet (Jeeb)</option>
-          <option value="Telesom">Telesom</option>
-          <option value="Amtel">Amtel</option>
-          <option value="Other">Other</option>
-        </select>
-      </div>
-
-      <div><label style="display:block;font-weight:700;margin-bottom:6px">Payer Phone</label><input id="payerPhone" value="${escape(defaultPhone)}" style="width:100%;padding:8px;border-radius:6px;border:1px solid #e5e7eb" /></div>
-
-      <div style="grid-column:1 / -1"><label style="display:block;font-weight:700;margin-bottom:6px">Note</label><input id="payNote" placeholder="Optional note (auto-filled for monthly/salary)" style="width:100%;padding:8px;border-radius:6px;border:1px solid #e5e7eb" /></div>
-    </div>
-
-    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
-      <button id="payClose" class="btn btn-ghost">Close</button>
-      <button id="toggleMultiMonths" class="btn btn-ghost">Select multiple months</button>
-      <button id="paySave" class="btn btn-primary">Save</button>
     </div>
   `;
 
   showModal(`Pay • ${escape(target.fullName||target.teacherName||target.id||'')}`, html);
 
-  // prevent background scroll while modal open
+  // prevent background scroll while modal open (restored by wrapped closeModal)
   if(!window.__modal_close_wrapped){
     const origClose = window.closeModal || (()=>{});
-    window.closeModal = function(){ try{ origClose(); }finally{ document.body.style.overflow = ''; } };
+    window.closeModal = function(){ try{ origClose(); } finally { document.body.style.overflow = ''; } };
     window.__modal_close_wrapped = true;
   }
   document.body.style.overflow = 'hidden';
@@ -2888,24 +2923,32 @@ async function openAddExpenseModal(){
     return Array.from(container.querySelectorAll('.month-btn'));
   }
   function clearSelected(btns){
-    btns.forEach(b => b.classList.remove('month-selected'));
+    btns.forEach(b => {
+      b.classList.remove('month-selected');
+      b.style.background = '#fff';
+      b.style.color = '#111';
+    });
+  }
+  function setSelectedButton(btn){
+    btn.classList.add('month-selected');
+    btn.style.background = '#0b74de';
+    btn.style.color = '#fff';
   }
   function pickSingleMonth(container, month){
     const btns = getMonthButtons(container);
     clearSelected(btns);
     const btn = btns.find(b => String(b.dataset.month) === String(month));
-    if(btn) btn.classList.add('month-selected');
+    if(btn) setSelectedButton(btn);
     payMonthHidden.value = month;
   }
   function getSelectedMonthsFrom(container){
     return getMonthButtons(container).filter(b => b.classList.contains('month-selected')).map(b => b.dataset.month);
   }
 
-  // initialize single-month row: clicking acts as radio (unless multi on)
   const monthsRow = modalBody.querySelector('#monthsRow');
   const monthsRowMulti = modalBody.querySelector('#monthsRowMulti');
 
-  // set default selected to curMonth
+  // init selection
   pickSingleMonth(monthsRow, curMonth);
   pickSingleMonth(monthsRowMulti, curMonth);
 
@@ -2913,13 +2956,18 @@ async function openAddExpenseModal(){
     const btn = ev.currentTarget;
     const isMulti = (multiWrapper.style.display !== 'none');
     if(isMulti){
-      // toggle
-      btn.classList.toggle('month-selected');
+      // toggle style
+      if(btn.classList.contains('month-selected')){
+        btn.classList.remove('month-selected');
+        btn.style.background = '#fff';
+        btn.style.color = '#111';
+      } else {
+        setSelectedButton(btn);
+      }
     } else {
-      // single selection: clear siblings, set this
-      const parent = btn.parentElement;
-      clearSelected(getMonthButtons(parent));
-      btn.classList.add('month-selected');
+      // single selection behavior
+      clearSelected(getMonthButtons(monthsRow));
+      setSelectedButton(btn);
       payMonthHidden.value = btn.dataset.month;
     }
   }
@@ -2929,15 +2977,17 @@ async function openAddExpenseModal(){
 
   function fillDefaultNote(){
     const t = payType.value;
+    // format: Lacagta Bisha Jan-2026
+    const mSel = getSelectedMonthsFrom(monthsRow)[0] || payMonthHidden.value || curMonth;
+    const mName = monthsShort[(Number(mSel)||curMonth)-1] || monthsShort[curMonth-1];
     if(!payNote.value){
-      if(t==='monthly') payNote.value = `lacagta bish ${payYear.value}-${String(payMonthHidden.value||payMonthHidden.value).padStart(2,'0')}`;
-      else if(t==='id-card') payNote.value = 'lacagta id card';
-      else if(t==='registration') payNote.value = 'lacagta registration';
-      else if(t==='salary') payNote.value = 'lacagta mushaar';
+      if(t==='monthly') payNote.value = `Lacagta Bisha ${mName}-${payYear.value}`;
+      else if(t==='id-card') payNote.value = 'Lacagta id card';
+      else if(t==='registration') payNote.value = 'Lacagta registration';
+      else if(t==='salary') payNote.value = 'Lacagta mushaar';
     }
   }
 
-  // original behavior preserved
   payType.onchange = () => { modalBody.querySelector('#monthPicker').style.display = payType.value==='monthly' ? 'block' : 'none'; fillDefaultNote(); };
   payMethodEl.onchange = () => { mobileProviderWrapper.style.display = payMethodEl.value === 'mobile' ? 'block' : 'none'; };
   toggleMulti.onclick = () => {
@@ -2948,6 +2998,7 @@ async function openAddExpenseModal(){
   fillDefaultNote();
 
   modalBody.querySelector('#payClose').onclick = () => { closeModal(); /* closeModal restores overflow */ };
+
   modalBody.querySelector('#paySave').onclick = async () => {
     const btnSave = modalBody.querySelector('#paySave');
     const oldHtml = putButtonLoader(btnSave);
@@ -2960,10 +3011,8 @@ async function openAddExpenseModal(){
 
       let relatedMonths = [];
       if(multiWrapper.style.display !== 'none'){
-        // read from monthsRowMulti
         relatedMonths = getSelectedMonthsFrom(monthsRowMulti).map(m => `${payYear.value}-${String(m).padStart(2,'0')}`);
       } else {
-        // single month from monthsRow
         const sel = getSelectedMonthsFrom(monthsRow)[0] || payMonthHidden.value || curMonth;
         relatedMonths = [`${payYear.value}-${String(sel).padStart(2,'0')}`];
       }
@@ -3026,8 +3075,14 @@ async function openAdjustmentModal(btnOrEvent){
 
   const html = `
     <div style="display:grid;grid-template-columns:1fr;gap:8px">
-      <div><label style="display:block;font-weight:700;margin-bottom:6px">Amount (use negative to decrease balance)</label><input id="adjAmount" type="number" step="0.01" value="0" style="width:100%;padding:8px;border-radius:6px;border:1px solid #e5e7eb" /></div>
-      <div><label style="display:block;font-weight:700;margin-bottom:6px">Reason / Note</label><input id="adjNote" placeholder="e.g., refund, penalty, manual add" style="width:100%;padding:8px;border-radius:6px;border:1px solid #e5e7eb" /></div>
+      <div>
+        <label style="display:block;font-weight:700;margin-bottom:6px">Amount (use negative to decrease balance)</label>
+        <input id="adjAmount" type="number" step="0.01" value="0" style="width:6.5ch;padding:8px;border-radius:6px;border:1px solid #e5e7eb" />
+      </div>
+      <div>
+        <label style="display:block;font-weight:700;margin-bottom:6px">Reason / Note</label>
+        <input id="adjNote" placeholder="e.g., refund, penalty, manual add" style="width:100%;padding:8px;border-radius:6px;border:1px solid #e5e7eb" />
+      </div>
     </div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
       <button id="adjClose" class="btn btn-ghost">Close</button>
@@ -3099,52 +3154,102 @@ async function openViewTransactionsModal(btnOrEvent){
   const totalAll = txs.filter(t => String(t.type).toLowerCase() !== 'adjustment').reduce((s,t)=>s+(t.amount_cents||0),0);
   const totalAdj = txs.filter(t=>String(t.type).toLowerCase() === 'adjustment').reduce((s,t)=>s+(t.amount_cents||0),0);
 
-  const actorNames = await Promise.all(txs.map(t => resolveActorName(t.actor)));
+  // small helper to produce SVG icons using your svg helpers if present
+  const editSvg = (typeof svgEdit === 'function') ? svgEdit() : '✏️';
+  const delSvg = (typeof svgDelete === 'function') ? svgDelete() : '🗑️';
 
-  let html = `<div style="display:flex;justify-content:space-between;align-items:center">
-      <div><div style="font-weight:900">${escape(target.fullName || target.teacherName || target.id)}</div><div class="muted">ID: ${escape(target.studentId||target.teacherId||target.staffId||target.id)}</div></div>
-      <div style="text-align:right"><div class="muted">Balance</div><div style="font-weight:900">${c2p(target.balance_cents||0)}</div></div>
-    </div>`;
-
-  html += `<div style="margin-top:10px;display:flex;gap:12px;flex-wrap:wrap">
-    <div class="pill" style="background:transparent;border-radius:6px;padding:6px 8px">Monthly paid: <span style="color:#059669;font-weight:900">${c2p(totalMonthly)}</span></div>
-    <div class="pill" style="background:transparent;border-radius:6px;padding:6px 8px">Payments total: <span style="color:#0b74de;font-weight:900">${c2p(totalAll)}</span></div>
-    <div class="pill" style="background:transparent;border-radius:6px;padding:6px 8px">Reesto Hore total: <span style="color:#f97316;font-weight:900">${c2p(totalAdj)}</span></div>
+  // build UI - mobile-friendly cards if mobile, else table
+  const smallFont = isMobileViewport() ? 'font-size:0.82rem' : 'font-size:0.9rem';
+  let html = '';
+  // header row
+  html += `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+    <div>
+      <div style="font-weight:900">${escape(target.fullName || target.teacherName || target.id)}</div>
+      <div class="muted" style="font-size:0.85rem">ID: ${escape(target.studentId||target.teacherId||target.staffId||target.id)}</div>
+    </div>
+    <div style="text-align:right">
+      <div class="muted" style="font-size:0.85rem">Balance</div>
+      <div style="font-weight:900;color:#b91c1c">$${c2p(target.balance_cents||0)}</div>
+    </div>
   </div>`;
 
-  html += `<div style="overflow:auto;margin-top:12px"><table style="width:100%;border-collapse:collapse"><thead><tr>
-    <th>Date</th><th>Type</th><th>Months</th><th style="text-align:right">Amount</th><th>Method</th><th>Note</th><th>Actions</th>
-  </tr></thead><tbody>`;
+  // totals line - single row (paid green, total blue, reesto orange)
+  html += `<div style="display:flex;gap:12px;justify-content:flex-start;align-items:center;margin-top:10px;flex-wrap:wrap">
+    <div style="font-size:0.85rem">Monthly paid: <span style="color:#059669;font-weight:900">$${c2p(totalMonthly)}</span></div>
+    <div style="font-size:0.85rem">Payments total: <span style="color:#0b74de;font-weight:900">$${c2p(totalAll)}</span></div>
+    <div style="font-size:0.85rem">Reesto Hore total: <span style="color:#f97316;font-weight:900">$${c2p(totalAdj)}</span></div>
+  </div>`;
 
-  txs.forEach((tx, idx) => {
-    const defaultNote = tx.note || (tx.type==='monthly' ? (formatMonthLabel((tx.related_months||[])[0]||'')) : '');
-    const monthsLabel = (tx.related_months && tx.related_months.length) ? tx.related_months.map(m => formatMonthLabel(m)).join(', ') : (tx.related_month ? formatMonthLabel(tx.related_month) : '');
-    html += `<tr style="border-bottom:1px solid #f1f5f9">
-      <td style="padding:8px">${tx.createdAt ? new Date((tx.createdAt.seconds||tx.createdAt._seconds)*1000).toLocaleString() : ''}</td>
-      <td style="padding:8px">${escape(displayTypeLabel(tx.type))}</td>
-      <td style="padding:8px">${escape(monthsLabel)}</td>
-      <td style="padding:8px;text-align:right">${c2p(tx.amount_cents||0)}</td>
-      <td style="padding:8px">${escape(tx.payment_method||'')}${tx.mobile_provider ? ' / ' + escape(tx.mobile_provider) : ''}</td>
-      <td style="padding:8px">${escape(defaultNote)}</td>
-      <td style="padding:8px">
-        <button title="Edit" class="icon edit-tx" data-id="${tx.id}" style="border:0;background:transparent">✏️</button>
-        <button title="Delete" class="icon del-tx" data-id="${tx.id}" style="border:0;background:transparent">🗑️</button>
-      </td>
-    </tr>`;
-  });
+  // body list
+  if(isMobileViewport()){
+    // cards
+    html += `<div style="display:flex;flex-direction:column;gap:8px;margin-top:10px;max-height:55vh;overflow:auto;padding-right:8px">`;
+    txs.forEach(tx => {
+      const dateStr = tx.createdAt ? new Date((tx.createdAt.seconds||tx.createdAt._seconds)*1000).toLocaleString() : '';
+      const amt = c2p(tx.amount_cents||0);
+      const ttype = String(tx.type||'').toLowerCase();
+      let color = '#111';
+      if(ttype.includes('adjust')) color = '#f97316';
+      else if(ttype.includes('payment') || ttype.includes('monthly')) color = '#059669';
+      else if(ttype.includes('assigned') || ttype.includes('fee') || ttype.includes('total')) color = '#0b74de';
+      else if(ttype.includes('balance')) color = '#b91c1c';
+      const monthsLabel = (tx.related_months && tx.related_months.length) ? tx.related_months.map(m => formatMonthLabel(m)).join(', ') : (tx.related_month ? formatMonthLabel(tx.related_month) : '');
 
-  html += `</tbody></table></div><div style="display:flex;justify-content:flex-end;margin-top:12px"><button id="closeTxView" class="btn btn-ghost">Close</button></div>`;
+      html += `<div class="tx-card" style="padding:10px;border-radius:8px;border:1px solid #f1f5f9;display:flex;justify-content:space-between;gap:8px;align-items:flex-start;${smallFont}">
+        <div style="flex:1 1 60%;min-width:0">
+          <div style="font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escape(tx.note || tx.title || displayTypeLabel(tx.type) || 'Transaction')}</div>
+          <div class="muted" style="font-size:0.78rem;margin-top:6px">${escape(monthsLabel)} • ${escape(dateStr)}</div>
+          <div style="font-size:0.78rem;margin-top:6px;color:#374151">${escape(tx.payment_method||'')}${tx.mobile_provider ? ' / ' + escape(tx.mobile_provider) : ''}</div>
+        </div>
+        <div style="flex:0 0 auto;text-align:right;min-width:6.5ch;font-weight:900;color:${color}">
+          $${escape(amt)}
+          <div style="margin-top:8px;display:flex;gap:6px;justify-content:flex-end">
+            <button class="btn-icon edit-tx" data-id="${tx.id}" style="border:0;background:transparent;padding:4px">${editSvg}</button>
+            <button class="btn-icon del-tx" data-id="${tx.id}" style="border:0;background:transparent;padding:4px">${delSvg}</button>
+          </div>
+        </div>
+      </div>`;
+    });
+    html += `</div>`;
+  } else {
+    // desktop: keep table (unchanged structure but include SVG icons)
+    html += `<div style="overflow:auto;margin-top:12px"><table style="width:100%;border-collapse:collapse"><thead><tr>
+      <th>Date</th><th>Type</th><th>Months</th><th style="text-align:right">Amount</th><th>Method</th><th>Note</th><th>Actions</th>
+    </tr></thead><tbody>`;
+    txs.forEach((tx) => {
+      const defaultNote = tx.note || (tx.type==='monthly' ? (formatMonthLabel((tx.related_months||[])[0]||'')) : '');
+      const monthsLabel = (tx.related_months && tx.related_months.length) ? tx.related_months.map(m => formatMonthLabel(m)).join(', ') : (tx.related_month ? formatMonthLabel(tx.related_month) : '');
+      html += `<tr style="border-bottom:1px solid #f1f5f9">
+        <td style="padding:8px">${tx.createdAt ? new Date((tx.createdAt.seconds||tx.createdAt._seconds)*1000).toLocaleString() : ''}</td>
+        <td style="padding:8px">${escape(displayTypeLabel(tx.type))}</td>
+        <td style="padding:8px">${escape(monthsLabel)}</td>
+        <td style="padding:8px;text-align:right">${c2p(tx.amount_cents||0)}</td>
+        <td style="padding:8px">${escape(tx.payment_method||'')}${tx.mobile_provider ? ' / ' + escape(tx.mobile_provider) : ''}</td>
+        <td style="padding:8px">${escape(defaultNote)}</td>
+        <td style="padding:8px">
+          <button title="Edit" class="icon edit-tx" data-id="${tx.id}" style="border:0;background:transparent">${editSvg}</button>
+          <button title="Delete" class="icon del-tx" data-id="${tx.id}" style="border:0;background:transparent">${delSvg}</button>
+        </td>
+      </tr>`;
+    });
+    html += `</tbody></table></div>`;
+  }
+
+  html += `<div style="display:flex;justify-content:flex-end;margin-top:12px"><button id="closeTxView" class="btn btn-ghost">Close</button></div>`;
+
   showModal('Transactions', html);
 
-  // prevent background scroll while modal open
+  // prevent background scroll while modal open (restored by wrapped closeModal)
   if(!window.__modal_close_wrapped){
     const origClose = window.closeModal || (()=>{});
-    window.closeModal = function(){ try{ origClose(); }finally{ document.body.style.overflow = ''; } };
+    window.closeModal = function(){ try{ origClose(); } finally { document.body.style.overflow = ''; } };
     window.__modal_close_wrapped = true;
   }
   document.body.style.overflow = 'hidden';
 
   modalBody.querySelector('#closeTxView').onclick = () => { closeModal(); };
+
+  // wire actions (edit/delete)
   modalBody.querySelectorAll('.edit-tx').forEach(b => b.addEventListener('click', ev => openEditTransactionModal(ev.currentTarget)));
   modalBody.querySelectorAll('.del-tx').forEach(b => b.addEventListener('click', ev => deleteTransaction(ev.currentTarget)));
 }
