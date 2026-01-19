@@ -3949,8 +3949,87 @@ async function renderPaymentsList(view = 'students'){
     }
 
     // desktop unchanged (reuse prior desktop code path)
-    // ... (existing desktop teacher table remains)
-  }
+    // DESKTOP teacher table (unchanged; full IDs & salary column)
+    if(view=='teachers'){
+      let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><strong>Teachers — ${list.length}</strong><div class="muted">Columns: No, ID, Name, Subject, Class, Salary, Balance, Paid(this month), Actions</div></div>`;
+      html += `<div style="overflow:auto"><table style="width:100%;border-collapse:collapse"><thead><tr>
+        <th>No</th><th>ID</th><th>Name</th><th>Subject</th><th>Class</th><th style="text-align:right">Salary</th><th style="text-align:right">Balance</th><th style="text-align:right">Paid (this month)</th><th>Actions</th>
+      </tr></thead><tbody>`;
+      list.forEach((t, idx) => {
+        const salaryVal = t.salary != null && !isNaN(Number(t.salary)) ? Math.round(Number(t.salary)*100) : (t.salary_cents||0);
+        const balance = Number(t.balance_cents||0);
+        const paidThisMonth = getPaidThisMonthForTarget('teacher', t);
+        const className = resolveClassName(t) || '—';
+        html += `<tr style="border-bottom:1px solid #f1f5f9">
+          <td style="padding:8px">${idx+1}</td>
+          <td style="padding:8px">${escape(t.teacherId||t.id||'')}</td>
+          <td style="padding:8px">${escape(t.fullName||'')}</td>
+          <td style="padding:8px">${escape(t.subjectName||t.subject||'')}</td>
+          <td style="padding:8px">${escape(className||'')}</td>
+          <td style="padding:8px;text-align:right">${salaryVal? c2p(salaryVal): '—'}</td>
+          <td style="padding:8px;text-align:right;color:#b91c1c;font-weight:700">${c2p(balance)}</td>
+          <td style="padding:8px;text-align:right;color:#059669;font-weight:700">${c2p(paidThisMonth)}</td>
+          <td style="padding:8px">
+            <button class="btn btn-primary btn-sm pay-btn" data-id="${escape(t.teacherId||t.id||'')}" title="Pay">${svgPay()}</button>
+            <button class="btn btn-secondary btn-sm adj-btn" data-id="${escape(t.teacherId||t.id||'')}" title="Reesto Hore">${svgReesto()}</button>
+            <button class="btn btn-ghost btn-sm view-trans-btn" data-id="${escape(t.teacherId||t.id||'')}" title="View">${svgView()}</button>
+          </td>
+        </tr>`;
+      });
+      html += `</tbody></table></div>`;
+      html += `<div class="totals-card card" style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">
+        <div style="font-weight:900">Totals</div>
+        <div style="display:flex;gap:18px;align-items:center">
+          <div style="min-width:140px">Assigned salary (sum): <span style="color:#0b74de;font-weight:900">${c2p(totSalaryAssigned)}</span></div>
+          <div style="min-width:140px">Current balance total: <span style="color:#b91c1c;font-weight:900">${c2p(totBalance)}</span></div>
+          <div style="min-width:140px">Total Paid (this month): <span style="color:#059669;font-weight:900">${c2p(totPaid)}</span></div>
+        </div>
+      </div>`;
+      listRoot.innerHTML = html;
+      listRoot.querySelectorAll('.pay-btn').forEach(b => b.addEventListener('click', ev => openPayModal(ev.currentTarget)));
+      listRoot.querySelectorAll('.adj-btn').forEach(b => b.addEventListener('click', ev => openAdjustmentModal(ev.currentTarget)));
+      listRoot.querySelectorAll('.view-trans-btn').forEach(b => b.addEventListener('click', ev => openViewTransactionsModal(ev.currentTarget)));
+      return;
+    } else  {
+      // STAFF: desktop table with salary column & edit/delete buttons
+      let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><strong>Staff — ${list.length}</strong></div>`;
+      html += `<div style="overflow:auto"><table style="width:100%;border-collapse:collapse"><thead><tr>
+        <th>No</th><th>ID</th><th>Name</th><th>Phone</th><th>Role</th><th style="text-align:right">Salary</th><th style="text-align:right">Balance</th><th>Actions</th>
+      </tr></thead><tbody>`;
+      list.forEach((s, idx) => {
+        const salaryVal = s.salary != null && !isNaN(Number(s.salary)) ? Math.round(Number(s.salary)*100) : (s.salary_cents||0);
+        html += `<tr style="border-bottom:1px solid #f1f5f9">
+          <td style="padding:8px">${idx+1}</td>
+          <td style="padding:8px">${escape(s.staffId||s.id||'')}</td>
+          <td style="padding:8px">${escape(s.fullName||'')}</td>
+          <td style="padding:8px">${escape(s.phone||'—')}</td>
+          <td style="padding:8px">${escape(s.role||'')}</td>
+          <td style="padding:8px;text-align:right">${salaryVal? c2p(salaryVal) : '—'}</td>
+          <td style="padding:8px;text-align:right;color:#b91c1c;font-weight:700">${c2p(s.balance_cents||0)}</td>
+          <td style="padding:8px">
+            <button class="btn btn-primary btn-sm pay-btn" data-id="${escape(s.staffId||s.id||'')}" title="Pay">${svgPay()}</button>
+            <button class="btn btn-secondary btn-sm adj-btn" data-id="${escape(s.staffId||s.id||'')}" title="Reesto Hore">${svgReesto()}</button>
+            <button class="btn btn-ghost btn-sm view-trans-btn" data-id="${escape(s.staffId||s.id||'')}" title="View">${svgView()}</button>
+            <button class="btn btn-ghost btn-sm edit-staff" data-id="${escape(s.id||'')}" title="Edit">${svgEdit()}</button>
+            <button class="btn btn-danger btn-sm del-staff" data-id="${escape(s.id||'')}" title="Delete">${svgDelete()}</button>
+          </td>
+        </tr>`;
+      });
+      html += `</tbody></table></div>`;
+      listRoot.innerHTML = html;
+
+      listRoot.querySelectorAll('.pay-btn').forEach(b => b.addEventListener('click', ev => openPayModal(ev.currentTarget)));
+      listRoot.querySelectorAll('.adj-btn').forEach(b => b.addEventListener('click', ev => openAdjustmentModal(ev.currentTarget)));
+      listRoot.querySelectorAll('.view-trans-btn').forEach(b => b.addEventListener('click', ev => openViewTransactionsModal(ev.currentTarget)));
+      listRoot.querySelectorAll('.edit-staff').forEach(b => b.addEventListener('click', ev => toast('Edit staff not implemented - tell me if you want it')));
+      listRoot.querySelectorAll('.del-staff').forEach(b => b.addEventListener('click', async (e)=> {
+        const id = e.currentTarget.dataset.id;
+        if(!confirm('Delete staff?')) return;
+        try{ await deleteDoc(doc(db,'staff', id)); toast('Staff deleted'); await loadStaff(); renderPaymentsList('staff'); }catch(err){ console.error(err); toast('Failed to delete'); }
+      }));
+      return;
+    }
+    }
 
   /* ---------- STAFF ---------- */
   if(view === 'staff'){
@@ -4046,86 +4125,46 @@ modalBody.querySelectorAll('.view-trans-btn')
     }
 
    // DESKTOP teacher table (unchanged; full IDs & salary column)
-// DESKTOP teacher table
-if(view === 'teachers'){
-  let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><strong>Teachers — ${list.length}</strong><div class="muted">Columns: No, ID, Name, Subject, Class, Salary, Balance, Paid(this month), Actions</div></div>`;
-    html += `<div style="overflow:auto"><table style="width:100%;border-collapse:collapse"><thead><tr>
-      <th>No</th><th>ID</th><th>Name</th><th>Subject</th><th>Class</th><th style="text-align:right">Salary</th><th style="text-align:right">Balance</th><th style="text-align:right">Paid (this month)</th><th>Actions</th>
-    </tr></thead><tbody>`;
-    list.forEach((t, idx) => {
-      const salaryVal = t.salary != null && !isNaN(Number(t.salary)) ? Math.round(Number(t.salary)*100) : (t.salary_cents||0);
-      const balance = Number(t.balance_cents||0);
-      const paidThisMonth = getPaidThisMonthForTarget('teacher', t);
-      const className = resolveClassName(t) || '—';
-      html += `<tr style="border-bottom:1px solid #f1f5f9">
-        <td style="padding:8px">${idx+1}</td>
-        <td style="padding:8px">${escape(t.teacherId||t.id||'')}</td>
-        <td style="padding:8px">${escape(t.fullName||'')}</td>
-        <td style="padding:8px">${escape(t.subjectName||t.subject||'')}</td>
-        <td style="padding:8px">${escape(className||'')}</td>
-        <td style="padding:8px;text-align:right">${salaryVal? c2p(salaryVal): '—'}</td>
-        <td style="padding:8px;text-align:right;color:#b91c1c;font-weight:700">${c2p(balance)}</td>
-        <td style="padding:8px;text-align:right;color:#059669;font-weight:700">${c2p(paidThisMonth)}</td>
-        <td style="padding:8px">
-          <button class="btn btn-primary btn-sm pay-btn" data-id="${escape(t.teacherId||t.id||'')}" title="Pay">${svgPay()}</button>
-          <button class="btn btn-secondary btn-sm adj-btn" data-id="${escape(t.teacherId||t.id||'')}" title="Reesto Hore">${svgReesto()}</button>
-          <button class="btn btn-ghost btn-sm view-trans-btn" data-id="${escape(t.teacherId||t.id||'')}" title="View">${svgView()}</button>
-        </td>
-      </tr>`;
-    });
-    html += `</tbody></table></div>`;
-    html += `<div class="totals-card card" style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">
-      <div style="font-weight:900">Totals</div>
-      <div style="display:flex;gap:18px;align-items:center">
-        <div style="min-width:140px">Assigned salary (sum): <span style="color:#0b74de;font-weight:900">${c2p(totSalaryAssigned)}</span></div>
-        <div style="min-width:140px">Current balance total: <span style="color:#b91c1c;font-weight:900">${c2p(totBalance)}</span></div>
-        <div style="min-width:140px">Total Paid (this month): <span style="color:#059669;font-weight:900">${c2p(totPaid)}</span></div>
-      </div>
-    </div>`;
-    listRoot.innerHTML = html;
-    listRoot.querySelectorAll('.pay-btn').forEach(b => b.addEventListener('click', ev => openPayModal(ev.currentTarget)));
-    listRoot.querySelectorAll('.adj-btn').forEach(b => b.addEventListener('click', ev => openAdjustmentModal(ev.currentTarget)));
-    listRoot.querySelectorAll('.view-trans-btn').forEach(b => b.addEventListener('click', ev => openViewTransactionsModal(ev.currentTarget)));
-    return;
-  } else {
-    // STAFF: desktop table with salary column & edit/delete buttons
-    let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><strong>Staff — ${list.length}</strong></div>`;
-    html += `<div style="overflow:auto"><table style="width:100%;border-collapse:collapse"><thead><tr>
-      <th>No</th><th>ID</th><th>Name</th><th>Phone</th><th>Role</th><th style="text-align:right">Salary</th><th style="text-align:right">Balance</th><th>Actions</th>
-    </tr></thead><tbody>`;
-    list.forEach((s, idx) => {
-      const salaryVal = s.salary != null && !isNaN(Number(s.salary)) ? Math.round(Number(s.salary)*100) : (s.salary_cents||0);
-      html += `<tr style="border-bottom:1px solid #f1f5f9">
-        <td style="padding:8px">${idx+1}</td>
-        <td style="padding:8px">${escape(s.staffId||s.id||'')}</td>
-        <td style="padding:8px">${escape(s.fullName||'')}</td>
-        <td style="padding:8px">${escape(s.phone||'—')}</td>
-        <td style="padding:8px">${escape(s.role||'')}</td>
-        <td style="padding:8px;text-align:right">${salaryVal? c2p(salaryVal) : '—'}</td>
-        <td style="padding:8px;text-align:right;color:#b91c1c;font-weight:700">${c2p(s.balance_cents||0)}</td>
-        <td style="padding:8px">
-          <button class="btn btn-primary btn-sm pay-btn" data-id="${escape(s.staffId||s.id||'')}" title="Pay">${svgPay()}</button>
-          <button class="btn btn-secondary btn-sm adj-btn" data-id="${escape(s.staffId||s.id||'')}" title="Reesto Hore">${svgReesto()}</button>
-          <button class="btn btn-ghost btn-sm view-trans-btn" data-id="${escape(s.staffId||s.id||'')}" title="View">${svgView()}</button>
-          <button class="btn btn-ghost btn-sm edit-staff" data-id="${escape(s.id||'')}" title="Edit">${svgEdit()}</button>
-          <button class="btn btn-danger btn-sm del-staff" data-id="${escape(s.id||'')}" title="Delete">${svgDelete()}</button>
-        </td>
-      </tr>`;
-    });
-    html += `</tbody></table></div>`;
-    listRoot.innerHTML = html;
+   
+  // STAFF: desktop table with salary column & edit/delete buttons
+  let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><strong>Staff — ${list.length}</strong></div>`;
+  html += `<div style="overflow:auto"><table style="width:100%;border-collapse:collapse"><thead><tr>
+    <th>No</th><th>ID</th><th>Name</th><th>Phone</th><th>Role</th><th style="text-align:right">Salary</th><th style="text-align:right">Balance</th><th>Actions</th>
+  </tr></thead><tbody>`;
+  list.forEach((s, idx) => {
+    const salaryVal = s.salary != null && !isNaN(Number(s.salary)) ? Math.round(Number(s.salary)*100) : (s.salary_cents||0);
+    html += `<tr style="border-bottom:1px solid #f1f5f9">
+      <td style="padding:8px">${idx+1}</td>
+      <td style="padding:8px">${escape(s.staffId||s.id||'')}</td>
+      <td style="padding:8px">${escape(s.fullName||'')}</td>
+      <td style="padding:8px">${escape(s.phone||'—')}</td>
+      <td style="padding:8px">${escape(s.role||'')}</td>
+      <td style="padding:8px;text-align:right">${salaryVal? c2p(salaryVal) : '—'}</td>
+      <td style="padding:8px;text-align:right;color:#b91c1c;font-weight:700">${c2p(s.balance_cents||0)}</td>
+      <td style="padding:8px">
+        <button class="btn btn-primary btn-sm pay-btn" data-id="${escape(s.staffId||s.id||'')}" title="Pay">${svgPay()}</button>
+        <button class="btn btn-secondary btn-sm adj-btn" data-id="${escape(s.staffId||s.id||'')}" title="Reesto Hore">${svgReesto()}</button>
+        <button class="btn btn-ghost btn-sm view-trans-btn" data-id="${escape(s.staffId||s.id||'')}" title="View">${svgView()}</button>
+        <button class="btn btn-ghost btn-sm edit-staff" data-id="${escape(s.id||'')}" title="Edit">${svgEdit()}</button>
+        <button class="btn btn-danger btn-sm del-staff" data-id="${escape(s.id||'')}" title="Delete">${svgDelete()}</button>
+      </td>
+    </tr>`;
+  });
+  html += `</tbody></table></div>`;
+  listRoot.innerHTML = html;
 
-    listRoot.querySelectorAll('.pay-btn').forEach(b => b.addEventListener('click', ev => openPayModal(ev.currentTarget)));
-    listRoot.querySelectorAll('.adj-btn').forEach(b => b.addEventListener('click', ev => openAdjustmentModal(ev.currentTarget)));
-    listRoot.querySelectorAll('.view-trans-btn').forEach(b => b.addEventListener('click', ev => openViewTransactionsModal(ev.currentTarget)));
-    listRoot.querySelectorAll('.edit-staff').forEach(b => b.addEventListener('click', ev => toast('Edit staff not implemented - tell me if you want it')));
-    listRoot.querySelectorAll('.del-staff').forEach(b => b.addEventListener('click', async (e)=> {
-      const id = e.currentTarget.dataset.id;
-      if(!confirm('Delete staff?')) return;
-      try{ await deleteDoc(doc(db,'staff', id)); toast('Staff deleted'); await loadStaff(); renderPaymentsList('staff'); }catch(err){ console.error(err); toast('Failed to delete'); }
-    }));
-    return;
-  }  }
+  listRoot.querySelectorAll('.pay-btn').forEach(b => b.addEventListener('click', ev => openPayModal(ev.currentTarget)));
+  listRoot.querySelectorAll('.adj-btn').forEach(b => b.addEventListener('click', ev => openAdjustmentModal(ev.currentTarget)));
+  listRoot.querySelectorAll('.view-trans-btn').forEach(b => b.addEventListener('click', ev => openViewTransactionsModal(ev.currentTarget)));
+  listRoot.querySelectorAll('.edit-staff').forEach(b => b.addEventListener('click', ev => toast('Edit staff not implemented - tell me if you want it')));
+  listRoot.querySelectorAll('.del-staff').forEach(b => b.addEventListener('click', async (e)=> {
+    const id = e.currentTarget.dataset.id;
+    if(!confirm('Delete staff?')) return;
+    try{ await deleteDoc(doc(db,'staff', id)); toast('Staff deleted'); await loadStaff(); renderPaymentsList('staff'); }catch(err){ console.error(err); toast('Failed to delete'); }
+  }));
+  return;
+
+  }
 
   /* ---------- EXPENSES ---------- */
   if(view === 'expenses'){
