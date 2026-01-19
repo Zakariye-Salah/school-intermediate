@@ -4584,7 +4584,7 @@ async function renderDashboard(opts = {}) {
     typeof loadExams === 'function' ? loadExams() : Promise.resolve(),
     typeof loadExamResults === 'function' ? loadExamResults() : Promise.resolve()
   ]);
-
+ 
   // ---------- helpers ----------
   function tsToMs(t) {
     if (!t) return 0;
@@ -4596,7 +4596,7 @@ async function renderDashboard(opts = {}) {
   }
   function startOfDayMs(d) { const x = new Date(d); x.setHours(0,0,0,0); return x.getTime(); }
   function endOfDayMs(d) { const x = new Date(d); x.setHours(23,59,59,999); return x.getTime(); }
-
+ 
   // robust money formatter (uses global c2p if present)
   function formatMoney(cents) {
     try {
@@ -4606,7 +4606,7 @@ async function renderDashboard(opts = {}) {
     const n = Number(cents || 0) / 100;
     return n.toFixed(2);
   }
-
+ 
   // robust balance normalization -> cents
   function getBalanceCents(record) {
     if (!record) return 0;
@@ -4626,7 +4626,7 @@ async function renderDashboard(opts = {}) {
     if (typeof record.due_amount !== 'undefined') { const v = Number(record.due_amount)||0; return Math.round(v*100); }
     return 0;
   }
-
+ 
   // robust student finder
   function findStudentByRef(refId) {
     if (!refId) return null;
@@ -4640,14 +4640,14 @@ async function renderDashboard(opts = {}) {
     }
     return null;
   }
-
+ 
   // months & school-year config
   const monthsShort = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   const schoolYearConfig = (() => {
     try { const raw = localStorage.getItem('schoolYearConfig'); if (raw) return JSON.parse(raw); } catch(e) {}
     return { startMonth: 8, endMonth: 6 };
   })();
-
+ 
   // compute range per filter
   function computeRangeForFilter(filterName) {
     const now = new Date();
@@ -4685,7 +4685,7 @@ async function renderDashboard(opts = {}) {
     // All
     return { start: 0, end: Date.now(), label: 'Showing: All time' };
   }
-
+ 
   // ---------- DOM skeleton & refs ----------
   const containerId = 'pageDashboard';
   let page = document.getElementById(containerId);
@@ -4696,12 +4696,12 @@ async function renderDashboard(opts = {}) {
     const main = document.querySelector('main');
     main && main.insertBefore(page, main.firstChild);
   }
-
+ 
   // initial state
   let activeFilter = opts.defaultFilter || 'This Month';
   let totalBalanceMode = localStorage.getItem('dashboard_total_balance_mode') || 'students';
   let currentRange = computeRangeForFilter(activeFilter);
-
+ 
   // skeleton HTML (keeps your layout)
   page.innerHTML = `
     <div class="page-header" style="align-items:center;justify-content:space-between">
@@ -4716,7 +4716,7 @@ async function renderDashboard(opts = {}) {
         </div>
         <div id="filterInfo" class="muted" style="margin-left:12px"></div>
       </div>
-
+ 
       <div style="display:flex;gap:8px;align-items:center">
         <div style="display:flex;gap:8px;align-items:center">
           <button id="dashboardRefresh" class="btn btn-ghost" title="Refresh">↻</button>
@@ -4730,9 +4730,9 @@ async function renderDashboard(opts = {}) {
         </div>
       </div>
     </div>
-
+ 
     <div id="kpis" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-top:12px"></div>
-
+ 
     <div id="chartsRow" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
       <div class="card" style="padding:12px">
         <div style="display:flex;justify-content:space-between;align-items:center">
@@ -4744,7 +4744,7 @@ async function renderDashboard(opts = {}) {
         </div>
         <canvas id="chartPayments" height="220"></canvas>
       </div>
-
+ 
       <div class="card" style="padding:12px">
         <div style="display:flex;justify-content:space-between;align-items:center">
           <div><strong>Teacher Payments (paid)</strong><div class="muted" id="chartTeachersInfo" style="font-size:0.85rem"></div></div>
@@ -4756,7 +4756,7 @@ async function renderDashboard(opts = {}) {
         <canvas id="chartTeachers" height="220"></canvas>
       </div>
     </div>
-
+ 
     <div style="display:grid;grid-template-columns:2fr 1fr;gap:12px;margin-top:12px">
       <div class="card" id="outstandingCard" style="padding:12px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
@@ -4769,7 +4769,7 @@ async function renderDashboard(opts = {}) {
         </div>
         <div id="outstandingTable"></div>
       </div>
-
+ 
       <div class="card" id="leaderboardCard" style="padding:12px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
           <div><strong>Top-10 Students (Exam leaderboard)</strong><div class="muted" id="leaderboardExamInfo"></div></div>
@@ -4783,13 +4783,104 @@ async function renderDashboard(opts = {}) {
         <div id="leaderboardList"></div>
       </div>
     </div>
-
+ 
     <div id="dashFooter" style="margin-top:12px;display:flex;justify-content:space-between;align-items:center">
       <div class="muted" id="dashSources">Data source: local cache (transactions / students / teachers)</div>
       <div class="muted" id="dashStatus"></div>
     </div>
   `;
-
+ 
+  // --- Header replacement for mobile-friendly controls + export dropdown ---
+ (function replaceHeaderControls() {
+   const hdr = page.querySelector('.page-header');
+   if (!hdr) return;
+   hdr.innerHTML = `
+     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;width:100%;justify-content:space-between">
+       <div style="display:flex;gap:8px;align-items:center;min-width:0">
+         <select id="dashboardFilterSelect" style="padding:8px;border-radius:8px;border:1px solid #e6eef9;background:#fff;min-width:160px">
+           <option value="Today">Today</option>
+           <option value="This Month" selected>This Month</option>
+           <option value="This Week">This Week</option>
+           <option value="This Year">This Year</option>
+           <option value="Sanad dugsiyeed">Sanad dugsiyeed</option>
+           <option value="All">All</option>
+         </select>
+         <div id="filterInfoMobile" class="muted" style="font-size:0.9rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
+       </div>
+ 
+       <div style="display:flex;gap:8px;align-items:center">
+         <div style="position:relative">
+           <button id="dashboardExportBtn" class="btn btn-ghost" style="display:flex;gap:8px;align-items:center;padding:8px 10px;border-radius:8px">Export ▾</button>
+           <div id="dashboardExportMenu" style="display:none;position:absolute;right:0;top:calc(100% + 6px);background:#fff;border:1px solid #eef2f9;border-radius:8px;box-shadow:0 6px 20px rgba(10,20,40,0.06);z-index:999;padding:6px">
+             <button id="exportPdfOpt" class="btn btn-ghost" style="display:block;width:180px;text-align:left;padding:8px">Export PDF</button>
+             <button id="exportCsvOpt" class="btn btn-ghost" style="display:block;width:180px;text-align:left;padding:8px">Export CSV</button>
+           </div>
+         </div>
+ 
+         <button id="dashboardRefresh" class="btn btn-ghost" title="Refresh" style="padding:8px;border-radius:8px">↻</button>
+         <button id="dashboardSettings" class="btn btn-ghost" style="padding:8px;border-radius:8px" title="Settings">⚙</button>
+         <button id="dashboardNotifications" class="btn btn-ghost" style="padding:8px;border-radius:8px" title="Notifications">🔔 <span id="notifBadge" style="display:none;margin-left:6px;background:#ef4444;color:#fff;font-size:0.7rem;padding:2px 6px;border-radius:999px"></span></button>
+       </div>
+     </div>
+     <div style="margin-top:6px;display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap">
+       <div id="filterMeta" style="display:flex;flex-direction:column;gap:4px">
+         <div id="filterShowing" class="muted" style="font-size:0.92rem"></div>
+         <div id="lastRefWrapper" class="muted" style="font-size:0.82rem"></div>
+       </div>
+       <div id="headerRightMeta" class="muted" style="font-size:0.9rem"></div>
+     </div>
+   `;
+ 
+   // refs
+   const sel = page.querySelector('#dashboardFilterSelect');
+   const filterInfoMobile = page.querySelector('#filterInfoMobile');
+   const filterShowing = page.querySelector('#filterShowing');
+   const lastRefWrapper = page.querySelector('#lastRefWrapper');
+   const exportBtn = page.querySelector('#dashboardExportBtn');
+   const exportMenu = page.querySelector('#dashboardExportMenu');
+   const exportPdfOpt = page.querySelector('#exportPdfOpt');
+   const exportCsvOpt = page.querySelector('#exportCsvOpt');
+ 
+   // initialize values
+   sel.value = activeFilter || 'This Month';
+   filterInfoMobile.textContent = (currentRange && currentRange.label) ? '' : '';
+   filterShowing.textContent = currentRange && currentRange.label ? currentRange.label : '';
+ 
+   // wire select -> same behavior as old filter buttons
+   sel.addEventListener('change', () => {
+     activeFilter = sel.value;
+     setActiveFilterButton(activeFilter); // uses existing function (see patch below)
+     currentRange = computeRangeForFilter(activeFilter);
+     refreshDashboard();
+   });
+ 
+   // export dropdown toggle
+   exportBtn.addEventListener('click', (ev) => {
+     ev.stopPropagation();
+     exportMenu.style.display = exportMenu.style.display === 'none' ? 'block' : 'none';
+   });
+   // close menu on outside click
+   document.addEventListener('click', (ev) => {
+     if (!exportMenu) return;
+     if (!exportMenu.contains(ev.target) && !exportBtn.contains(ev.target)) exportMenu.style.display = 'none';
+   });
+ 
+   // hook export options
+   if (exportPdfOpt) exportPdfOpt.addEventListener('click', () => { exportMenu.style.display='none'; exportPdfFromDashboard(); });
+   if (exportCsvOpt) exportCsvOpt.addEventListener('click', () => { exportMenu.style.display='none'; exportCsvFromDashboard(); });
+ 
+   // wire refresh / settings / notifications to existing handlers if present
+   const refBtn = page.querySelector('#dashboardRefresh');
+   if (refBtn) refBtn.addEventListener('click', page.querySelector('#dashboardRefresh').onclick || (()=>{ page.querySelector('#dashboardRefresh').click(); }));
+ 
+   // show last refreshed
+   lastRefWrapper.textContent = `↻ Last refreshed: ${new Date().toLocaleString()}`;
+ 
+   // expose nodes used elsewhere
+   lastRefEl = lastRefWrapper; // reuse your existing var name so renderCharts can update it
+   filterInfo = filterInfoMobile;
+ })();
+ 
   // refs
   const filterButtons = page.querySelectorAll('.filter-btn');
   const filterInfo = page.querySelector('#filterInfo');
@@ -4807,56 +4898,68 @@ async function renderDashboard(opts = {}) {
   const leaderboardKind = page.querySelector('#leaderboardKind');
   const leaderboardClassSel = page.querySelector('#leaderboardClass');
   const leaderboardExamInfo = page.querySelector('#leaderboardExamInfo');
-
-  function setActiveFilterButton(name) {
-    filterButtons.forEach(b => b.classList.toggle('active', b.dataset.filter === name));
-    const range = computeRangeForFilter(name);
-    filterInfo.textContent = range.label;
-  }
+ 
+ // Replace existing setActiveFilterButton(name) with this version:
+ function setActiveFilterButton(name) {
+   // update filter buttons if present (desktop)
+   filterButtons.forEach(b => b.classList.toggle('active', b.dataset.filter === name));
+   // update mobile select if present
+   const mobileSel = page.querySelector('#dashboardFilterSelect');
+   if (mobileSel) {
+     try { mobileSel.value = name; } catch(e){ /* ignore */ }
+   }
+   // update the "Showing:" text
+   const range = computeRangeForFilter(name);
+   const metaEl = page.querySelector('#filterShowing') || filterInfo;
+   if (metaEl) metaEl.textContent = range.label;
+   // keep previous behavior (if any other UI must refresh)
+   filterInfo && (filterInfo.textContent = range.label);
+ }
+ 
   setActiveFilterButton(activeFilter);
-
+ 
   // ---------- KPI computation ----------
   function txInRange(tx, start, end) {
     const ms = tsToMs(tx.createdAt);
     return ms >= start && ms <= end;
   }
-
+ 
   function computeKPIs(range) {
     const txs = (transactionsCache || []).filter(t => !t.is_deleted && txInRange(t, range.start, range.end));
     const students = studentsCache || [];
     const teachers = teachersCache || [];
     const staff = window.staffCache || [];
-
+ 
     const totalStudents = students.length;
     const totalTeachers = teachers.length;
     const totalStaff = staff.length || 0;
     const totalClasses = (classesCache || []).length;
     const totalSubjects = (window.subjectsCache || []).length;
-
+ 
     const totalExpenseCents = txs.filter(t => String(t.target_type).toLowerCase() === 'expense').reduce((s,t)=> s + (Number(t.amount_cents||0)), 0);
     const staffPaymentsCents = txs.filter(t => String(t.target_type).toLowerCase() === 'staff' && Number(t.amount_cents||0) > 0).reduce((s,t)=> s + (Number(t.amount_cents||0)), 0);
     const teacherPaymentsCents = txs.filter(t => String(t.target_type).toLowerCase() === 'teacher' && Number(t.amount_cents||0) > 0).reduce((s,t)=> s + (Number(t.amount_cents||0)), 0);
     const totalExpensesPlusCents = totalExpenseCents + staffPaymentsCents + teacherPaymentsCents;
     const totalRevenueCents = txs.filter(t => String(t.target_type).toLowerCase() === 'student' || t.type === 'monthly' || String(t.type).toLowerCase() === 'payment').reduce((s,t)=> s + (Number(t.amount_cents||0)), 0);
-
+ 
     const totalStudentsBalanceCents = (students || []).reduce((s,st) => s + getBalanceCents(st), 0);
     const totalTeachersBalanceCents = (teachers || []).reduce((s,tch) => s + getBalanceCents(tch), 0);
-
+ 
     const profitCents = totalRevenueCents - totalExpensesPlusCents;
-
+ 
     const periodLen = Math.max(1, range.end - range.start);
     const prevStart = range.start - periodLen;
     const prevEnd = range.start - 1;
     const txsPrev = (transactionsCache || []).filter(t => !t.is_deleted && tsToMs(t.createdAt) >= prevStart && tsToMs(t.createdAt) <= prevEnd);
     const prevRevenueCents = txsPrev.filter(t => String(t.target_type).toLowerCase() === 'student').reduce((s,t)=> s + (Number(t.amount_cents||0)), 0);
-
+ 
     return {
       totalStudents, totalTeachers, totalStaff, totalClasses, totalSubjects,
       totalExpenseCents, staffPaymentsCents, teacherPaymentsCents, totalExpensesPlusCents,
       totalRevenueCents, totalStudentsBalanceCents, totalTeachersBalanceCents, profitCents, prevRevenueCents
     };
   }
-
+ 
   // ---------- KPI rendering ----------
   function iconToSvg(name, size = 18) {
     const common = `width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false"`;
@@ -4875,9 +4978,9 @@ async function renderDashboard(opts = {}) {
     };
     return svgs[name] || svgs['mdi-school'];
   }
-
-
-
+ 
+ 
+ 
     // --------- KPI tile rendering with colors ---------
   // color palette (tweak hexes as you like)
   const KPI_PALETTE = {
@@ -4886,7 +4989,7 @@ async function renderDashboard(opts = {}) {
     orange:{ accent: '#f59e0b', lightBg: 'rgba(245,158,11,0.06)', text: '#92400e' },  // expenses/warnings
     blue:  { accent: '#2563eb', lightBg: 'rgba(11,116,255,0.06)', text: '#0b4fcf' }   // neutral / others
   };
-
+ 
   // default mapping KPI key -> palette
   const KPI_COLOR_MAP = {
     students: 'red',
@@ -4900,13 +5003,13 @@ async function renderDashboard(opts = {}) {
     profit: 'green',
     total_balance: 'orange' // toggles between students/teachers, keep orange to highlight
   };
-
+ 
   // small helper to ensure a palette object
   function paletteForKey(key){
     const k = KPI_COLOR_MAP[key] || 'blue';
     return KPI_PALETTE[k] || KPI_PALETTE.blue;
   }
-
+ 
   // tileHtml now accepts an optional color palette
   function tileHtml(icon,label,value,key,tooltip,showChange, palette){
     const pal = palette || paletteForKey(key);
@@ -4930,7 +5033,7 @@ async function renderDashboard(opts = {}) {
       </div>
     `;
   }
-
+ 
   // balance tile uses palette depending on mode
   function tileHtmlToggleBalance(kpis, mode) {
     const studentsVal = formatMoney(kpis.totalStudentsBalanceCents);
@@ -4959,7 +5062,7 @@ async function renderDashboard(opts = {}) {
       </div>
     `;
   }
-
+ 
   // renderKPIs now injects palette into each tile and adds hover behaviour wiring
   function renderKPIs(kpis) {
     kpisRoot.innerHTML = `
@@ -4968,27 +5071,27 @@ async function renderDashboard(opts = {}) {
       ${tileHtml('mdi-account-group','Total Staff', kpis.totalStaff, 'staff', `Count of registered staff`, false)}
       ${tileHtml('mdi-domain','Total Classes', kpis.totalClasses, 'classes', `Count of classes`, false)}
       ${tileHtml('mdi-book-open-page-variant','Total Subjects', kpis.totalSubjects, 'subjects', `Count of subjects`, false)}
-
+ 
       ${tileHtml('mdi-file-cabinet','Total Expense', formatMoney(kpis.totalExpenseCents), 'expense', `Total recorded non-payroll expenses between selected dates. Source: transactions (target_type='expense')`, true)}
       ${tileHtml('mdi-cash-multiple','Total Expenses+', formatMoney(kpis.totalExpensesPlusCents), 'expenses_plus', `Total Expenses+ = recorded expenses + staff payments + teacher payouts.`, true)}
       ${tileHtml('mdi-currency-usd','Total Revenue', formatMoney(kpis.totalRevenueCents), 'revenue', `Total Revenue = sum of student payments recorded in selected date range. Source: Payments/transactions`, true)}
       ${tileHtmlToggleBalance(kpis, totalBalanceMode)}
       ${tileHtml('mdi-chart-line','Total Profit', formatMoney(kpis.profitCents), 'profit', `Total Profit = Total Revenue − Total Expenses+`, true)}
     `;
-
+ 
     // small UX: subtle scale on hover for all tiles
     kpisRoot.querySelectorAll('.kpi-tile').forEach(tile => {
       tile.style.transition = 'transform .12s ease, box-shadow .12s ease';
       tile.addEventListener('mouseenter', () => { tile.style.transform = 'translateY(-4px)'; tile.style.boxShadow = '0 10px 30px rgba(15,23,42,0.08)'; });
       tile.addEventListener('mouseleave', () => { tile.style.transform = 'translateY(0)'; tile.style.boxShadow = '0 6px 18px rgba(15,23,42,0.04)'; });
     });
-
+ 
     // wire tile clicks
     kpisRoot.querySelectorAll('.kpi-tile').forEach(tile => tile.addEventListener('click', e => {
       const key = tile.dataset.key;
       openKpiDrillDown(key);
     }));
-
+ 
     // wire balance toggle preserved
     const toggleBtn = kpisRoot.querySelector('#kpi-balance-toggle');
     if (toggleBtn) {
@@ -5000,13 +5103,13 @@ async function renderDashboard(opts = {}) {
       });
     }
   }
-
-
-
-
-
-
-
+ 
+ 
+ 
+ 
+ 
+ 
+ 
   // ---------- drilldowns ----------
   function openKpiDrillDown(key) {
     if (key === 'students') { showPage && showPage('students'); }
@@ -5041,7 +5144,7 @@ async function renderDashboard(opts = {}) {
       modalBody.querySelector('#profitClose').addEventListener('click', closeModal);
     }
   }
-
+ 
   function openOutstandingDrillDown(kind) {
     const rows = (kind === 'students' ? (studentsCache || []) : (teachersCache || [])).map((r) => ({
       id: r.studentId || r.id || r.uid || r._id,
@@ -5049,7 +5152,7 @@ async function renderDashboard(opts = {}) {
       balance_cents: getBalanceCents(r),
       className: typeof resolveClassName === 'function' ? resolveClassName(r) : (r.class || r.className || '—')
     })).filter(x => Number(x.balance_cents || 0) > 0).sort((a,b) => b.balance_cents - a.balance_cents);
-
+ 
     const body = document.createElement('div');
     body.innerHTML = `<div style="font-weight:900">${kind === 'students' ? 'Students' : 'Teachers'} outstanding</div>`;
     const table = document.createElement('div');
@@ -5062,11 +5165,11 @@ async function renderDashboard(opts = {}) {
     modalBody.querySelectorAll('.record-pay').forEach(b => b.addEventListener('click', ev => openPayModal(ev.currentTarget)));
     modalBody.querySelectorAll('.view-tx').forEach(b => b.addEventListener('click', ev => { const id = ev.currentTarget.dataset.id; if (typeof openViewTransactionsModal === 'function') openViewTransactionsModal(id); else if (typeof openViewTransactions === 'function') openViewTransactions(id); }));
   }
-
+ 
   // ---------- Charts ----------
   let paymentsChart = page._paymentsChart || null;
   let teachersChart = page._teachersChart || null;
-
+ 
   function aggregateTransactionsForChart(txs, range, granularity) {
     const buckets = {};
     const toKey = (ms) => {
@@ -5075,7 +5178,7 @@ async function renderDashboard(opts = {}) {
       if (granularity === 'weekly') { const sat = new Date(d); while (sat.getDay() !== 6) sat.setDate(sat.getDate() - 1); return sat.toISOString().slice(0,10); }
       return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
     };
-
+ 
     const labelsSet = new Set();
     const cursor = new Date(range.start);
     while (cursor.getTime() <= range.end) {
@@ -5084,34 +5187,34 @@ async function renderDashboard(opts = {}) {
       else if (granularity === 'weekly') cursor.setDate(cursor.getDate() + 7);
       else cursor.setMonth(cursor.getMonth() + 1);
     }
-
+ 
     (txs || []).forEach(t => {
       const ms = tsToMs(t.createdAt);
       if (ms < range.start || ms > range.end) return;
       const k = toKey(ms);
       buckets[k] = (buckets[k] || 0) + Number(t.amount_cents || 0);
     });
-
+ 
     const labels = Array.from(labelsSet).sort();
     const series = labels.map(l => buckets[l] || 0);
     return { labels, series };
   }
-
+ 
   function renderCharts(range) {
     const allTxs = (transactionsCache || []).filter(t => !t.is_deleted);
     const payments = allTxs.filter(t => String(t.target_type).toLowerCase() === 'student' || t.type === 'monthly');
     const granPayments = page.querySelector('#chartPaymentsGranularity').value || 'monthly';
     const aggPayments = aggregateTransactionsForChart(payments, range, granPayments);
-
+ 
     const teachers = allTxs.filter(t => String(t.target_type).toLowerCase() === 'teacher' || String(t.type).toLowerCase() === 'salary' || String(t.target_type).toLowerCase() === 'staff');
     const granTeach = page.querySelector('#chartTeachersGranularity').value || 'monthly';
     const aggTeachers = aggregateTransactionsForChart(teachers, range, granTeach);
-
+ 
     if (typeof Chart === 'undefined') {
       if (chartPaymentsCanvas && chartPaymentsCanvas.getContext) chartPaymentsCanvas.getContext('2d').fillText('Chart.js not loaded', 10, 20);
       return;
     }
-
+ 
     chartPaymentsCanvas.style.height = '220px';
     if (paymentsChart) try { paymentsChart.destroy(); } catch(e) {}
     paymentsChart = new Chart(chartPaymentsCanvas.getContext('2d'), {
@@ -5139,7 +5242,7 @@ async function renderDashboard(opts = {}) {
       }
     });
     page._paymentsChart = paymentsChart;
-
+ 
     chartTeachersCanvas.style.height = '220px';
     if (teachersChart) try { teachersChart.destroy(); } catch(e) {}
     teachersChart = new Chart(chartTeachersCanvas.getContext('2d'), {
@@ -5169,11 +5272,34 @@ async function renderDashboard(opts = {}) {
       }
     });
     page._teachersChart = teachersChart;
-
+ 
     lastRefEl.textContent = `Last refreshed: ${new Date().toLocaleString()}`;
+    adjustChartsLayoutForViewport();
   }
-
-function renderOutstandingTable(range){
+ 
+  // Call this inside renderCharts (at the end) or after renderCharts(currentRange)
+ function adjustChartsLayoutForViewport() {
+   const chartsRow = page.querySelector('#chartsRow');
+   if (!chartsRow) return;
+   if (isMobileViewport && isMobileViewport()) {
+     // stack vertically on mobile
+     chartsRow.style.gridTemplateColumns = '1fr';
+     // ensure Student Payments card comes before Teacher Payments
+     const paymentsCard = chartsRow.querySelector('#chartPayments') ? chartsRow.querySelector('#chartPayments').closest('.card') : null;
+     const teachersCard = chartsRow.querySelector('#chartTeachers') ? chartsRow.querySelector('#chartTeachers').closest('.card') : null;
+     if (paymentsCard && teachersCard) {
+       chartsRow.appendChild(paymentsCard); // append in order: payments first
+       chartsRow.appendChild(teachersCard);
+     }
+   } else {
+     // restore two-column desktop layout
+     chartsRow.style.gridTemplateColumns = '1fr 1fr';
+   }
+ }
+ // usage: call adjustChartsLayoutForViewport() at end of renderCharts(currentRange)
+ 
+ 
+ function renderOutstandingTable(range){
   // helpers
   function monthsCountBetween(startMs, endMs){
     if(!startMs || !endMs) return 0;
@@ -5193,19 +5319,19 @@ function renderOutstandingTable(range){
     if(candidates.includes(targetId)) return true;
     return false;
   }
-
+ 
   const monthsInRange = monthsCountBetween(range.start, range.end) || 1;
   const students = (studentsCache || []);
-
+ 
   const rows = students.map(s => {
     // normalize monthly fee (units) -> cents
     let feeVal = 0;
     if (s.fee != null && s.fee !== '') feeVal = Number(s.fee) || 0;
     else if (s.monthlyFee != null) feeVal = Number(s.monthlyFee) || 0;
     const feeCents = Math.round(feeVal * 100);
-
+ 
     const assignedForRange = feeCents * monthsInRange;
-
+ 
     // payments in range
     const payments = (transactionsCache || []).filter(tx => {
       if(tx.is_deleted) return false;
@@ -5218,15 +5344,15 @@ function renderOutstandingTable(range){
       return txMatchesStudent(tx, s);
     });
     const paymentsReceivedCents = payments.reduce((sum,tx)=> sum + (Number(tx.amount_cents || 0)), 0);
-
+ 
     let outstandingCents = Math.max(0, Math.round(assignedForRange || 0) - Math.round(paymentsReceivedCents || 0));
-
+ 
     // fallback to record balance if zero
     if (outstandingCents === 0) {
       const bal = getBalanceCents(s);
       if (Number(bal) !== 0) outstandingCents = Math.abs(Number(bal) || 0);
     }
-
+ 
     return {
       id: s.studentId || s.id || s.uid || s._id || '',
       name: s.fullName || s.name || s.displayName || '—',
@@ -5238,18 +5364,18 @@ function renderOutstandingTable(range){
       sourceRecord: s
     };
   });
-
+ 
   // only students who owe > 0
   const oweRows = rows.filter(r => Number(r.owing_cents || 0) > 0).sort((a,b)=> b.owing_cents - a.owing_cents);
   const top10 = oweRows.slice(0,10);
-
+ 
   outstandingRange.textContent = `${new Date(range.start).toLocaleDateString()} — ${new Date(range.end).toLocaleDateString()}`;
-
+ 
   if(!top10.length){
     outstandingTableRoot.innerHTML = `<div class="muted" style="padding:12px">No outstanding student payments found for the selected period.</div>`;
     return;
   }
-
+ 
   // render (mobile + desktop)
   if(isMobileViewport()){
     const html = `<div style="display:flex;flex-direction:column;gap:8px">
@@ -5264,12 +5390,14 @@ function renderOutstandingTable(range){
           </div>
           <div style="display:flex;align-items:center;gap:12px">
             <div style="text-align:right;font-weight:900;color:#b91c1c">${formatMoney(r.owing_cents)}</div>
-            <div style="display:flex;flex-direction:column;gap:6px">
-              <button class="btn btn-primary record-pay" data-id="${escape(r.id)}">Record Payment</button>
-              <div style="display:flex;gap:6px">
-                <button class="btn btn-ghost view-trans" data-id="${escape(r.id)}">View</button>
-              </div>
-            </div>
+            // mobile row action column snippet
+ <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end">
+   <button class="btn btn-primary record-pay" data-id="${escape(r.id)}" title="Record payment">${svgPay()}</button>
+   <div style="display:flex;gap:6px">
+     <button class="btn btn-ghost view-trans" data-id="${escape(r.id)}" title="View transactions">${svgView()}</button>
+   </div>
+ </div>
+ 
           </div>
         </div>
       `).join('')}
@@ -5282,21 +5410,32 @@ function renderOutstandingTable(range){
     top10.forEach((r,idx)=> {
       html += `<tr style="border-bottom:1px solid #f1f5f9">
         <td style="padding:8px">${idx+1}</td>
-        <td style="padding:8px">${escape(r.name)}<div class="muted">${escape(r.id)}</div></td>
-        <td style="padding:8px">${escape(r.className)}</td>
-        <td style="padding:8px;text-align:right;color:#b91c1c;font-weight:700">${formatMoney(r.owing_cents)}</td>
+     <td style="padding:8px">
+   <div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
+     <div style="min-width:0">
+       <div style="font-weight:900">${escape(r.name)}</div>
+       <div class="muted">${escape(r.id)}</div>
+     </div>
+     <div style="text-align:right;font-weight:900;color:#b91c1c">${formatMoney(r.owing_cents)}</div>
+   </div>
+ </td>
+ 
         <td style="padding:8px;text-align:right">${formatMoney(r.rawAssignedCents)}</td>
         <td style="padding:8px;text-align:right;color:#059669">${formatMoney(r.rawPaymentsReceivedCents)}</td>
-        <td style="padding:8px">
-          <button class="btn btn-primary btn-sm record-pay" data-id="${escape(r.id)}">Record Payment</button>
-          <button class="btn btn-ghost btn-sm view-trans" data-id="${escape(r.id)}">View</button>
-        </td>
+ 
+    
+ 
+ <td style="padding:8px">
+   <button class="btn btn-primary btn-sm record-pay" data-id="${escape(r.id)}" title="Record payment">${svgPay()}</button>
+   <button class="btn btn-ghost btn-sm view-trans" data-id="${escape(r.id)}" title="View transactions">${svgView()}</button>
+ </td>
+ 
       </tr>`;
     });
     html += `</tbody></table></div>`;
     outstandingTableRoot.innerHTML = html;
   }
-
+ 
   // wire actions
   outstandingTableRoot.querySelectorAll('.record-pay').forEach(b => {
     b.addEventListener('click', ev => {
@@ -5311,519 +5450,521 @@ function renderOutstandingTable(range){
       else if (typeof openViewTransactions === 'function') openViewTransactions(id);
     });
   });
-}
-
-// New helper: show full marks for a student + exam with exam picker + ranks/summary
-async function getStudentExamResults(studentId, examId){
-  // 1️⃣ Prefer examTotals cache (finalized results)
-  if(typeof examTotalsCache !== 'undefined'
-     && examTotalsCache
-     && examTotalsCache[examId]
-     && examTotalsCache[examId][studentId]){
-
-    const r = examTotalsCache[examId][studentId];
-
-    return {
-      subjects: (r.subjects || []).map(s => ({
-        subject: s.subject || s.name,
-        components: s.components || {},
-        exam: Number(s.exam || 0),
-        total: Number(s.total || s.score || 0),
-        max: Number(s.max || 0)
-      })),
-      average: Number(r.average || r.total || 0)
-    };
-  }
-
-  // 2️⃣ Fallback: examResultsCache (draft/manual entries)
-  const list = (typeof examResultsCache !== 'undefined'
-    ? examResultsCache
-    : window.examResultsCache) || [];
-
-  const found = list.find(r =>
-    String(r.examId) === String(examId) &&
-    String(r.studentId) === String(studentId)
-  );
-
-  if(found){
-    return {
-      subjects: (found.subjects || []).map(s => ({
-        subject: s.subject,
-        components: s.components || {},
-        exam: Number(s.exam || 0),
-        total: Number(s.total || 0),
-        max: Number(s.max || 0)
-      })),
-      average: Number(found.average || found.total || 0)
-    };
-  }
-
-  // 3️⃣ Nothing found
-  return null;
-}
-
-async function openStudentMarksModal(studentId, examIdInput){
-  const student = findStudentByRef(studentId) || {};
-  const allExams = (examsCache || []).slice();
-  const publishedExams = allExams.filter(e => e.status === 'published');
-  let selectedExamId = examIdInput || (publishedExams[0] && publishedExams[0].id) || (allExams[0] && allExams[0].id) || '';
-
-  const mobile = (typeof isMobileViewport === 'function') ? isMobileViewport() : (window.matchMedia && window.matchMedia('(max-width:768px)').matches);
-
-  const compPretty = { assignment:'Assignment', quiz:'Quiz', monthly:'Monthly', cw1:'CW1', cw2:'CW2', exam:'Exam', linked:'Linked' };
-
-  function gradeColor(pct){
-    if (pct >= 90) return { color:'#064e3b', bg:'rgba(5,150,105,0.08)', letter:'A' };
-    if (pct >= 75) return { color:'#1e3a8a', bg:'rgba(37,99,235,0.06)', letter:'B' };
-    if (pct >= 60) return { color:'#92400e', bg:'rgba(245,158,11,0.06)', letter:'C' };
-    return { color:'#7f1d1d', bg:'rgba(239,68,68,0.06)', letter:'D' };
-  }
-
-  // normalize single subject item -> { subject, components, exam, compSum, linked, total, max }
-  function normalizeSubjectEntry(s){
-    const subjName = s.subject || s.name || s.title || '—';
-    let components = {};
-    if (s.components && typeof s.components === 'object') {
-      Object.keys(s.components).forEach(k => {
-        const v = s.components[k];
-        if (v == null) components[k] = 0;
-        else if (typeof v === 'object') components[k] = Number(v.total ?? v.mark ?? v.value ?? v.amount ?? 0);
-        else components[k] = Number(v || 0);
-      });
-    }
-    if (s.marks && typeof s.marks === 'object') {
-      Object.keys(s.marks).forEach(k => { if (!(k in components)) components[k] = Number(s.marks[k] || 0); });
-    }
-
-    const topExam = (typeof s.exam !== 'undefined' && s.exam !== null && s.exam !== '') ? Number(s.exam) : 0;
-    const examPart = Math.round(Number(components.exam ?? topExam ?? 0)) || 0;
-
-    let linkedPart = 0;
-    if (typeof components.linked !== 'undefined') {
-      const l = components.linked;
-      linkedPart = (typeof l === 'object') ? Number(l.total ?? l.mark ?? l.value ?? 0) : Number(l || 0);
-    } else if (s.linked && typeof s.linked === 'object') {
-      linkedPart = Number(s.linked.total ?? s.linked.mark ?? 0);
-    }
-
-    const compKeys = ['assignment','quiz','monthly','cw1','cw2'];
-    let compSum = 0;
-    compKeys.forEach(k => { compSum += Number(components[k] || 0); });
-
-    // enforce total = exam + components (non-exam) + linked
-    const computedTotal = Math.round(examPart + compSum + (linkedPart || 0));
-    const maxVal = Math.round(Number(s.max ?? s.maximum ?? s.max_mark ?? 0) || 0);
-
-    return {
-      subject: subjName,
-      components,
-      exam: examPart,
-      compSum,
-      linked: Math.round(linkedPart || 0),
-      total: computedTotal,
-      max: maxVal
-    };
-  }
-
-  // compute ranks (preferred: examTotalsCache -> examResultsCache). returns object.
-  async function computeRanksForStudent(examId, studentId){
-    try {
-      const buildFromMap = mapObj => {
-        const arr = Object.keys(mapObj).map(sid => {
-          const r = mapObj[sid] || {};
-          const total = Number(r.total ?? r.average ?? r.score ?? r.totalScore ?? 0);
-          const sc = findStudentByRef(sid) || (studentsCache||[]).find(st => String(st.studentId||st.id||st.uid||st._id) === String(sid));
-          const className = sc ? (sc.classId || sc.class || sc.className || '') : (r.classId || r.className || r.class || '');
-          return { studentId: sid, total: Number(total || 0), className: String(className || '—') };
-        }).filter(x => !isNaN(x.total));
-        return arr;
-      };
-
-      if (typeof examTotalsCache !== 'undefined' && examTotalsCache && examTotalsCache[examId]){
-        const mapObj = examTotalsCache[examId];
-        const arr = buildFromMap(mapObj);
-        if (arr.length){
-          arr.sort((a,b)=> b.total - a.total);
-          const schoolCount = arr.length;
-          const schoolRankMap = {}; arr.forEach((it,i)=> schoolRankMap[it.studentId] = i+1);
-          const classGroups = {};
-          arr.forEach(it => { (classGroups[it.className] = classGroups[it.className] || []).push(it); });
-          const classRankMap = {}; const classCountMap = {};
-          Object.keys(classGroups).forEach(cn => {
-            classGroups[cn].sort((a,b)=> b.total - a.total);
-            classCountMap[cn] = classGroups[cn].length;
-            classGroups[cn].forEach((it,i) => classRankMap[it.studentId] = i+1);
-          });
-          const sRank = schoolRankMap[studentId] || null;
-          const cRank = classRankMap[studentId] || null;
-          const studRec = findStudentByRef(studentId) || (studentsCache||[]).find(st => String(st.studentId||st.id||st.uid||st._id) === String(studentId)) || {};
-          const studClass = String(studRec.classId || studRec.class || studRec.className || '');
-          const classCount = classCountMap[studClass] || classCountMap['—'] || 0;
-          return { classRank: cRank, schoolRank: sRank, classCount: classCount || 0, schoolCount };
-        }
-      }
-
-      const examResultsList = (typeof examResultsCache !== 'undefined' && examResultsCache) ? examResultsCache : (window.examResultsCache || []);
-      const filtered = examResultsList.filter(rr => String(rr.examId) === String(examId));
-      if (filtered.length){
-        const arr = filtered.map(r => {
-          const sid = String(r.studentId || r.student || r.sid || '');
-          const total = Number(r.total ?? r.average ?? r.score ?? 0) || 0;
-          const sc = findStudentByRef(sid) || (studentsCache||[]).find(st => String(st.studentId||st.id||st.uid||st._id) === String(sid));
-          const className = sc ? (sc.classId || sc.class || sc.className || '') : (r.classId || r.className || r.class || '');
-          return { studentId: sid, total, className: String(className || '—') };
-        }).filter(x => x.studentId);
-        if (arr.length){
-          arr.sort((a,b)=> b.total - a.total);
-          const schoolCount = arr.length;
-          const schoolRankMap = {}; arr.forEach((it,i)=> schoolRankMap[it.studentId] = i+1);
-          const classGroups = {};
-          arr.forEach(it => { (classGroups[it.className] = classGroups[it.className] || []).push(it); });
-          const classRankMap = {}; const classCountMap = {};
-          Object.keys(classGroups).forEach(cn => {
-            classGroups[cn].sort((a,b)=> b.total - a.total);
-            classCountMap[cn] = classGroups[cn].length;
-            classGroups[cn].forEach((it,i) => classRankMap[it.studentId] = i+1);
-          });
-          const sRank = schoolRankMap[studentId] || null;
-          const cRank = classRankMap[studentId] || null;
-          const studRec = findStudentByRef(studentId) || (studentsCache||[]).find(st => String(st.studentId||st.id||st.uid||st._id) === String(studentId)) || {};
-          const studClass = String(studRec.classId || studRec.class || studRec.className || '');
-          const classCount = classCountMap[studClass] || 0;
-          return { classRank: cRank, schoolRank: sRank, classCount: classCount || 0, schoolCount };
-        }
-      }
-
-      return { classRank: null, schoolRank: null, classCount: 0, schoolCount: 0 };
-    } catch(e){
-      console.warn('computeRanksForStudent error', e);
-      return { classRank: null, schoolRank: null, classCount: 0, schoolCount: 0 };
-    }
-  }
-
-  // render for a chosen exam; tries to reload caches if no results initially
-  async function renderForExam(examId){
-    // ensure examTotals/examResults loaded if available
-    try {
-      if (typeof loadExamTotalsForExam === 'function') await loadExamTotalsForExam(examId);
-      if (typeof loadExamResults === 'function') await loadExamResults(examId);
-    } catch(e){ /* ignore */ }
-
-    // inside renderForExam(examId), add this near the top before using `exam`
-const exam = (examsCache || []).find(e => String(e.id) === String(examId)) || (allExams.find(e => String(e.id) === String(examId)) || {});
-
-    // fetch results (helper)
-    let results = await getStudentExamResults(studentId, examId);
-    // if nothing, try an additional cache refresh and retry once
-    if ((!results || !Array.isArray(results.subjects) || results.subjects.length === 0) && typeof loadExamTotalsForExam === 'function'){
-      try {
-        await loadExamTotalsForExam(examId);
-        results = await getStudentExamResults(studentId, examId);
-      } catch(e){ /* ignore */ }
-    }
-
-    if(!results || !Array.isArray(results.subjects) || results.subjects.length === 0){
-      modalBody.innerHTML = `<div class="muted" style="padding:12px">No results found for this student / exam.</div>`;
-      return;
-    }
-
-    const normalized = results.subjects.map(normalizeSubjectEntry);
-
-    // find top subject
-    let topTotal = -Infinity, topIndex = -1;
-    normalized.forEach((s,i) => { if ((s.total || 0) > topTotal){ topTotal = s.total || 0; topIndex = i; } });
-
-    // ranks — prefer values in results, else compute
-    let classRankVal = results.classRank ?? results.class_rank ?? null;
-    let schoolRankVal = results.schoolRank ?? results.school_rank ?? null;
-    let classCount = 0, schoolCount = 0;
-    if (classRankVal == null || schoolRankVal == null){
-      const ranks = await computeRanksForStudent(examId, String(studentId));
-      classRankVal = classRankVal ?? ranks.classRank;
-      schoolRankVal = schoolRankVal ?? ranks.schoolRank;
-      classCount = classCount || ranks.classCount;
-      schoolCount = schoolCount || ranks.schoolCount;
-    }
-
-    // fallback counts from studentsCache
-    if (!classCount || !schoolCount){
-      try {
-        const students = (studentsCache || []).filter(st => !(st.status === 'deleted'));
-        schoolCount = schoolCount || students.length;
-        const targetClassId = String(student.classId || student.class || student.className || '');
-        classCount = classCount || students.filter(st => String(st.classId || st.class || st.className || '') === targetClassId).length || 0;
-      } catch(e){}
-    }
-
-    // build rows + compute totals
-    let grandTotal = 0, grandMax = 0;
-    const rows = normalized.map((s, idx) => {
-      const assignedParts = [];
-      ['assignment','quiz','monthly','cw1','cw2'].forEach(k => {
-        const v = Number(s.components?.[k] || 0);
-        if (v > 0) assignedParts.push(`${compPretty[k] || k}: ${v}`);
-      });
-      const lval = Number(s.linked || 0);
-      if (lval > 0) assignedParts.push(`${compPretty.linked}: ${lval}`);
-      const assignedDisplay = assignedParts.length ? assignedParts.join(' • ') : '—';
-
-      grandTotal += Number(s.total || 0);
-      grandMax += Number(s.max || 0);
-
-      const subjPct = (s.max && s.max > 0) ? ((s.total || 0) / s.max) * 100 : 0;
-      const gc = gradeColor(subjPct);
-      const highlight = (idx === topIndex);
-
-      return { idx, s, assignedDisplay, subjPct, gc, highlight };
-    });
-
-    const totalObtained = grandTotal;
-    const totalMax = grandMax || 0;
-    const avgPercent = totalMax ? (totalObtained / totalMax) * 100 : 0;
-    const avgGrade = gradeColor(avgPercent).letter;
-
-    // exam options
-    const examOptionsHtml = (allExams.length ? allExams.map(e => `<option value="${escape(e.id)}" ${String(e.id)===String(examId)?'selected':''}>${escape(e.name||e.id)}${e.status? ' • ' + escape(e.status):''}</option>`).join('') : `<option value="">No exams</option>`);
-
-    // prepare modal HTML (same as before) but we include grade letter in header
-    let html = `
-      <div style="display:flex;flex-direction:${mobile ? 'column' : 'row'};gap:8px;align-items:${mobile ? 'stretch' : 'center'};justify-content:space-between;margin-bottom:10px">
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          <div style="font-weight:800">${escape(student.fullName || student.name || '—')}</div>
-          <div class="muted">ID: ${escape(studentId)} • Class: ${escape(student.classId || student.class || '—')}</div>
-        </div>
-        <div style="display:flex;gap:8px;align-items:center">
-          <select id="marksExamSelect" style="padding:6px;border-radius:8px">${examOptionsHtml}</select>
-          <button id="exportMarksPdf" class="btn btn-ghost">Export PDF</button>
-          <button id="printMarks" class="btn btn-ghost">Print</button>
-          <button id="closeMarks" class="btn btn-ghost">Close</button>
-        </div>
-      </div>
-
-      <div style="display:flex;gap:12px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
-        <div style="font-weight:800">${escape(exam.name || examId || 'Exam')}</div>
-        <div class="muted">Class Rank: <strong>${escape(classRankVal ? String(classRankVal) : '—')}/${escape(classCount || '—')}</strong> • School Rank: <strong>${escape(schoolRankVal ? String(schoolRankVal) : '—')}/${escape(schoolCount || '—')}</strong></div>
-        <div style="margin-left:auto" class="muted">Total: <strong id="marksTotalBadge">${escape(String(totalObtained))} / ${escape(String(totalMax))}</strong> • Avg: <strong id="marksAvgBadge">${Number(avgPercent).toFixed(1)}%</strong> • Grade: <strong>${escape(String(avgGrade))}</strong></div>
-      </div>
-
-      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
-        <div style="font-size:0.9rem;color:#064e3b;background:rgba(5,150,105,0.06);padding:6px;border-radius:6px">A ≥ 90%</div>
-        <div style="font-size:0.9rem;color:#1e3a8a;background:rgba(37,99,235,0.06);padding:6px;border-radius:6px">B ≥ 75%</div>
-        <div style="font-size:0.9rem;color:#92400e;background:rgba(245,158,11,0.06);padding:6px;border-radius:6px">C ≥ 60%</div>
-        <div style="font-size:0.9rem;color:#7f1d1d;background:rgba(239,68,68,0.06);padding:6px;border-radius:6px">D &lt; 60%</div>
-      </div>
-    `;
-
-    // desktop or mobile representation
-    if (!mobile){
-      html += `
-        <div style="overflow:auto">
-          <table id="marksTable" style="width:100%;border-collapse:collapse;font-size:14px">
-            <thead>
-              <tr style="background:#f1f5f9">
-                <th style="padding:8px;text-align:left">Subject</th>
-                <th style="padding:8px;text-align:left">Components Assigned</th>
-                <th style="padding:8px;text-align:center">Exam</th>
-                <th style="padding:8px;text-align:center">Total</th>
-                <th style="padding:8px;text-align:center">Max</th>
-                <th style="padding:8px;text-align:center">Grade</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${rows.map(r => {
-                const s = r.s;
-                const colorStyle = `color:${r.gc.color};background:${r.gc.bg};border-radius:6px;padding:6px 8px;display:inline-block;font-weight:700`;
-                const rowBg = r.highlight ? 'background:linear-gradient(90deg, rgba(255,250,230,0.6), transparent);' : '';
-                return `<tr style="${rowBg}"><td style="padding:8px;vertical-align:top">${escape(s.subject)}</td><td style="padding:8px;vertical-align:top" class="muted">${escape(r.assignedDisplay)}</td><td style="padding:8px;text-align:center;vertical-align:top">${escape(String(Math.round(s.exam || 0)))}</td><td style="padding:8px;text-align:center;vertical-align:top;font-weight:800">${escape(String(Math.round(s.total || 0)))}</td><td style="padding:8px;text-align:center;vertical-align:top">${escape(String(Math.round(s.max || 0)))}</td><td style="padding:8px;text-align:center;vertical-align:top"><span style="${colorStyle}">${escape(r.gc.letter)}</span></td></tr>`; 
-              }).join('')}
-            </tbody>
-          </table>
-        </div>
-      `;
-    } else {
-      html += `<div id="marksMobileList" style="display:flex;flex-direction:column;gap:10px">`;
-      rows.forEach(r=>{
-        const s = r.s;
-        const colorStyle = `color:${r.gc.color};background:${r.gc.bg};border-radius:6px;padding:6px 8px;font-weight:700`;
-        const highlightStyle = r.highlight ? 'box-shadow:0 6px 18px rgba(0,0,0,0.06);' : '';
-        html += `
-          <div style="border:1px solid #f1f5f9;padding:10px;border-radius:8px;${highlightStyle}">
-            <div style="display:flex;justify-content:space-between;align-items:center">
-              <div style="font-weight:800">${escape(s.subject)}</div>
-              <div style="${colorStyle}">${escape(r.gc.letter)}</div>
-            </div>
-            <div style="margin-top:6px" class="muted">${escape(r.assignedDisplay)}</div>
-            <div style="display:flex;gap:12px;margin-top:8px;align-items:center">
-              <div style="flex:1">Exam: <strong>${escape(String(Math.round(s.exam||0)))}</strong></div>
-              <div style="flex:1;text-align:center">Total: <strong>${escape(String(Math.round(s.total||0)))}</strong></div>
-              <div style="flex:1;text-align:right">Max: <strong>${escape(String(Math.round(s.max||0)))}</strong></div>
-            </div>
-          </div>
-        `;
-      });
-      html += `</div>`;
-    }
-
-    // set modal content
-    modalBody.innerHTML = html;
-
-    // --- wiring ---
-
-    // exam select change: try to re-render selected exam (retry loads inside renderForExam)
-    const sel = modalBody.querySelector('#marksExamSelect');
-    if (sel){
-      sel.onchange = async (ev) => {
-        selectedExamId = ev.target.value;
-        // ensure selectedExamId is used for PDF/print
-        await renderForExam(selectedExamId);
-      };
-    }
-
-    // Build a clean report HTML for export/print (no buttons)
-    function buildPrintableReportHtml(){
-      const header = `
-        <div style="font-family:Inter,system-ui,-apple-system,Segoe UI,Arial,sans-serif;padding:12px">
-          <h2 style="margin:0">${escape(student.fullName || student.name || '')}</h2>
-          <div style="margin-top:6px">ID: ${escape(studentId)} • Class: ${escape(student.classId || student.class || '—')}</div>
-          <div style="margin-top:6px">Exam: ${escape(exam.name || selectedExamId || '')}</div>
-          <div style="margin-top:6px">Class Rank: ${escape(classRankVal ? String(classRankVal) : '—')}/${escape(classCount || '—')} • School Rank: ${escape(schoolRankVal ? String(schoolRankVal) : '—')}/${escape(schoolCount || '—')}</div>
-          <div style="margin-top:6px">Total: ${escape(String(totalObtained))} / ${escape(String(totalMax))} • Avg: ${Number(avgPercent).toFixed(1)}% • Grade: ${escape(String(avgGrade))}</div>
-        </div>
-      `;
-      // table rows
-      const rowsHtml = normalized.map(s => {
-        const assignedParts = [];
-        ['assignment','quiz','monthly','cw1','cw2'].forEach(k => {
-          const v = Number(s.components?.[k] || 0);
-          if (v > 0) assignedParts.push(`${compPretty[k] || k}: ${v}`);
-        });
-        const l = Number(s.linked || 0);
-        if (l>0) assignedParts.push(`${compPretty.linked}: ${l}`);
-        const assignedDisplay = assignedParts.length ? assignedParts.join(' • ') : '—';
-        const pct = (s.max && s.max>0) ? ((s.total||0)/s.max)*100 : 0;
-        const grade = gradeColor(pct).letter;
-        return `<tr>
-          <td style="padding:6px;border:1px solid #ddd">${escape(s.subject)}</td>
-          <td style="padding:6px;border:1px solid #ddd">${escape(assignedDisplay)}</td>
-          <td style="padding:6px;border:1px solid #ddd;text-align:center">${escape(String(s.exam||0))}</td>
-          <td style="padding:6px;border:1px solid #ddd;text-align:center">${escape(String(s.total||0))}</td>
-          <td style="padding:6px;border:1px solid #ddd;text-align:center">${escape(String(s.max||0))}</td>
-          <td style="padding:6px;border:1px solid #ddd;text-align:center">${escape(grade)}</td>
-        </tr>`; 
-      }).join('');
-      const table = `<table style="width:100%;border-collapse:collapse;font-family:Inter,system-ui,-apple-system,Segoe UI,Arial,sans-serif"><thead><tr><th style="padding:8px;border:1px solid #ddd;background:#f8fafc">Subject</th><th style="padding:8px;border:1px solid #ddd;background:#f8fafc">Components Assigned</th><th style="padding:8px;border:1px solid #ddd;background:#f8fafc">Exam</th><th style="padding:8px;border:1px solid #ddd;background:#f8fafc">Total</th><th style="padding:8px;border:1px solid #ddd;background:#f8fafc">Max</th><th style="padding:8px;border:1px solid #ddd;background:#f8fafc">Grade</th></tr></thead><tbody>${rowsHtml}</tbody></table>`;
-      return `<div>${header}${table}</div>`;
-    }
-
-    // Export PDF: create clean report and render via html2canvas/jsPDF
-    const exportBtn = modalBody.querySelector('#exportMarksPdf');
-    if (exportBtn){
-      exportBtn.onclick = async () => {
-        try {
-          const reportHtml = buildPrintableReportHtml();
-          // create a hidden container in DOM
-          let tmp = document.getElementById('_marks_print_area_tmp');
-          if (tmp) tmp.remove();
-          tmp = document.createElement('div');
-          tmp.id = '_marks_print_area_tmp';
-          tmp.style.position = 'fixed';
-          tmp.style.left = '-9999px';
-          tmp.style.top = '0';
-          tmp.innerHTML = reportHtml;
-          document.body.appendChild(tmp);
-
-          if (typeof html2canvas !== 'undefined' && window.jspdf){
-            const canvas = await html2canvas(tmp, { scale: 2, useCORS: true });
-            const img = canvas.toDataURL('image/png');
-            const { jsPDF } = window.jspdf;
-            const pdf = new jsPDF('landscape', 'pt', 'a4');
-            const pageWidth = pdf.internal.pageSize.getWidth();
-            const pageHeight = pdf.internal.pageSize.getHeight();
-            const imgW = canvas.width;
-            const imgH = canvas.height;
-            const ratio = Math.min(pageWidth / imgW, pageHeight / imgH);
-            const w = imgW * ratio;
-            const h = imgH * ratio;
-            pdf.addImage(img, 'PNG', (pageWidth - w)/2, 10, w, h - 20);
-            pdf.save(`marks_${String(studentId)}_${String(selectedExamId)}.pdf`);
-          } else {
-            // fallback: open print window with clean html
-            const popup = window.open('', '_blank', 'width=900,height=700');
-            popup.document.write(reportHtml);
-            popup.document.close();
-            popup.focus();
-            setTimeout(()=> popup.print(), 400);
-          }
-          tmp.remove();
-        } catch(err){
-          console.error('export pdf err', err);
-          toast('PDF export failed, using print fallback');
-          // fallback to print
-          const popup = window.open('', '_blank', 'width=900,height=700');
-          popup.document.write(buildPrintableReportHtml());
-          popup.document.close();
-          popup.focus();
-          setTimeout(()=> popup.print(), 400);
-        }
-      };
-    }
-
-    // Print — use printable report html so everything (ranks, grade, totals) is present
-    const printBtn = modalBody.querySelector('#printMarks');
-    if (printBtn){
-      printBtn.onclick = () => {
-        const html = buildPrintableReportHtml();
-        const popup = window.open('', '_blank', 'width=900,height=700');
-        if (!popup) { toast('Popup blocked — allow popups to print'); return; }
-        popup.document.write(`<!doctype html><html><head><title>Marks — ${escape(student.fullName||student.name||'')}</title><meta name="viewport" content="width=device-width,initial-scale=1"></head><body>${html}</body></html>`);
-        popup.document.close();
-        popup.focus();
-        setTimeout(()=> popup.print(), 400);
-      };
-    }
-
-    // close button
-    const closeBtn = modalBody.querySelector('#closeMarks');
-    if (closeBtn) closeBtn.onclick = closeModal;
-
-    // update badges
-    const tBadge = modalBody.querySelector('#marksTotalBadge');
-    const aBadge = modalBody.querySelector('#marksAvgBadge');
-    if (tBadge) tBadge.textContent = `${String(totalObtained)} / ${String(totalMax)}`;
-    if (aBadge) aBadge.textContent = `${Number(avgPercent).toFixed(1)}%`;
-  }
-
-  // show modal and render initial exam
-  const title = `📊 ${escape(student.fullName || student.name || '')}`;
-  showModal(title, `<div style="padding:12px"><div class="muted">Loading marks…</div></div>`);
-  try {
-    await renderForExam(selectedExamId);
-  } catch(err){
-    console.error('renderForExam failed', err);
-    modalBody.innerHTML = `<div class="muted" style="padding:12px">Failed to render marks</div>`;
-  }
-}
-
-
-
-
-// Drop-in replacement for renderLeaderboard()
-async function renderLeaderboard() {
+ }
+ 
+ 
+ // New helper: show full marks for a student + exam with exam picker + ranks/summary
+ async function getStudentExamResults(studentId, examId){
+   // 1️⃣ Prefer examTotals cache (finalized results)
+   if(typeof examTotalsCache !== 'undefined'
+      && examTotalsCache
+      && examTotalsCache[examId]
+      && examTotalsCache[examId][studentId]){
+ 
+     const r = examTotalsCache[examId][studentId];
+ 
+     return {
+       subjects: (r.subjects || []).map(s => ({
+         subject: s.subject || s.name,
+         components: s.components || {},
+         exam: Number(s.exam || 0),
+         total: Number(s.total || s.score || 0),
+         max: Number(s.max || 0)
+       })),
+       average: Number(r.average || r.total || 0)
+     };
+   }
+ 
+   // 2️⃣ Fallback: examResultsCache (draft/manual entries)
+   const list = (typeof examResultsCache !== 'undefined'
+     ? examResultsCache
+     : window.examResultsCache) || [];
+ 
+   const found = list.find(r =>
+     String(r.examId) === String(examId) &&
+     String(r.studentId) === String(studentId)
+   );
+ 
+   if(found){
+     return {
+       subjects: (found.subjects || []).map(s => ({
+         subject: s.subject,
+         components: s.components || {},
+         exam: Number(s.exam || 0),
+         total: Number(s.total || 0),
+         max: Number(s.max || 0)
+       })),
+       average: Number(found.average || found.total || 0)
+     };
+   }
+ 
+   // 3️⃣ Nothing found
+   return null;
+ }
+ 
+ async function openStudentMarksModal(studentId, examIdInput){
+   const student = findStudentByRef(studentId) || {};
+   const allExams = (examsCache || []).slice();
+   const publishedExams = allExams.filter(e => e.status === 'published');
+   let selectedExamId = examIdInput || (publishedExams[0] && publishedExams[0].id) || (allExams[0] && allExams[0].id) || '';
+ 
+   const mobile = (typeof isMobileViewport === 'function') ? isMobileViewport() : (window.matchMedia && window.matchMedia('(max-width:768px)').matches);
+ 
+   const compPretty = { assignment:'Assignment', quiz:'Quiz', monthly:'Monthly', cw1:'CW1', cw2:'CW2', exam:'Exam', linked:'Linked' };
+ 
+   function gradeColor(pct){
+     if (pct >= 90) return { color:'#064e3b', bg:'rgba(5,150,105,0.08)', letter:'A' };
+     if (pct >= 75) return { color:'#1e3a8a', bg:'rgba(37,99,235,0.06)', letter:'B' };
+     if (pct >= 60) return { color:'#92400e', bg:'rgba(245,158,11,0.06)', letter:'C' };
+     return { color:'#7f1d1d', bg:'rgba(239,68,68,0.06)', letter:'D' };
+   }
+ 
+   // normalize single subject item -> { subject, components, exam, compSum, linked, total, max }
+   function normalizeSubjectEntry(s){
+     const subjName = s.subject || s.name || s.title || '—';
+     let components = {};
+     if (s.components && typeof s.components === 'object') {
+       Object.keys(s.components).forEach(k => {
+         const v = s.components[k];
+         if (v == null) components[k] = 0;
+         else if (typeof v === 'object') components[k] = Number(v.total ?? v.mark ?? v.value ?? v.amount ?? 0);
+         else components[k] = Number(v || 0);
+       });
+     }
+     if (s.marks && typeof s.marks === 'object') {
+       Object.keys(s.marks).forEach(k => { if (!(k in components)) components[k] = Number(s.marks[k] || 0); });
+     }
+ 
+     const topExam = (typeof s.exam !== 'undefined' && s.exam !== null && s.exam !== '') ? Number(s.exam) : 0;
+     const examPart = Math.round(Number(components.exam ?? topExam ?? 0)) || 0;
+ 
+     let linkedPart = 0;
+     if (typeof components.linked !== 'undefined') {
+       const l = components.linked;
+       linkedPart = (typeof l === 'object') ? Number(l.total ?? l.mark ?? l.value ?? 0) : Number(l || 0);
+     } else if (s.linked && typeof s.linked === 'object') {
+       linkedPart = Number(s.linked.total ?? s.linked.mark ?? 0);
+     }
+ 
+     const compKeys = ['assignment','quiz','monthly','cw1','cw2'];
+     let compSum = 0;
+     compKeys.forEach(k => { compSum += Number(components[k] || 0); });
+ 
+     // enforce total = exam + components (non-exam) + linked
+     const computedTotal = Math.round(examPart + compSum + (linkedPart || 0));
+     const maxVal = Math.round(Number(s.max ?? s.maximum ?? s.max_mark ?? 0) || 0);
+ 
+     return {
+       subject: subjName,
+       components,
+       exam: examPart,
+       compSum,
+       linked: Math.round(linkedPart || 0),
+       total: computedTotal,
+       max: maxVal
+     };
+   }
+ 
+   // compute ranks (preferred: examTotalsCache -> examResultsCache). returns object.
+   async function computeRanksForStudent(examId, studentId){
+     try {
+       const buildFromMap = mapObj => {
+         const arr = Object.keys(mapObj).map(sid => {
+           const r = mapObj[sid] || {};
+           const total = Number(r.total ?? r.average ?? r.score ?? r.totalScore ?? 0);
+           const sc = findStudentByRef(sid) || (studentsCache||[]).find(st => String(st.studentId||st.id||st.uid||st._id) === String(sid));
+           const className = sc ? (sc.classId || sc.class || sc.className || '') : (r.classId || r.className || r.class || '');
+           return { studentId: sid, total: Number(total || 0), className: String(className || '—') };
+         }).filter(x => !isNaN(x.total));
+         return arr;
+       };
+ 
+       if (typeof examTotalsCache !== 'undefined' && examTotalsCache && examTotalsCache[examId]){
+         const mapObj = examTotalsCache[examId];
+         const arr = buildFromMap(mapObj);
+         if (arr.length){
+           arr.sort((a,b)=> b.total - a.total);
+           const schoolCount = arr.length;
+           const schoolRankMap = {}; arr.forEach((it,i)=> schoolRankMap[it.studentId] = i+1);
+           const classGroups = {};
+           arr.forEach(it => { (classGroups[it.className] = classGroups[it.className] || []).push(it); });
+           const classRankMap = {}; const classCountMap = {};
+           Object.keys(classGroups).forEach(cn => {
+             classGroups[cn].sort((a,b)=> b.total - a.total);
+             classCountMap[cn] = classGroups[cn].length;
+             classGroups[cn].forEach((it,i) => classRankMap[it.studentId] = i+1);
+           });
+           const sRank = schoolRankMap[studentId] || null;
+           const cRank = classRankMap[studentId] || null;
+           const studRec = findStudentByRef(studentId) || (studentsCache||[]).find(st => String(st.studentId||st.id||st.uid||st._id) === String(studentId)) || {};
+           const studClass = String(studRec.classId || studRec.class || studRec.className || '');
+           const classCount = classCountMap[studClass] || classCountMap['—'] || 0;
+           return { classRank: cRank, schoolRank: sRank, classCount: classCount || 0, schoolCount };
+         }
+       }
+ 
+       const examResultsList = (typeof examResultsCache !== 'undefined' && examResultsCache) ? examResultsCache : (window.examResultsCache || []);
+       const filtered = examResultsList.filter(rr => String(rr.examId) === String(examId));
+       if (filtered.length){
+         const arr = filtered.map(r => {
+           const sid = String(r.studentId || r.student || r.sid || '');
+           const total = Number(r.total ?? r.average ?? r.score ?? 0) || 0;
+           const sc = findStudentByRef(sid) || (studentsCache||[]).find(st => String(st.studentId||st.id||st.uid||st._id) === String(sid));
+           const className = sc ? (sc.classId || sc.class || sc.className || '') : (r.classId || r.className || r.class || '');
+           return { studentId: sid, total, className: String(className || '—') };
+         }).filter(x => x.studentId);
+         if (arr.length){
+           arr.sort((a,b)=> b.total - a.total);
+           const schoolCount = arr.length;
+           const schoolRankMap = {}; arr.forEach((it,i)=> schoolRankMap[it.studentId] = i+1);
+           const classGroups = {};
+           arr.forEach(it => { (classGroups[it.className] = classGroups[it.className] || []).push(it); });
+           const classRankMap = {}; const classCountMap = {};
+           Object.keys(classGroups).forEach(cn => {
+             classGroups[cn].sort((a,b)=> b.total - a.total);
+             classCountMap[cn] = classGroups[cn].length;
+             classGroups[cn].forEach((it,i) => classRankMap[it.studentId] = i+1);
+           });
+           const sRank = schoolRankMap[studentId] || null;
+           const cRank = classRankMap[studentId] || null;
+           const studRec = findStudentByRef(studentId) || (studentsCache||[]).find(st => String(st.studentId||st.id||st.uid||st._id) === String(studentId)) || {};
+           const studClass = String(studRec.classId || studRec.class || studRec.className || '');
+           const classCount = classCountMap[studClass] || 0;
+           return { classRank: cRank, schoolRank: sRank, classCount: classCount || 0, schoolCount };
+         }
+       }
+ 
+       return { classRank: null, schoolRank: null, classCount: 0, schoolCount: 0 };
+     } catch(e){
+       console.warn('computeRanksForStudent error', e);
+       return { classRank: null, schoolRank: null, classCount: 0, schoolCount: 0 };
+     }
+   }
+ 
+   // render for a chosen exam; tries to reload caches if no results initially
+   async function renderForExam(examId){
+     // ensure examTotals/examResults loaded if available
+     try {
+       if (typeof loadExamTotalsForExam === 'function') await loadExamTotalsForExam(examId);
+       if (typeof loadExamResults === 'function') await loadExamResults(examId);
+     } catch(e){ /* ignore */ }
+ 
+     // inside renderForExam(examId), add this near the top before using `exam`
+ const exam = (examsCache || []).find(e => String(e.id) === String(examId)) || (allExams.find(e => String(e.id) === String(examId)) || {});
+ 
+     // fetch results (helper)
+     let results = await getStudentExamResults(studentId, examId);
+     // if nothing, try an additional cache refresh and retry once
+     if ((!results || !Array.isArray(results.subjects) || results.subjects.length === 0) && typeof loadExamTotalsForExam === 'function'){
+       try {
+         await loadExamTotalsForExam(examId);
+         results = await getStudentExamResults(studentId, examId);
+       } catch(e){ /* ignore */ }
+     }
+ 
+     if(!results || !Array.isArray(results.subjects) || results.subjects.length === 0){
+       modalBody.innerHTML = `<div class="muted" style="padding:12px">No results found for this student / exam.</div>`;
+       return;
+     }
+ 
+     const normalized = results.subjects.map(normalizeSubjectEntry);
+ 
+     // find top subject
+     let topTotal = -Infinity, topIndex = -1;
+     normalized.forEach((s,i) => { if ((s.total || 0) > topTotal){ topTotal = s.total || 0; topIndex = i; } });
+ 
+     // ranks — prefer values in results, else compute
+     let classRankVal = results.classRank ?? results.class_rank ?? null;
+     let schoolRankVal = results.schoolRank ?? results.school_rank ?? null;
+     let classCount = 0, schoolCount = 0;
+     if (classRankVal == null || schoolRankVal == null){
+       const ranks = await computeRanksForStudent(examId, String(studentId));
+       classRankVal = classRankVal ?? ranks.classRank;
+       schoolRankVal = schoolRankVal ?? ranks.schoolRank;
+       classCount = classCount || ranks.classCount;
+       schoolCount = schoolCount || ranks.schoolCount;
+     }
+ 
+     // fallback counts from studentsCache
+     if (!classCount || !schoolCount){
+       try {
+         const students = (studentsCache || []).filter(st => !(st.status === 'deleted'));
+         schoolCount = schoolCount || students.length;
+         const targetClassId = String(student.classId || student.class || student.className || '');
+         classCount = classCount || students.filter(st => String(st.classId || st.class || st.className || '') === targetClassId).length || 0;
+       } catch(e){}
+     }
+ 
+     // build rows + compute totals
+     let grandTotal = 0, grandMax = 0;
+     const rows = normalized.map((s, idx) => {
+       const assignedParts = [];
+       ['assignment','quiz','monthly','cw1','cw2'].forEach(k => {
+         const v = Number(s.components?.[k] || 0);
+         if (v > 0) assignedParts.push(`${compPretty[k] || k}: ${v}`);
+       });
+       const lval = Number(s.linked || 0);
+       if (lval > 0) assignedParts.push(`${compPretty.linked}: ${lval}`);
+       const assignedDisplay = assignedParts.length ? assignedParts.join(' • ') : '—';
+ 
+       grandTotal += Number(s.total || 0);
+       grandMax += Number(s.max || 0);
+ 
+       const subjPct = (s.max && s.max > 0) ? ((s.total || 0) / s.max) * 100 : 0;
+       const gc = gradeColor(subjPct);
+       const highlight = (idx === topIndex);
+ 
+       return { idx, s, assignedDisplay, subjPct, gc, highlight };
+     });
+ 
+     const totalObtained = grandTotal;
+     const totalMax = grandMax || 0;
+     const avgPercent = totalMax ? (totalObtained / totalMax) * 100 : 0;
+     const avgGrade = gradeColor(avgPercent).letter;
+ 
+     // exam options
+     const examOptionsHtml = (allExams.length ? allExams.map(e => `<option value="${escape(e.id)}" ${String(e.id)===String(examId)?'selected':''}>${escape(e.name||e.id)}${e.status? ' • ' + escape(e.status):''}</option>`).join('') : `<option value="">No exams</option>`);
+ 
+     // prepare modal HTML (same as before) but we include grade letter in header
+     let html = `
+       <div style="display:flex;flex-direction:${mobile ? 'column' : 'row'};gap:8px;align-items:${mobile ? 'stretch' : 'center'};justify-content:space-between;margin-bottom:10px">
+         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+           <div style="font-weight:800">${escape(student.fullName || student.name || '—')}</div>
+           <div class="muted">ID: ${escape(studentId)} • Class: ${escape(student.classId || student.class || '—')}</div>
+         </div>
+         <div style="display:flex;gap:8px;align-items:center">
+           <select id="marksExamSelect" style="padding:6px;border-radius:8px">${examOptionsHtml}</select>
+           <button id="exportMarksPdf" class="btn btn-ghost">Export PDF</button>
+           <button id="printMarks" class="btn btn-ghost">Print</button>
+           <button id="closeMarks" class="btn btn-ghost">Close</button>
+         </div>
+       </div>
+ 
+       <div style="display:flex;gap:12px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+         <div style="font-weight:800">${escape(exam.name || examId || 'Exam')}</div>
+         <div class="muted">Class Rank: <strong>${escape(classRankVal ? String(classRankVal) : '—')}/${escape(classCount || '—')}</strong> • School Rank: <strong>${escape(schoolRankVal ? String(schoolRankVal) : '—')}/${escape(schoolCount || '—')}</strong></div>
+         <div style="margin-left:auto" class="muted">Total: <strong id="marksTotalBadge">${escape(String(totalObtained))} / ${escape(String(totalMax))}</strong> • Avg: <strong id="marksAvgBadge">${Number(avgPercent).toFixed(1)}%</strong> • Grade: <strong>${escape(String(avgGrade))}</strong></div>
+       </div>
+ 
+       <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+         <div style="font-size:0.9rem;color:#064e3b;background:rgba(5,150,105,0.06);padding:6px;border-radius:6px">A ≥ 90%</div>
+         <div style="font-size:0.9rem;color:#1e3a8a;background:rgba(37,99,235,0.06);padding:6px;border-radius:6px">B ≥ 75%</div>
+         <div style="font-size:0.9rem;color:#92400e;background:rgba(245,158,11,0.06);padding:6px;border-radius:6px">C ≥ 60%</div>
+         <div style="font-size:0.9rem;color:#7f1d1d;background:rgba(239,68,68,0.06);padding:6px;border-radius:6px">D &lt; 60%</div>
+       </div>
+     `;
+ 
+     // desktop or mobile representation
+     if (!mobile){
+       html += `
+         <div style="overflow:auto">
+           <table id="marksTable" style="width:100%;border-collapse:collapse;font-size:14px">
+             <thead>
+               <tr style="background:#f1f5f9">
+                 <th style="padding:8px;text-align:left">Subject</th>
+                 <th style="padding:8px;text-align:left">Components Assigned</th>
+                 <th style="padding:8px;text-align:center">Exam</th>
+                 <th style="padding:8px;text-align:center">Total</th>
+                 <th style="padding:8px;text-align:center">Max</th>
+                 <th style="padding:8px;text-align:center">Grade</th>
+               </tr>
+             </thead>
+             <tbody>
+               ${rows.map(r => {
+                 const s = r.s;
+                 const colorStyle = `color:${r.gc.color};background:${r.gc.bg};border-radius:6px;padding:6px 8px;display:inline-block;font-weight:700`;
+                 const rowBg = r.highlight ? 'background:linear-gradient(90deg, rgba(255,250,230,0.6), transparent);' : '';
+                 return `<tr style="${rowBg}"><td style="padding:8px;vertical-align:top">${escape(s.subject)}</td><td style="padding:8px;vertical-align:top" class="muted">${escape(r.assignedDisplay)}</td><td style="padding:8px;text-align:center;vertical-align:top">${escape(String(Math.round(s.exam || 0)))}</td><td style="padding:8px;text-align:center;vertical-align:top;font-weight:800">${escape(String(Math.round(s.total || 0)))}</td><td style="padding:8px;text-align:center;vertical-align:top">${escape(String(Math.round(s.max || 0)))}</td><td style="padding:8px;text-align:center;vertical-align:top"><span style="${colorStyle}">${escape(r.gc.letter)}</span></td></tr>`; 
+               }).join('')}
+             </tbody>
+           </table>
+         </div>
+       `;
+     } else {
+       html += `<div id="marksMobileList" style="display:flex;flex-direction:column;gap:10px">`;
+       rows.forEach(r=>{
+         const s = r.s;
+         const colorStyle = `color:${r.gc.color};background:${r.gc.bg};border-radius:6px;padding:6px 8px;font-weight:700`;
+         const highlightStyle = r.highlight ? 'box-shadow:0 6px 18px rgba(0,0,0,0.06);' : '';
+         html += `
+           <div style="border:1px solid #f1f5f9;padding:10px;border-radius:8px;${highlightStyle}">
+             <div style="display:flex;justify-content:space-between;align-items:center">
+               <div style="font-weight:800">${escape(s.subject)}</div>
+               <div style="${colorStyle}">${escape(r.gc.letter)}</div>
+             </div>
+             <div style="margin-top:6px" class="muted">${escape(r.assignedDisplay)}</div>
+             <div style="display:flex;gap:12px;margin-top:8px;align-items:center">
+               <div style="flex:1">Exam: <strong>${escape(String(Math.round(s.exam||0)))}</strong></div>
+               <div style="flex:1;text-align:center">Total: <strong>${escape(String(Math.round(s.total||0)))}</strong></div>
+               <div style="flex:1;text-align:right">Max: <strong>${escape(String(Math.round(s.max||0)))}</strong></div>
+             </div>
+           </div>
+         `;
+       });
+       html += `</div>`;
+     }
+ 
+     // set modal content
+     modalBody.innerHTML = html;
+ 
+     // --- wiring ---
+ 
+     // exam select change: try to re-render selected exam (retry loads inside renderForExam)
+     const sel = modalBody.querySelector('#marksExamSelect');
+     if (sel){
+       sel.onchange = async (ev) => {
+         selectedExamId = ev.target.value;
+         // ensure selectedExamId is used for PDF/print
+         await renderForExam(selectedExamId);
+       };
+     }
+ 
+     // Build a clean report HTML for export/print (no buttons)
+     function buildPrintableReportHtml(){
+       const header = `
+         <div style="font-family:Inter,system-ui,-apple-system,Segoe UI,Arial,sans-serif;padding:12px">
+           <h2 style="margin:0">${escape(student.fullName || student.name || '')}</h2>
+           <div style="margin-top:6px">ID: ${escape(studentId)} • Class: ${escape(student.classId || student.class || '—')}</div>
+           <div style="margin-top:6px">Exam: ${escape(exam.name || selectedExamId || '')}</div>
+           <div style="margin-top:6px">Class Rank: ${escape(classRankVal ? String(classRankVal) : '—')}/${escape(classCount || '—')} • School Rank: ${escape(schoolRankVal ? String(schoolRankVal) : '—')}/${escape(schoolCount || '—')}</div>
+           <div style="margin-top:6px">Total: ${escape(String(totalObtained))} / ${escape(String(totalMax))} • Avg: ${Number(avgPercent).toFixed(1)}% • Grade: ${escape(String(avgGrade))}</div>
+         </div>
+       `;
+       // table rows
+       const rowsHtml = normalized.map(s => {
+         const assignedParts = [];
+         ['assignment','quiz','monthly','cw1','cw2'].forEach(k => {
+           const v = Number(s.components?.[k] || 0);
+           if (v > 0) assignedParts.push(`${compPretty[k] || k}: ${v}`);
+         });
+         const l = Number(s.linked || 0);
+         if (l>0) assignedParts.push(`${compPretty.linked}: ${l}`);
+         const assignedDisplay = assignedParts.length ? assignedParts.join(' • ') : '—';
+         const pct = (s.max && s.max>0) ? ((s.total||0)/s.max)*100 : 0;
+         const grade = gradeColor(pct).letter;
+         return `<tr>
+           <td style="padding:6px;border:1px solid #ddd">${escape(s.subject)}</td>
+           <td style="padding:6px;border:1px solid #ddd">${escape(assignedDisplay)}</td>
+           <td style="padding:6px;border:1px solid #ddd;text-align:center">${escape(String(s.exam||0))}</td>
+           <td style="padding:6px;border:1px solid #ddd;text-align:center">${escape(String(s.total||0))}</td>
+           <td style="padding:6px;border:1px solid #ddd;text-align:center">${escape(String(s.max||0))}</td>
+           <td style="padding:6px;border:1px solid #ddd;text-align:center">${escape(grade)}</td>
+         </tr>`; 
+       }).join('');
+       const table = `<table style="width:100%;border-collapse:collapse;font-family:Inter,system-ui,-apple-system,Segoe UI,Arial,sans-serif"><thead><tr><th style="padding:8px;border:1px solid #ddd;background:#f8fafc">Subject</th><th style="padding:8px;border:1px solid #ddd;background:#f8fafc">Components Assigned</th><th style="padding:8px;border:1px solid #ddd;background:#f8fafc">Exam</th><th style="padding:8px;border:1px solid #ddd;background:#f8fafc">Total</th><th style="padding:8px;border:1px solid #ddd;background:#f8fafc">Max</th><th style="padding:8px;border:1px solid #ddd;background:#f8fafc">Grade</th></tr></thead><tbody>${rowsHtml}</tbody></table>`;
+       return `<div>${header}${table}</div>`;
+     }
+ 
+     // Export PDF: create clean report and render via html2canvas/jsPDF
+     const exportBtn = modalBody.querySelector('#exportMarksPdf');
+     if (exportBtn){
+       exportBtn.onclick = async () => {
+         try {
+           const reportHtml = buildPrintableReportHtml();
+           // create a hidden container in DOM
+           let tmp = document.getElementById('_marks_print_area_tmp');
+           if (tmp) tmp.remove();
+           tmp = document.createElement('div');
+           tmp.id = '_marks_print_area_tmp';
+           tmp.style.position = 'fixed';
+           tmp.style.left = '-9999px';
+           tmp.style.top = '0';
+           tmp.innerHTML = reportHtml;
+           document.body.appendChild(tmp);
+ 
+           if (typeof html2canvas !== 'undefined' && window.jspdf){
+             const canvas = await html2canvas(tmp, { scale: 2, useCORS: true });
+             const img = canvas.toDataURL('image/png');
+             const { jsPDF } = window.jspdf;
+             const pdf = new jsPDF('landscape', 'pt', 'a4');
+             const pageWidth = pdf.internal.pageSize.getWidth();
+             const pageHeight = pdf.internal.pageSize.getHeight();
+             const imgW = canvas.width;
+             const imgH = canvas.height;
+             const ratio = Math.min(pageWidth / imgW, pageHeight / imgH);
+             const w = imgW * ratio;
+             const h = imgH * ratio;
+             pdf.addImage(img, 'PNG', (pageWidth - w)/2, 10, w, h - 20);
+             pdf.save(`marks_${String(studentId)}_${String(selectedExamId)}.pdf`);
+           } else {
+             // fallback: open print window with clean html
+             const popup = window.open('', '_blank', 'width=900,height=700');
+             popup.document.write(reportHtml);
+             popup.document.close();
+             popup.focus();
+             setTimeout(()=> popup.print(), 400);
+           }
+           tmp.remove();
+         } catch(err){
+           console.error('export pdf err', err);
+           toast('PDF export failed, using print fallback');
+           // fallback to print
+           const popup = window.open('', '_blank', 'width=900,height=700');
+           popup.document.write(buildPrintableReportHtml());
+           popup.document.close();
+           popup.focus();
+           setTimeout(()=> popup.print(), 400);
+         }
+       };
+     }
+ 
+     // Print — use printable report html so everything (ranks, grade, totals) is present
+     const printBtn = modalBody.querySelector('#printMarks');
+     if (printBtn){
+       printBtn.onclick = () => {
+         const html = buildPrintableReportHtml();
+         const popup = window.open('', '_blank', 'width=900,height=700');
+         if (!popup) { toast('Popup blocked — allow popups to print'); return; }
+         popup.document.write(`<!doctype html><html><head><title>Marks — ${escape(student.fullName||student.name||'')}</title><meta name="viewport" content="width=device-width,initial-scale=1"></head><body>${html}</body></html>`);
+         popup.document.close();
+         popup.focus();
+         setTimeout(()=> popup.print(), 400);
+       };
+     }
+ 
+     // close button
+     const closeBtn = modalBody.querySelector('#closeMarks');
+     if (closeBtn) closeBtn.onclick = closeModal;
+ 
+     // update badges
+     const tBadge = modalBody.querySelector('#marksTotalBadge');
+     const aBadge = modalBody.querySelector('#marksAvgBadge');
+     if (tBadge) tBadge.textContent = `${String(totalObtained)} / ${String(totalMax)}`;
+     if (aBadge) aBadge.textContent = `${Number(avgPercent).toFixed(1)}%`;
+   }
+ 
+   // show modal and render initial exam
+   const title = `📊 ${escape(student.fullName || student.name || '')}`;
+   showModal(title, `<div style="padding:12px"><div class="muted">Loading marks…</div></div>`);
+   try {
+     await renderForExam(selectedExamId);
+   } catch(err){
+     console.error('renderForExam failed', err);
+     modalBody.innerHTML = `<div class="muted" style="padding:12px">Failed to render marks</div>`;
+   }
+ }
+ 
+ 
+ 
+ 
+ 
+ // Drop-in replacement for renderLeaderboard()
+ async function renderLeaderboard() {
   const kind = leaderboardKind.value;
   const examId = leaderboardExamSel.value;
   leaderboardExamInfo.textContent = examId ? `Exam: ${examId}` : 'No exam selected';
-
+ 
   if (!examId) {
     leaderboardListRoot.innerHTML = `<div class="muted" style="padding:12px">No exam selected</div>`;
     return;
   }
-
+ 
   // prefer cached examTotals snapshot
   let resultsMap = (typeof examTotalsCache !== 'undefined' && examTotalsCache && examTotalsCache[examId]) ? examTotalsCache[examId] : null;
   if(!resultsMap){
     try { await loadExamTotalsForExam(examId); resultsMap = examTotalsCache && examTotalsCache[examId] ? examTotalsCache[examId] : null; } catch(e){ console.warn('loadExamTotalsForExam failed', e); }
   }
-
+ 
   let rows = [];
   if(resultsMap && Object.keys(resultsMap).length){
     rows = Object.values(resultsMap).map(r => {
@@ -5859,18 +6000,18 @@ async function renderLeaderboard() {
       });
     }
   }
-
+ 
   if(kind === 'class' && leaderboardClassSel.value){
     rows = rows.filter(r => String(r.className) === String(leaderboardClassSel.value));
   }
-
+ 
   rows = rows.sort((a,b)=> b.score - a.score).slice(0,10);
-
+ 
   if(!rows.length){
     leaderboardListRoot.innerHTML = `<div class="muted" style="padding:12px">No students found for the selected exam/class.</div>`;
     return;
   }
-
+ 
   const html = `<div style="display:flex;flex-direction:column;gap:8px">
     ${rows.map((r, idx) => `
       <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
@@ -5889,9 +6030,9 @@ async function renderLeaderboard() {
       </div>
     `).join('')}
   </div>`;
-
+ 
   leaderboardListRoot.innerHTML = html;
-
+ 
   leaderboardListRoot.querySelectorAll('.view-marks').forEach(b => b.addEventListener('click', async ev => {
     const sid = ev.currentTarget.dataset.id;
     const ex = ev.currentTarget.dataset.exam;
@@ -5908,58 +6049,75 @@ async function renderLeaderboard() {
       }
     }
   }));
-}
-
-
+ }
+ 
+ 
   // ---------- Leaderboard ----------
   function loadExamsIntoLeaderboard() {
     const exams = (typeof examsCache !== 'undefined' && examsCache) ? examsCache : (window.examsCache || []);
     if (exams.length) leaderboardExamSel.innerHTML = exams.map(e => `<option value="${escape(e.id)}">${escape(e.name || e.id)}${e.publishedAt ? ' • ' + new Date(tsToMs(e.publishedAt)).toLocaleDateString() : ''}</option>`).join('');
     else leaderboardExamSel.innerHTML = `<option value="">No exams available</option>`;
-
+ 
     const classes = (classesCache || []).map(c => ({ id: c.id || c.classId || c.name, name: c.name || c.displayName || c.id }));
     if (classes.length) leaderboardClassSel.innerHTML = `<option value="">All classes</option>` + classes.map(c => `<option value="${escape(c.name)}">${escape(c.name)}</option>`).join('');
     else leaderboardClassSel.innerHTML = `<option value="">No classes</option>`;
-
+ 
     // wire events (idempotent)
     leaderboardKind._handler = () => { leaderboardClassSel.style.display = leaderboardKind.value === 'class' ? 'inline-block' : 'none'; renderLeaderboard(); };
     leaderboardKind.removeEventListener('change', leaderboardKind._handler || (()=>{}));
     leaderboardKind.addEventListener('change', leaderboardKind._handler);
-
+ 
     leaderboardExamSel._handler = () => renderLeaderboard();
     leaderboardExamSel.removeEventListener('change', leaderboardExamSel._handler || (()=>{}));
     leaderboardExamSel.addEventListener('change', leaderboardExamSel._handler);
-
+ 
     leaderboardClassSel._handler = () => renderLeaderboard();
     leaderboardClassSel.removeEventListener('change', leaderboardClassSel._handler || (()=>{}));
     leaderboardClassSel.addEventListener('change', leaderboardClassSel._handler);
   }
-
-
+  // place below loadExamsIntoLeaderboard so elements exist
+ (function tidyLeaderboardMobile() {
+   const lbCard = page.querySelector('#leaderboardCard');
+   if (!lbCard) return;
+   // if mobile, move controls under title
+   if (isMobileViewport && isMobileViewport()) {
+     const controls = lbCard.querySelector('div[style*="display:flex;gap:8px;align-items:center"]');
+     const titleArea = lbCard.querySelector('div > strong');
+     if (controls && titleArea) {
+       controls.style.marginTop = '8px';
+       controls.style.width = '100%';
+       controls.style.justifyContent = 'flex-start';
+       titleArea.parentElement.appendChild(controls);
+     }
+   }
+ })();
+ 
+ 
+ 
   function medalEmoji(i) { return i === 0 ? '🏆' : (i === 1 ? '🥈' : (i === 2 ? '🥉' : (i+1))); }
-
+ 
   // ---------- Notifications ----------
   function computeNotifications(range) {
     const cfgRaw = localStorage.getItem('dashboard_alerts_cfg');
     const cfg = cfgRaw ? JSON.parse(cfgRaw) : { thresholdAmount: 50000, thresholdCount: 5, revenueDropPct: 10 };
     const notes = [];
-
+ 
     const outstandingSum = (studentsCache || []).reduce((s, st) => s + getBalanceCents(st), 0);
     if (outstandingSum > (cfg.thresholdAmount || 0)) notes.push({ severity: 'warn', text: `⚠️ Outstanding total is ${formatMoney(outstandingSum)} (> ${formatMoney(cfg.thresholdAmount)})`, action: () => openOutstandingDrillDown('students') });
-
+ 
     const overdueCount = (studentsCache || []).filter(s => getBalanceCents(s) > 0).length;
     if (overdueCount > (cfg.thresholdCount || 0)) notes.push({ severity: 'warn', text: `⚠️ ${overdueCount} students overdue — View outstanding`, action: () => openOutstandingDrillDown('students') });
-
+ 
     const k = computeKPIs(range);
     const prev = k.prevRevenueCents || 0;
     if (prev > 0) {
       const drop = ((prev - k.totalRevenueCents) / prev) * 100;
       if (drop > (cfg.revenueDropPct || 10)) notes.push({ severity: 'alert', text: `📢 Revenue down ${drop.toFixed(1)}% vs previous period`, action: () => showModal('Revenue drop', `<div>Revenue dropped by ${drop.toFixed(1)}%.</div>`) });
     }
-
+ 
     return notes;
   }
-
+ 
   function renderNotifications(range) {
     const notes = computeNotifications(range);
     const badge = page.querySelector('#notifBadge');
@@ -5974,7 +6132,7 @@ async function renderLeaderboard() {
       }));
     };
   }
-
+ 
   // ---------- wiring & utilities ----------
   filterButtons.forEach(b => b.addEventListener('click', () => {
     activeFilter = b.dataset.filter;
@@ -5982,7 +6140,7 @@ async function renderLeaderboard() {
     currentRange = computeRangeForFilter(activeFilter);
     refreshDashboard();
   }));
-
+ 
   page.querySelector('#dashboardSettings').onclick = () => {
     const html = `
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
@@ -6019,7 +6177,7 @@ async function renderLeaderboard() {
       renderDashboard();
     };
   };
-
+ 
   page.querySelector('#dashboardRefresh').onclick = async () => {
     dashStatus.textContent = 'Refreshing...';
     try {
@@ -6038,7 +6196,7 @@ async function renderLeaderboard() {
       refreshDashboard();
     }
   };
-
+ 
   // export helpers
   function exportCsvFromDashboard() {
     const rangeLabel = currentRange.label || '';
@@ -6067,7 +6225,7 @@ async function renderLeaderboard() {
   }
   page.querySelector('#dashboardExportCsv').onclick = exportCsvFromDashboard;
   page.querySelector('#dashboardExportPdf').onclick = exportPdfFromDashboard;
-
+ 
   // chart controls
   page.querySelector('#chartPaymentsGranularity').addEventListener('change', () => renderCharts(currentRange));
   page.querySelector('#chartTeachersGranularity').addEventListener('change', () => renderCharts(currentRange));
@@ -6081,7 +6239,7 @@ async function renderLeaderboard() {
     const csv = ['label,amount'].concat(agg.labels.map((l,i)=>`${l},${(agg.series[i]||0)/100}`)).join('\n');
     const blob = new Blob([csv], { type: 'text/csv' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'teacher_payouts_chart.csv'; a.click(); URL.revokeObjectURL(url);
   });
-
+ 
   // outstanding search (fixed)
   outstandingSearch.addEventListener('input', () => {
     const q = outstandingSearch.value.trim().toLowerCase();
@@ -6092,7 +6250,7 @@ async function renderLeaderboard() {
     </div>`;
     outstandingTableRoot.querySelectorAll('.record-pay').forEach(b => b.addEventListener('click', ev => openPayModal(ev.currentTarget)));
   });
-
+ 
   // bulk reminder
   page.querySelector('#outstandingBulkReminder').onclick = async () => {
     const toRemind = (studentsCache || []).filter(s => getBalanceCents(s) > 0).slice(0,50);
@@ -6102,7 +6260,7 @@ async function renderLeaderboard() {
     modalBody.querySelector('#cancelRem').onclick = closeModal;
     modalBody.querySelector('#sendRem').onclick = () => { toast(`Reminders queued for ${toRemind.length} students (messaging not configured)`); closeModal(); };
   };
-
+ 
   // leaderboard export
   page.querySelector('#leaderboardExport').addEventListener('click', () => {
     const rows = Array.from(leaderboardListRoot.querySelectorAll('.list-row')).map((r, i) => {
@@ -6111,7 +6269,7 @@ async function renderLeaderboard() {
     const csv = ['Rank,Name,Class,Score'].concat(rows).join('\n');
     const blob = new Blob([csv], { type: 'text/csv' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'leaderboard.csv'; a.click(); URL.revokeObjectURL(url);
   });
-
+ 
   // ---------- orchestrator ----------
   function refreshDashboard() {
     currentRange = computeRangeForFilter(activeFilter);
@@ -6125,15 +6283,15 @@ async function renderLeaderboard() {
     renderNotifications(currentRange);
     dashSources.textContent = `Data source: local cache (transactions ${transactionsCache ? transactionsCache.length : 0}, students ${studentsCache ? studentsCache.length : 0})`;
   }
-
+ 
   // initial render
   function init() { currentRange = computeRangeForFilter(activeFilter); setActiveFilterButton(activeFilter); refreshDashboard(); }
   init();
-
+ 
   // expose refresh
   page.refreshDashboard = refreshDashboard;
   showPage && showPage('dashboard');
-}
+ }
 
 /* ------------------------
   Attendance
