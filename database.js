@@ -4790,6 +4790,10 @@ async function renderDashboard(opts = {}) {
     </div>
   `;
  
+  // shared header refs (used by mobile + desktop)
+let filterInfo = null;
+let lastRefEl = null;
+
   // --- Header replacement for mobile-friendly controls + export dropdown ---
  (function replaceHeaderControls() {
    const hdr = page.querySelector('.page-header');
@@ -4871,20 +4875,41 @@ async function renderDashboard(opts = {}) {
  
    // wire refresh / settings / notifications to existing handlers if present
    const refBtn = page.querySelector('#dashboardRefresh');
-   if (refBtn) refBtn.addEventListener('click', page.querySelector('#dashboardRefresh').onclick || (()=>{ page.querySelector('#dashboardRefresh').click(); }));
- 
+   if (refBtn) {
+     refBtn.addEventListener('click', () => {
+       refreshDashboard();
+     });
+   }
+   
    // show last refreshed
    lastRefWrapper.textContent = `↻ Last refreshed: ${new Date().toLocaleString()}`;
  
-   // expose nodes used elsewhere
-   lastRefEl = lastRefWrapper; // reuse your existing var name so renderCharts can update it
-   filterInfo = filterInfoMobile;
+
  })();
  
   // refs
+  // const filterButtons = page.querySelectorAll('.filter-btn');
+  // // support either the original '#filterInfo' or the new mobile '#filterInfoMobile' or '#filterShowing'
+  // const filterInfo = page.querySelector('#filterInfo') || page.querySelector('#filterInfoMobile') || page.querySelector('#filterShowing');
+  // // support either the original '#dashboardLastRef' or the new '#lastRefWrapper'
+  // const lastRefEl = page.querySelector('#lastRefWrapper') || page.querySelector('#dashboardLastRef');
+
   const filterButtons = page.querySelectorAll('.filter-btn');
-  const filterInfo = page.querySelector('#filterInfo');
-  const lastRefEl = page.querySelector('#dashboardLastRef');
+
+// reuse shared refs, fallback for desktop
+filterInfo =
+  filterInfo ||
+  page.querySelector('#filterInfo') ||
+  page.querySelector('#filterInfoMobile') ||
+  page.querySelector('#filterShowing');
+
+lastRefEl =
+  lastRefEl ||
+  page.querySelector('#lastRefWrapper') ||
+  page.querySelector('#dashboardLastRef');
+
+
+  
   const kpisRoot = page.querySelector('#kpis');
   const dashSources = page.querySelector('#dashSources');
   const dashStatus = page.querySelector('#dashStatus');
@@ -5273,8 +5298,10 @@ async function renderDashboard(opts = {}) {
     });
     page._teachersChart = teachersChart;
  
-    lastRefEl.textContent = `Last refreshed: ${new Date().toLocaleString()}`;
-    adjustChartsLayoutForViewport();
+    if (lastRefEl) {
+      lastRefEl.textContent = `Last refreshed: ${new Date().toLocaleString()}`;
+    }
+        adjustChartsLayoutForViewport();
   }
  
   // Call this inside renderCharts (at the end) or after renderCharts(currentRange)
@@ -5565,6 +5592,7 @@ async function renderDashboard(opts = {}) {
      };
    }
  
+   
    // compute ranks (preferred: examTotalsCache -> examResultsCache). returns object.
    async function computeRanksForStudent(examId, studentId){
      try {
@@ -6197,34 +6225,112 @@ async function renderDashboard(opts = {}) {
     }
   };
  
-  // export helpers
-  function exportCsvFromDashboard() {
-    const rangeLabel = currentRange.label || '';
-    const k = computeKPIs(currentRange);
-    const lines = [['Metric','Value'], ['Date range', rangeLabel]];
-    lines.push(['Total Students', k.totalStudents]);
-    lines.push(['Total Teachers', k.totalTeachers]);
-    lines.push(['Total Staff', k.totalStaff]);
-    lines.push(['Total Revenue', formatMoney(k.totalRevenueCents)]);
-    lines.push(['Total Expenses+', formatMoney(k.totalExpensesPlusCents)]);
-    const csv = lines.map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `dashboard_export_${Date.now()}.csv`; a.click(); URL.revokeObjectURL(url);
-  }
-  function exportPdfFromDashboard() {
-    const el = kpisRoot;
-    html2canvas(el).then(canvas => {
-      const img = canvas.toDataURL('image/png');
-      const { jsPDF } = window.jspdf;
-      const pdf = new jsPDF('landscape');
-      const w = pdf.internal.pageSize.getWidth();
-      const h = (canvas.height / canvas.width) * w;
-      pdf.addImage(img,'PNG',10,10,w-20,h-20);
-      pdf.save(`dashboard_${Date.now()}.pdf`);
-    }).catch(err => { console.error(err); toast('PDF export failed'); });
-  }
-  page.querySelector('#dashboardExportCsv').onclick = exportCsvFromDashboard;
-  page.querySelector('#dashboardExportPdf').onclick = exportPdfFromDashboard;
+
+    // export helpers
+    function exportCsvFromDashboard() {
+      const rangeLabel = currentRange.label || '';
+      const k = computeKPIs(currentRange);
+      const lines = [['Metric','Value'], ['Date range', rangeLabel]];
+      lines.push(['Total Students', k.totalStudents]);
+      lines.push(['Total Teachers', k.totalTeachers]);
+      lines.push(['Total Staff', k.totalStaff]);
+      lines.push(['Total Revenue', formatMoney(k.totalRevenueCents)]);
+      lines.push(['Total Expenses+', formatMoney(k.totalExpensesPlusCents)]);
+      const csv = lines.map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `dashboard_export_${Date.now()}.csv`; a.click(); URL.revokeObjectURL(url);
+    }
+    function exportPdfFromDashboard() {
+      const el = kpisRoot;
+      if (!el) return toast && toast('Nothing to export');
+      if (typeof html2canvas === 'undefined' || !window.jspdf) {
+        // fallback to printing the KPIs container
+        try {
+          const popup = window.open('', '_blank', 'width=900,height=700');
+          if (!popup) { toast && toast('Popup blocked — allow popups to export'); return; }
+          popup.document.write(el.outerHTML);
+          popup.document.close();
+          setTimeout(()=> popup.print(), 300);
+          return;
+        } catch(e) { console.error(e); return; }
+      }
+      html2canvas(el).then(canvas => {
+        const img = canvas.toDataURL('image/png');
+        const { jsPDF } = window.jspdf;
+        const pdf = new jsPDF('landscape');
+        const w = pdf.internal.pageSize.getWidth();
+        const h = (canvas.height / canvas.width) * w;
+        pdf.addImage(img,'PNG',10,10,w-20,h-20);
+        pdf.save(`dashboard_${Date.now()}.pdf`);
+      }).catch(err => { console.error(err); toast('PDF export failed'); });
+    }
+  
+    // Defensive binding — header may contain either the old buttons or the new export menu
+    const dashboardExportCsvBtn = page.querySelector('#dashboardExportCsv');
+    if (dashboardExportCsvBtn) dashboardExportCsvBtn.onclick = exportCsvFromDashboard;
+    const dashboardExportPdfBtn = page.querySelector('#dashboardExportPdf');
+    if (dashboardExportPdfBtn) dashboardExportPdfBtn.onclick = exportPdfFromDashboard;
+  
+    // chart controls — guard nodes before attaching listeners
+    const chartPaymentsGran = page.querySelector('#chartPaymentsGranularity');
+    if (chartPaymentsGran) chartPaymentsGran.addEventListener('change', () => renderCharts(currentRange));
+    const chartTeachersGran = page.querySelector('#chartTeachersGranularity');
+    if (chartTeachersGran) chartTeachersGran.addEventListener('change', () => renderCharts(currentRange));
+  
+    const exportChartPaymentsBtn = page.querySelector('#exportChartPayments');
+    if (exportChartPaymentsBtn) exportChartPaymentsBtn.addEventListener('click', () => {
+      const agg = aggregateTransactionsForChart((transactionsCache || []).filter(t => String(t.target_type).toLowerCase() === 'student'), currentRange, (page.querySelector('#chartPaymentsGranularity') || { value:'monthly' }).value);
+      const csv = ['label,amount'].concat(agg.labels.map((l,i)=>`${l},${(agg.series[i]||0)/100}`)).join('\n');
+      const blob = new Blob([csv], { type: 'text/csv' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'payments_chart.csv'; a.click(); URL.revokeObjectURL(url);
+    });
+    const exportChartTeachersBtn = page.querySelector('#exportChartTeachers');
+    if (exportChartTeachersBtn) exportChartTeachersBtn.addEventListener('click', () => {
+      const agg = aggregateTransactionsForChart((transactionsCache || []).filter(t => String(t.target_type).toLowerCase() === 'teacher'), currentRange, (page.querySelector('#chartTeachersGranularity') || { value:'monthly' }).value);
+      const csv = ['label,amount'].concat(agg.labels.map((l,i)=>`${l},${(agg.series[i]||0)/100}`)).join('\n');
+      const blob = new Blob([csv], { type: 'text/csv' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'teacher_payouts_chart.csv'; a.click(); URL.revokeObjectURL(url);
+    });
+  
+    // outstanding search (fixed) — guard existence of outstandingSearch and outstandingTableRoot
+    if (outstandingSearch && typeof outstandingSearch.addEventListener === 'function') {
+      outstandingSearch.addEventListener('input', () => {
+        const q = outstandingSearch.value.trim().toLowerCase();
+        if (!q) { renderOutstandingTable(currentRange); return; }
+        const found = (studentsCache || []).filter(s => ((s.fullName||'').toLowerCase().includes(q) || (String(s.studentId||s.id||'')).toLowerCase().includes(q))).sort((a,b) => getBalanceCents(b) - getBalanceCents(a)).slice(0,10);
+        if (!outstandingTableRoot) return;
+        outstandingTableRoot.innerHTML = `<div style="display:flex;flex-direction:column;gap:8px">
+          ${found.map((r, idx) => `<div class="list-row"><div class="row-left"><div class="no-badge">${idx+1}</div><div><div class="title">${escape(r.fullName||r.name||'')}</div><div class="sub">ID:${escape(r.studentId||r.id)} • ${escape(typeof resolveClassName === 'function' ? resolveClassName(r) : (r.class || '—'))}</div></div></div><div style="display:flex;align-items:center;gap:10px"><div style="font-weight:900;color:#b91c1c">${formatMoney(getBalanceCents(r))}</div><div><button class="btn btn-primary record-pay" data-id="${escape(r.studentId||r.id)}">Record Payment</button></div></div></div>`).join('')}
+        </div>`;
+        outstandingTableRoot.querySelectorAll('.record-pay').forEach(b => b.addEventListener('click', ev => openPayModal(ev.currentTarget)));
+      });
+    }
+  
+    // bulk reminder — guard
+    const outstandingBulkBtn = page.querySelector('#outstandingBulkReminder');
+    if (outstandingBulkBtn) outstandingBulkBtn.onclick = async () => {
+      const toRemind = (studentsCache || []).filter(s => getBalanceCents(s) > 0).slice(0,50);
+      if (!toRemind.length) return toast('No outstanding students to remind');
+      const html = `<div><strong>Send reminders to ${toRemind.length} students?</strong></div><div style="margin-top:8px;display:flex;justify-content:flex-end"><button id="cancelRem" class="btn btn-ghost">Cancel</button><button id="sendRem" class="btn btn-primary">Send</button></div>`;
+      showModal('Send reminders', html);
+      modalBody.querySelector('#cancelRem').onclick = closeModal;
+      modalBody.querySelector('#sendRem').onclick = () => { toast(`Reminders queued for ${toRemind.length} students (messaging not configured)`); closeModal(); };
+    };
+  
+    // leaderboard export — guard
+    const leaderboardExportBtn = page.querySelector('#leaderboardExport');
+    if (leaderboardExportBtn) leaderboardExportBtn.addEventListener('click', () => {
+      const rows = Array.from((leaderboardListRoot || document.createElement('div')).querySelectorAll('.list-row')).map((r, i) => {
+        return [`${i+1}`, r.querySelector('.title') ? r.querySelector('.title').textContent.trim() : '', '—', '—'].join(',');
+      });
+      const csv = ['Rank,Name,Class,Score'].concat(rows).join('\n');
+      const blob = new Blob([csv], { type: 'text/csv' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'leaderboard.csv'; a.click(); URL.revokeObjectURL(url);
+    });
+  
+    const pdfBtn = page.querySelector('#exportPdfOpt');
+    pdfBtn?.addEventListener('click', exportPdfFromDashboard);
+    
+    const csvBtn = page.querySelector('#exportCsvOpt');
+    csvBtn?.addEventListener('click', exportCsvFromDashboard);
+    
  
   // chart controls
   page.querySelector('#chartPaymentsGranularity').addEventListener('change', () => renderCharts(currentRange));
@@ -6273,16 +6379,39 @@ async function renderDashboard(opts = {}) {
   // ---------- orchestrator ----------
   function refreshDashboard() {
     currentRange = computeRangeForFilter(activeFilter);
-    filterInfo.textContent = currentRange.label;
+    if (filterInfo) filterInfo.textContent = currentRange.label;
     const k = computeKPIs(currentRange);
     renderKPIs(k);
     renderCharts(currentRange);
     renderOutstandingTable(currentRange);
     loadExamsIntoLeaderboard();
     renderLeaderboard();
+    // ensure mobile sections/charts layout (outstanding above leaderboard, charts stacked)
+    try { adjustSectionsForViewport(); } catch(e){/*ignore*/}
     renderNotifications(currentRange);
     dashSources.textContent = `Data source: local cache (transactions ${transactionsCache ? transactionsCache.length : 0}, students ${studentsCache ? studentsCache.length : 0})`;
   }
+  
+
+  function adjustSectionsForViewport() {
+    const container = page.querySelector('#outstandingCard')?.parentElement;
+    if (!container) return;
+    // mobile: stack single column (outstanding first, leaderboard after)
+    if (typeof isMobileViewport === 'function' && isMobileViewport()) {
+      container.style.gridTemplateColumns = '1fr';
+      const outstanding = page.querySelector('#outstandingCard');
+      const leaderboard = page.querySelector('#leaderboardCard');
+      if (outstanding && leaderboard) {
+        // append in desired order (appendChild moves existing nodes)
+        container.appendChild(outstanding);
+        container.appendChild(leaderboard);
+      }
+    } else {
+      // desktop: restore two-column layout
+      container.style.gridTemplateColumns = '2fr 1fr';
+    }
+  }
+  
  
   // initial render
   function init() { currentRange = computeRangeForFilter(activeFilter); setActiveFilterButton(activeFilter); refreshDashboard(); }
