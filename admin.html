@@ -252,6 +252,94 @@
 
 }
 
+/* ===== Compact Top-10 / Outstanding tweaks (mobile) ===== */
+@media (max-width: 768px) {
+
+/* make sure container uses border-box sizing so widths behave */
+.page, .mobile-top10-header, .list-row, .mobile-top10-header .h-row, .mobile-top10-header .h-actions {
+  box-sizing: border-box;
+}
+
+/* Search: full width but not pushing actions off screen */
+.mobile-top10-header .h-row { display:block; }
+.mobile-top10-header .h-row input[type="search"] {
+  width:100%;
+  box-sizing:border-box;
+}
+
+/* Actions: two compact buttons side-by-side — don't expand more than half each */
+.mobile-top10-header .h-actions {
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+  justify-content:space-between;
+  margin-top:8px;
+}
+.mobile-top10-header .h-actions .btn {
+  flex: 0 0 calc(50% - 6px); /* two columns with small gap */
+  min-width: 0;
+  padding:8px 6px;
+  font-size:0.86rem;
+  border-radius:10px;
+  text-align:center;
+}
+
+/* List rows: allow left content to shrink & right actions to stay compact */
+.list-row { align-items:center; gap:10px; padding:10px; }
+.list-row .row-left { display:flex; gap:10px; align-items:center; min-width:0; flex:1 1 auto; }
+.list-row .no-badge { min-width:30px; font-weight:900; color:var(--muted); text-align:center; }
+
+/* Title & id: truncate but allow more room by calculating space left (safe fallback) */
+.list-row .title {
+  max-width: calc(100% - 150px); /* leave room for amount + action buttons */
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-weight:900;
+}
+.list-row .sub.id {
+  font-family: monospace; font-weight:700; color:var(--muted);
+  max-width: 120px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  font-size:0.82rem;
+}
+
+/* Right side actions — vertical stack of small circular icon buttons */
+.list-row .row-actions { display:flex; flex-direction:column; gap:8px; align-items:center; flex:0 0 auto; margin-left:8px; }
+.list-row .row-actions .btn,
+.list-row .row-actions .record-pay,
+.list-row .row-actions .view-trans,
+.list-row .row-actions .view-marks {
+  width:36px; height:36px; padding:0; min-width:36px;
+  border-radius:999px; display:inline-flex; align-items:center; justify-content:center;
+  box-shadow:none; border:1px solid rgba(2,6,23,0.06); background:#fff;
+}
+/* Primary action should keep primary color fill */
+.list-row .row-actions .record-pay.btn-primary { background:var(--primary); color:#fff; border: none; }
+
+/* Amount column: keep prominent but compact */
+.list-row .amount {
+  min-width:80px;
+  text-align:right;
+  font-weight:900;
+  color:var(--danger);
+  margin-left:8px;
+}
+
+/* Ensure leaderboard small "View" buttons are compact */
+.btn.view-marks { padding:0 8px; min-width:40px; height:36px; border-radius:8px; }
+
+/* SVG/icon sizing inside compact buttons */
+.list-row .row-actions svg, .btn.view-marks svg {
+  width:18px; height:18px;
+}
+
+/* reduce card shadows slightly to avoid heavy long look */
+.list-row { box-shadow: 0 6px 12px rgba(2,6,23,0.03); }
+
+/* small spacing fixes */
+.mobile-top10-header { padding:10px 8px; }
+.mobile-top10-header .h-title { font-size:1rem; }
+.mobile-top10-header .h-actions .btn.btn-primary { display:inline-flex; align-items:center; justify-content:center; }
+
+}
 
 </style>
 
