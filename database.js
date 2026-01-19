@@ -2813,96 +2813,100 @@ async function openPayModal(btnOrEvent){
 
   const headerTitle = `${(view||'').toUpperCase()} PAYMENTS`;
 
-  // modal HTML: responsive, scrollable content inside modal (max-height) to fit mobile screens
+  // modal HTML: responsive; scrollable content area + sticky footer so buttons remain visible
   const html = `
-    <div style="display:flex;flex-direction:column;gap:10px;font-size:${desktop ? '0.92rem' : '1rem'};max-width:${desktop? '760px' : '96%'};max-height:92vh;overflow:auto;padding:8px">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
-        <div style="min-width:0;flex:1 1 auto">
-          <div style="font-size:0.85rem;font-weight:700;color:#374151">${escape(headerTitle)}</div>
-          <div style="font-weight:900;font-size:1.05rem;margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escape(target.fullName || target.teacherName || target.id || '')}</div>
-          <div class="muted" style="font-size:0.85rem;margin-top:4px">ID: ${escape(target.studentId || target.teacherId || target.staffId || target.id || '')}</div>
-        </div>
-        <div style="text-align:right;min-width:0;flex:0 0 auto">
-          <div class="muted" style="font-size:0.85rem">Balance</div>
-          <div style="font-weight:900;color:#b91c1c;font-size:1.05rem">$${c2p(currentBalance)}</div>
-        </div>
-      </div>
-
-      <!-- Amount + Type row -->
-      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start">
-        <div style="flex:1 1 160px;min-width:0">
-          <label style="display:block;font-weight:700;margin-bottom:6px">Amount</label>
-          <input id="payAmount" type="number" step="0.01" value="${c2p(Math.max(0,currentBalance))}" style="width:100%;padding:8px;border-radius:6px;border:1px solid #e5e7eb;box-sizing:border-box" />
-        </div>
-
-        <div style="flex:1 1 160px;min-width:0">
-          <label style="display:block;font-weight:700;margin-bottom:6px">Payment Type</label>
-          <select id="payType" style="width:100%;padding:8px;border-radius:6px;border:1px solid #e5e7eb">
-            <option value="monthly">Monthly</option>
-            <option value="id-card">ID Card</option>
-            <option value="registration">Registration</option>
-            ${targetType!=='student'?'<option value="salary">Salary</option>':''}
-            <option value="other">Other</option>
-          </select>
-        </div>
-
-        <div style="flex:0 0 140px;min-width:120px">
-          <label style="display:block;font-weight:700;margin-bottom:6px">Year</label>
-          <div style="display:flex;gap:8px;align-items:center">
-            <input id="payYear" readonly value="${curYear}" style="padding:8px;border-radius:6px;border:1px solid #e5e7eb;width:5.5ch;text-align:center" />
-            <button id="openYearPicker" type="button" class="btn btn-ghost" style="padding:6px 8px">Change</button>
+    <div style="display:flex;flex-direction:column;gap:0; font-size:${desktop ? '0.92rem' : '1rem'}; max-width:${desktop? '760px' : '96%'}; height:${desktop? 'auto' : '92vh'}; background:transparent;">
+      <!-- scrollable content -->
+      <div id="payModalScroll" style="overflow:auto; padding:12px; box-sizing:border-box; ${desktop ? '' : 'flex:1 1 auto;'}">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
+          <div style="min-width:0;flex:1 1 auto">
+            <div style="font-size:0.85rem;font-weight:700;color:#374151">${escape(headerTitle)}</div>
+            <div style="font-weight:900;font-size:1.05rem;margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escape(target.fullName || target.teacherName || target.id || '')}</div>
+            <div class="muted" style="font-size:0.85rem;margin-top:4px">ID: ${escape(target.studentId || target.teacherId || target.staffId || target.id || '')}</div>
+          </div>
+          <div style="text-align:right;min-width:0;flex:0 0 auto">
+            <div class="muted" style="font-size:0.85rem">Balance</div>
+            <div style="font-weight:900;color:#b91c1c;font-size:1.05rem">$${c2p(currentBalance)}</div>
           </div>
         </div>
-      </div>
 
-      <!-- Month row (horizontal, wraps) -->
-      <div id="monthPicker">
-        <label style="display:block;font-weight:700;margin-bottom:6px">Month</label>
-        <div id="monthsRow" style="display:flex;gap:6px;flex-wrap:wrap">${monthButtonsHtml}</div>
-        <input id="payMonth" type="hidden" value="${curMonth}" />
-      </div>
+        <!-- Amount + Type row -->
+        <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start">
+          <div style="flex:1 1 160px;min-width:0">
+            <label style="display:block;font-weight:700;margin-bottom:6px">Amount</label>
+            <input id="payAmount" type="number" step="0.01" value="${c2p(Math.max(0,currentBalance))}" style="width:100%;padding:8px;border-radius:6px;border:1px solid #e5e7eb;box-sizing:border-box" />
+          </div>
 
-      <!-- Multi-month selector (hidden by default) -->
-      <div id="multiMonthsWrapper" style="display:none">
-        <label style="display:block;font-weight:700;margin-bottom:6px">Select months (multi)</label>
-        <div id="monthsRowMulti" style="display:flex;gap:6px;flex-wrap:wrap">${monthButtonsHtml}</div>
-      </div>
+          <div style="flex:1 1 160px;min-width:0">
+            <label style="display:block;font-weight:700;margin-bottom:6px">Payment Type</label>
+            <select id="payType" style="width:100%;padding:8px;border-radius:6px;border:1px solid #e5e7eb">
+              <option value="monthly">Monthly</option>
+              <option value="id-card">ID Card</option>
+              <option value="registration">Registration</option>
+              ${targetType!=='student'?'<option value="salary">Salary</option>':''}
+              <option value="other">Other</option>
+            </select>
+          </div>
 
-      <!-- Payment method / provider / payer phone -->
-      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start">
-        <div style="flex:1 1 160px;min-width:0">
-          <label style="display:block;font-weight:700;margin-bottom:6px">Payment method</label>
-          <select id="payMethod" style="width:100%;padding:8px;border-radius:6px;border:1px solid #e5e7eb">
-            <option value="mobile" selected>Mobile</option>
-            <option value="cash">Cash</option>
-            <option value="card">Card</option>
-          </select>
+          <div style="flex:0 0 140px;min-width:120px">
+            <label style="display:block;font-weight:700;margin-bottom:6px">Year</label>
+            <div style="display:flex;gap:8px;align-items:center">
+              <input id="payYear" readonly value="${curYear}" style="padding:8px;border-radius:6px;border:1px solid #e5e7eb;width:5.5ch;text-align:center" />
+              <button id="openYearPicker" type="button" class="btn btn-ghost" style="padding:6px 8px">Change</button>
+            </div>
+          </div>
         </div>
 
-        <div style="flex:1 1 160px;min-width:0">
-          <label style="display:block;font-weight:700;margin-bottom:6px">Mobile provider</label>
-          <select id="mobileProvider" style="width:100%;padding:8px;border-radius:6px;border:1px solid #e5e7eb">
-            <option value="Hormuud" selected>Hormuud (EVC)</option>
-            <option value="Somtel">Somtel (Edahab)</option>
-            <option value="Somnet">Somnet (Jeeb)</option>
-            <option value="Telesom">Telesom</option>
-            <option value="Amtel">Amtel</option>
-            <option value="Other">Other</option>
-          </select>
+        <!-- Month row (horizontal, wraps) -->
+        <div id="monthPicker" style="margin-top:12px">
+          <label style="display:block;font-weight:700;margin-bottom:6px">Month</label>
+          <div id="monthsRow" style="display:flex;gap:6px;flex-wrap:wrap">${monthButtonsHtml}</div>
+          <input id="payMonth" type="hidden" value="${curMonth}" />
         </div>
 
-        <div style="flex:1 1 160px;min-width:0">
-          <label style="display:block;font-weight:700;margin-bottom:6px">Payer Phone</label>
-          <input id="payerPhone" value="${escape(defaultPhone)}" style="width:100%;padding:8px;border-radius:6px;border:1px solid #e5e7eb" />
+        <!-- Multi-month selector (hidden by default) -->
+        <div id="multiMonthsWrapper" style="display:none;margin-top:10px">
+          <label style="display:block;font-weight:700;margin-bottom:6px">Select months (multi)</label>
+          <div id="monthsRowMulti" style="display:flex;gap:6px;flex-wrap:wrap">${monthButtonsHtml}</div>
+        </div>
+
+        <!-- Payment method / provider / payer phone -->
+        <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start">
+          <div style="flex:1 1 160px;min-width:0">
+            <label style="display:block;font-weight:700;margin-bottom:6px">Payment method</label>
+            <select id="payMethod" style="width:100%;padding:8px;border-radius:6px;border:1px solid #e5e7eb">
+              <option value="mobile" selected>Mobile</option>
+              <option value="cash">Cash</option>
+              <option value="card">Card</option>
+            </select>
+          </div>
+
+          <div style="flex:1 1 160px;min-width:0">
+            <label style="display:block;font-weight:700;margin-bottom:6px">Mobile provider</label>
+            <select id="mobileProvider" style="width:100%;padding:8px;border-radius:6px;border:1px solid #e5e7eb">
+              <option value="Hormuud" selected>Hormuud (EVC)</option>
+              <option value="Somtel">Somtel (Edahab)</option>
+              <option value="Somnet">Somnet (Jeeb)</option>
+              <option value="Telesom">Telesom</option>
+              <option value="Amtel">Amtel</option>
+              <option value="Other">Other</option>
+            </select>
+          </div>
+
+          <div style="flex:1 1 160px;min-width:0">
+            <label style="display:block;font-weight:700;margin-bottom:6px">Payer Phone</label>
+            <input id="payerPhone" value="${escape(defaultPhone)}" style="width:100%;padding:8px;border-radius:6px;border:1px solid #e5e7eb" />
+          </div>
+        </div>
+
+        <div style="margin-top:12px">
+          <label style="display:block;font-weight:700;margin-bottom:6px">Note</label>
+          <input id="payNote" placeholder="Optional note" style="width:100%;padding:8px;border-radius:6px;border:1px solid #e5e7eb" />
         </div>
       </div>
 
-      <div>
-        <label style="display:block;font-weight:700;margin-bottom:6px">Note</label>
-        <input id="payNote" placeholder="Optional note" style="width:100%;padding:8px;border-radius:6px;border:1px solid #e5e7eb" />
-      </div>
-
-      <div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">
+      <!-- sticky footer: always visible (mobile + desktop). kept outside the scrollable area -->
+      <div id="payModalFooter" style="position:sticky;bottom:0;background:#fff;padding:10px;border-top:1px solid #eef2f7;box-shadow:0 -6px 20px rgba(0,0,0,0.06);display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;z-index:5">
         <button id="payClose" class="btn btn-ghost">Close</button>
         <button id="toggleMultiMonths" class="btn btn-ghost">Select multiple months</button>
         <button id="paySave" class="btn btn-primary">Save</button>
@@ -3147,7 +3151,6 @@ async function openPayModal(btnOrEvent){
     }
   };
 }
-
 
 
 
