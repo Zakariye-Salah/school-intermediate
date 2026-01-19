@@ -2838,7 +2838,7 @@ async function openPayModal(btnOrEvent){
           </div>
 
           <div style="flex:1 1 160px;min-width:0">
-            <label style="display:block;font-weight:700;margin-bottom:6px">Payment Type</label>
+            <label style="display:block;font-weight:700;margin-bottom:6px">Type</label>
             <select id="payType" style="width:100%;padding:8px;border-radius:6px;border:1px solid #e5e7eb">
               <option value="monthly">Monthly</option>
               <option value="id-card">ID Card</option>
