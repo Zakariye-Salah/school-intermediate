@@ -144,6 +144,21 @@
   gap:8px;
 }
 
+  /* Hide desktop-only headers on mobile */
+@media (max-width: 768px) {
+
+  /* Outstanding desktop header */
+  #outstandingCard > div:first-child {
+    display: none !important;
+  }
+
+  /* Leaderboard desktop header */
+  #leaderboardCard > div:first-child {
+    display: none !important;
+  }
+
+}
+
 
 </style>
 
@@ -261,3 +276,4 @@
   <script type="module" src="database.js"></script>
 </body>
 </html>
+
