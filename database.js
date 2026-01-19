@@ -5421,11 +5421,9 @@ lastRefEl =
   }
  
   // render (mobile + desktop)
-  if(isMobileViewport()){
+  if (isMobileViewport()) {
 
-    outstandingTableRoot.innerHTML = headerHtml + html;
-
-    const html = `<div style="display:flex;flex-direction:column;gap:8px">
+    const listHtml = `<div style="display:flex;flex-direction:column;gap:8px">
       ${top10.map((r,idx)=>`
         <div class="list-row" style="align-items:center">
           <div class="row-left">
@@ -5436,21 +5434,22 @@ lastRefEl =
             </div>
           </div>
           <div style="display:flex;align-items:center;gap:12px">
-            <div style="text-align:right;font-weight:900;color:#b91c1c">${formatMoney(r.owing_cents)}</div>
-            // mobile row action column snippet
- <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end">
-   <button class="btn btn-primary record-pay" data-id="${escape(r.id)}" title="Record payment">${svgPay()}</button>
-   <div style="display:flex;gap:6px">
-     <button class="btn btn-ghost view-trans" data-id="${escape(r.id)}" title="View transactions">${svgView()}</button>
-   </div>
- </div>
- 
+            <div style="text-align:right;font-weight:900;color:#b91c1c">
+              ${formatMoney(r.owing_cents)}
+            </div>
+            <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end">
+              <button class="btn btn-primary record-pay" data-id="${escape(r.id)}">${svgPay()}</button>
+              <button class="btn btn-ghost view-trans" data-id="${escape(r.id)}">${svgView()}</button>
+            </div>
           </div>
         </div>
       `).join('')}
     </div>`;
-    outstandingTableRoot.innerHTML = html;
-  } else {
+  
+    outstandingTableRoot.innerHTML = headerHtml + listHtml;
+  }
+  
+   else {
     let html = `<div style="overflow:auto"><table style="width:100%;border-collapse:collapse"><thead><tr>
       <th>No</th><th>Name (ID)</th><th>Class</th><th style="text-align:right">Outstanding</th><th>Assigned</th><th>Paid (period)</th><th>Actions</th>
     </tr></thead><tbody>`;
@@ -6076,31 +6075,33 @@ const leaderboardHeaderMobile = `
     leaderboardListRoot.innerHTML = `<div class="muted" style="padding:12px">No students found for the selected exam/class.</div>`;
     return;
   }
-  if (isMobileViewport()) {
-    leaderboardListRoot.innerHTML = leaderboardHeaderMobile + html;
-  } else {
-    leaderboardListRoot.innerHTML = html;
-  }
-  
   const html = `<div style="display:flex;flex-direction:column;gap:8px">
-    ${rows.map((r, idx) => `
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
-        <div style="display:flex;align-items:center;gap:8px">
-          <div style="width:36px;height:36px;border-radius:999px;background:#f1f5f9;display:flex;align-items:center;justify-content:center">${idx < 3 ? (idx===0?'🏆':idx===1?'🥈':'🥉') : idx+1}</div>
-          <div style="min-width:0">
-            <div style="font-weight:900">${escape(r.name)}</div>
-            <div class="muted">${escape(r.className)} • ID: ${escape(String(r.studentId))}</div>
-          </div>
+  ${rows.map((r, idx) => `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <div style="width:36px;height:36px;border-radius:999px;background:#f1f5f9;display:flex;align-items:center;justify-content:center">
+          ${idx < 3 ? (idx===0?'🏆':idx===1?'🥈':'🥉') : idx+1}
         </div>
-        <div style="display:flex;align-items:center;gap:8px">
-          <div style="width:140px"><progress value="${Math.round(r.pct)}" max="100" style="width:100%"></progress></div>
-          <div style="min-width:60px;text-align:right;font-weight:900">${r.pct.toFixed(1)}%</div>
-          <div><button class="btn btn-ghost view-marks" data-id="${escape(r.studentId)}" data-exam="${escape(examId)}">View</button></div>
+        <div style="min-width:0">
+          <div style="font-weight:900">${escape(r.name)}</div>
+          <div class="muted">${escape(r.className)} • ID: ${escape(r.studentId)}</div>
         </div>
       </div>
-    `).join('')}
-  </div>`;
- 
+      <div style="display:flex;align-items:center;gap:8px">
+        <progress value="${Math.round(r.pct)}" max="100"></progress>
+        <div style="font-weight:900">${r.pct.toFixed(1)}%</div>
+        <button class="btn btn-ghost view-marks"
+          data-id="${escape(r.studentId)}"
+          data-exam="${escape(examId)}">View</button>
+      </div>
+    </div>
+  `).join('')}
+</div>`;
+
+leaderboardListRoot.innerHTML = isMobileViewport()
+  ? leaderboardHeaderMobile + html
+  : html;
+
   leaderboardListRoot.innerHTML = html;
  
   leaderboardListRoot.querySelectorAll('.view-marks').forEach(b => b.addEventListener('click', async ev => {
