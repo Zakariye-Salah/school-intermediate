@@ -107,6 +107,14 @@
 .payments-card .payments-id-btn { min-width:0; word-break:break-all; text-align:left; }
 .payments-card .id-block.hidden { display:none; }
 
+/* charts: enforce stable height so Chart.js does not expand endlessly */
+.card canvas {
+  width: 100% !important;
+  height: 220px !important;
+  display: block;
+}
+.card.chart-card { min-height: 260px; }
+
 
 </style>
 
