@@ -5392,6 +5392,22 @@ lastRefEl =
     };
   });
  
+  const headerHtml = `
+<div class="mobile-top10-header">
+  <div class="h-title">Top 10 Outstanding Student Payments</div>
+  <div class="h-sub">${new Date(range.start).toLocaleDateString()} — ${new Date(range.end).toLocaleDateString()}</div>
+
+  <div class="h-row">
+    <input id="outstandingSearch" type="search" placeholder="Search name / ID" />
+  </div>
+
+  <div class="h-actions">
+    <button id="exportOutstandingCsv" class="btn btn-ghost">Export CSV</button>
+    <button id="sendOutstandingReminder" class="btn btn-primary">Send Reminder</button>
+  </div>
+</div>
+`;
+
   // only students who owe > 0
   const oweRows = rows.filter(r => Number(r.owing_cents || 0) > 0).sort((a,b)=> b.owing_cents - a.owing_cents);
   const top10 = oweRows.slice(0,10);
@@ -5399,12 +5415,16 @@ lastRefEl =
   outstandingRange.textContent = `${new Date(range.start).toLocaleDateString()} — ${new Date(range.end).toLocaleDateString()}`;
  
   if(!top10.length){
+    
     outstandingTableRoot.innerHTML = `<div class="muted" style="padding:12px">No outstanding student payments found for the selected period.</div>`;
     return;
   }
  
   // render (mobile + desktop)
   if(isMobileViewport()){
+
+    outstandingTableRoot.innerHTML = headerHtml + html;
+
     const html = `<div style="display:flex;flex-direction:column;gap:8px">
       ${top10.map((r,idx)=>`
         <div class="list-row" style="align-items:center">
@@ -5982,6 +6002,23 @@ lastRefEl =
   const examId = leaderboardExamSel.value;
   leaderboardExamInfo.textContent = examId ? `Exam: ${examId}` : 'No exam selected';
  
+
+  const exam = (examsCache || []).find(e => String(e.id) === String(examId)) || {};
+const examDate = exam.publishedAt ? new Date(tsToMs(exam.publishedAt)).toLocaleDateString() : '—';
+
+const leaderboardHeaderMobile = `
+<div class="mobile-top10-header">
+  <div class="h-title">Top-10 Students (Exam leaderboard)</div>
+  <div class="h-sub">Exam: ${escape(examId)}</div>
+  <div class="h-sub">Top 10 — ${leaderboardKind.value === 'class' ? escape(leaderboardClassSel.value) : 'School'}</div>
+
+  <div class="h-actions" style="justify-content:space-between">
+    <div class="muted">${escape(exam.name || 'Exam')} • ${examDate}</div>
+    <button id="exportLeaderboardCsv" class="btn btn-ghost">Export</button>
+  </div>
+</div>
+`;
+
   if (!examId) {
     leaderboardListRoot.innerHTML = `<div class="muted" style="padding:12px">No exam selected</div>`;
     return;
@@ -6039,7 +6076,12 @@ lastRefEl =
     leaderboardListRoot.innerHTML = `<div class="muted" style="padding:12px">No students found for the selected exam/class.</div>`;
     return;
   }
- 
+  if (isMobileViewport()) {
+    leaderboardListRoot.innerHTML = leaderboardHeaderMobile + html;
+  } else {
+    leaderboardListRoot.innerHTML = html;
+  }
+  
   const html = `<div style="display:flex;flex-direction:column;gap:8px">
     ${rows.map((r, idx) => `
       <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
