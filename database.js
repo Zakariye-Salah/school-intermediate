@@ -4759,14 +4759,14 @@ async function renderDashboard(opts = {}) {
  
     <div style="display:grid;grid-template-columns:2fr 1fr;gap:12px;margin-top:12px">
       <div class="card" id="outstandingCard" style="padding:12px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-          <div><strong>Top 10 Outstanding Student Payments</strong><div class="muted" id="outstandingRange"></div></div>
-          <div style="display:flex;gap:8px;align-items:center">
-            <input id="outstandingSearch" placeholder="Search name / ID" style="padding:6px;border-radius:8px;border:1px solid #eef2f9" />
-            <button id="outstandingExport" class="btn btn-ghost">Export CSV</button>
-            <button id="outstandingBulkReminder" class="btn btn-primary">Send Reminder</button>
-          </div>
-        </div>
+        // <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        //   <div><strong>Top 10 Outstanding Student Payments</strong><div class="muted" id="outstandingRange"></div></div>
+        //   <div style="display:flex;gap:8px;align-items:center">
+        //     <input id="outstandingSearch" placeholder="Search name / ID" style="padding:6px;border-radius:8px;border:1px solid #eef2f9" />
+        //     <button id="outstandingExport" class="btn btn-ghost">Export CSV</button>
+        //     <button id="outstandingBulkReminder" class="btn btn-primary">Send Reminder</button>
+        //   </div>
+        // </div>
         <div id="outstandingTable"></div>
       </div>
  
@@ -4790,6 +4790,25 @@ async function renderDashboard(opts = {}) {
     </div>
   `;
  
+
+  function hideDesktopHeadersOnMobile() {
+    if (!isMobileViewport || !isMobileViewport()) return;
+  
+    const outstandingCard = page.querySelector('#outstandingCard');
+    const leaderboardCard = page.querySelector('#leaderboardCard');
+  
+    if (outstandingCard && outstandingCard.firstElementChild) {
+      outstandingCard.firstElementChild.style.display = 'none';
+    }
+  
+    if (leaderboardCard && leaderboardCard.firstElementChild) {
+      leaderboardCard.firstElementChild.style.display = 'none';
+    }
+  }
+  
+  // call once after render
+  hideDesktopHeadersOnMobile();
+  
   // shared header refs (used by mobile + desktop)
 let filterInfo = null;
 let lastRefEl = null;
@@ -6491,6 +6510,24 @@ async function renderAttendance(){
     </div>
     <div id="attendanceList"></div>
   `;
+  function hideDesktopHeadersOnMobile() {
+  if (!isMobileViewport || !isMobileViewport()) return;
+
+  const outstandingCard = page.querySelector('#outstandingCard');
+  const leaderboardCard = page.querySelector('#leaderboardCard');
+
+  if (outstandingCard && outstandingCard.firstElementChild) {
+    outstandingCard.firstElementChild.style.display = 'none';
+  }
+
+  if (leaderboardCard && leaderboardCard.firstElementChild) {
+    leaderboardCard.firstElementChild.style.display = 'none';
+  }
+}
+
+// call once after render
+hideDesktopHeadersOnMobile();
+
   const classSel = document.getElementById('attClass');
   classSel.innerHTML = '<option value="">Select class</option>' + (classesCache||[]).map(c => `<option value="${escape(c.name)}">${escape(c.name)}</option>`).join('');
   const subjSel = document.getElementById('attSubject');
