@@ -257,6 +257,48 @@
 }
 
 
+/* ===== fix outstanding header + compact mobile rows ===== */
+.mobile-only { display:none; }
+.desktop-only { display:block; }
+@media (max-width:768px) {
+  .mobile-only { display:block !important; }
+  .desktop-only { display:none !important; }
+
+  /* header: search full width on its own row, actions under it */
+  .mobile-top10-header { padding:10px 8px; box-sizing:border-box; border-bottom:1px solid #eef2f9; }
+  .mobile-top10-header .h-row { width:100%; margin-top:6px; }
+  .mobile-top10-header .h-row input[type="search"] { width:100%; box-sizing:border-box; padding:10px; border-radius:10px; border:1px solid #e5e7eb; }
+  .mobile-top10-header .h-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; justify-content:space-between; }
+  .mobile-top10-header .h-actions .btn { flex:0 0 calc(50% - 6px); min-width:0; padding:8px 6px; border-radius:10px; text-align:center; }
+
+  /* list row: three logical regions */
+  .list-row { display:flex; gap:12px; align-items:center; padding:10px; border-radius:10px;
+    background:linear-gradient(180deg,#fff,#fbfdff); border:1px solid rgba(2,6,23,0.03); box-shadow:0 6px 12px rgba(2,6,23,0.03); box-sizing:border-box; }
+  .list-row .row-left { display:flex; gap:10px; align-items:center; min-width:0; flex:1 1 auto; }
+  .list-row .no-badge { min-width:30px; text-align:center; font-weight:900; color:var(--muted); }
+  .list-row .title { font-weight:900; font-size:0.96rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%; }
+  .list-row .sub { color:var(--muted); font-size:0.78rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:120px; }
+
+  /* amount column keeps fixed width to avoid pushing name */
+  .list-row .amount { flex:0 0 84px; text-align:right; font-weight:900; color:var(--danger); }
+
+  /* action column — vertical compact circular buttons */
+  .list-row .row-actions { flex:0 0 44px; display:flex; flex-direction:column; gap:8px; align-items:center; margin-left:4px; }
+  .list-row .row-actions .btn { width:36px; height:36px; padding:0; min-width:36px; border-radius:999px; display:inline-flex; align-items:center; justify-content:center; border:1px solid rgba(2,6,23,0.06); background:#fff; box-shadow:none; }
+  .list-row .row-actions .btn.btn-primary { background:var(--primary); color:#fff; border:none; }
+
+  /* ensure leaderboard view button is compact on mobile if used */
+  .btn.view-marks { padding:0 8px; min-width:40px; height:36px; border-radius:8px; }
+
+  /* small tweaks */
+  .mobile-top10-header .h-title { font-weight:900; font-size:1rem; }
+  .mobile-top10-header .h-sub { font-size:0.82rem; color:#6b7280; }
+
+  /* always allow header export/button area to wrap instead of overflowing */
+  .mobile-top10-header .h-actions { overflow:visible; }
+}
+
+
 </style>
 
 </head>
