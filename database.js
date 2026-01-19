@@ -2774,9 +2774,13 @@ async function openAddExpenseModal(){
 /* ---------- Robust openPay/openAdjustment/openView handlers ----------
    Accept either the event's currentTarget element or an event. Use dataset.id from the element
    to avoid nested SVG/span click problems that made earlier code read e.target (wrong).
-*/async function openPayModal(btnOrEvent){
+*/
+async function openPayModal(btnOrEvent){
   // normalize to button element
-  const btn = (btnOrEvent && btnOrEvent.dataset) ? btnOrEvent : (btnOrEvent && btnOrEvent.currentTarget) ? btnOrEvent.currentTarget : (btnOrEvent && btnOrEvent.target && btnOrEvent.target.closest && btnOrEvent.target.closest('button')) ? btnOrEvent.target.closest('button') : null;
+  const btn = (btnOrEvent && btnOrEvent.dataset) ? btnOrEvent
+            : (btnOrEvent && btnOrEvent.currentTarget) ? btnOrEvent.currentTarget
+            : (btnOrEvent && btnOrEvent.target && btnOrEvent.target.closest && btnOrEvent.target.closest('button')) ? btnOrEvent.target.closest('button')
+            : null;
   if(!btn) return;
   const id = btn.dataset.id;
   const activeTab = document.querySelector('#pagePayments .tab.active');
@@ -2787,50 +2791,51 @@ async function openAddExpenseModal(){
   let target = await resolveTargetByAnyId(view, id);
   if(!target) return toast('Target not found');
 
-  // don't reassign target variable later — use this object
   const currentBalance = Number(target.balance_cents || 0);
   const defaultPhone = target.parentPhone || target.phone || '';
   const now = new Date();
   const curMonth = now.getMonth()+1;
   const curYear = now.getFullYear();
+  const desktop = !isMobileViewport();
 
   // months horizontal UI (buttons)
   const monthsShort = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   const monthButtonsHtml = Array.from({length:12}, (_,i) => {
     const sel = (i+1) === curMonth ? 'month-selected' : '';
-    return `<button type="button" class="month-btn ${sel}" data-month="${i+1}" style="padding:6px 8px;border-radius:6px;border:1px solid #e5e7eb;background:${sel? '#0b74de':'#fff'};color:${sel? '#fff':'#111'};cursor:pointer">${monthsShort[i]}</button>`;
+    return `<button type="button" class="month-btn ${sel}" data-month="${i+1}" aria-pressed="${sel? 'true':'false'}" style="padding:6px 8px;border-radius:6px;border:1px solid #e5e7eb;background:${sel? '#0b74de':'#fff'};color:${sel? '#fff':'#111'};cursor:pointer;flex:0 0 auto">${monthsShort[i]}</button>`;
   }).join('');
 
-  // build year options 2025..2100 - present in a list (size=10)
-  const yearOptions = Array.from({length: (2100-2025+1)}, (_,i) => {
+  // year list HTML for year picker (2025..2100)
+  const yearOptionsHtml = Array.from({length: (2100-2025+1)}, (_,i) => {
     const y = 2025 + i;
-    return `<option value="${y}" ${y===curYear? 'selected' : ''}>${y}</option>`;
+    return `<div class="year-item" data-year="${y}" style="padding:8px;border-radius:6px;cursor:pointer;text-align:center;border:1px solid #f1f5f9">${y}</div>`;
   }).join('');
 
-  // header label (e.g. STUDENTS PAYMENTS)
   const headerTitle = `${(view||'').toUpperCase()} PAYMENTS`;
 
+  // modal HTML: responsive, scrollable content inside modal (max-height) to fit mobile screens
   const html = `
-    <div style="display:flex;flex-direction:column;gap:10px">
-      <div style="display:flex;justify-content:space-between;align-items:center">
-        <div>
+    <div style="display:flex;flex-direction:column;gap:10px;font-size:${desktop ? '0.92rem' : '1rem'};max-width:${desktop? '760px' : '96%'};max-height:92vh;overflow:auto;padding:8px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
+        <div style="min-width:0;flex:1 1 auto">
           <div style="font-size:0.85rem;font-weight:700;color:#374151">${escape(headerTitle)}</div>
-          <div style="font-weight:900;font-size:1.05rem;margin-top:6px">${escape(target.fullName || target.teacherName || target.id || '')}</div>
+          <div style="font-weight:900;font-size:1.05rem;margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escape(target.fullName || target.teacherName || target.id || '')}</div>
           <div class="muted" style="font-size:0.85rem;margin-top:4px">ID: ${escape(target.studentId || target.teacherId || target.staffId || target.id || '')}</div>
         </div>
-        <div style="text-align:right">
+        <div style="text-align:right;min-width:0;flex:0 0 auto">
           <div class="muted" style="font-size:0.85rem">Balance</div>
           <div style="font-weight:900;color:#b91c1c;font-size:1.05rem">$${c2p(currentBalance)}</div>
         </div>
       </div>
 
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;align-items:start">
-        <div>
+      <!-- Amount + Type row -->
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start">
+        <div style="flex:1 1 160px;min-width:0">
           <label style="display:block;font-weight:700;margin-bottom:6px">Amount</label>
-          <input id="payAmount" type="number" step="0.01" value="${c2p(Math.max(0,currentBalance))}" style="width:6.5ch;padding:8px;border-radius:6px;border:1px solid #e5e7eb" />
+          <input id="payAmount" type="number" step="0.01" value="${c2p(Math.max(0,currentBalance))}" style="width:100%;padding:8px;border-radius:6px;border:1px solid #e5e7eb;box-sizing:border-box" />
         </div>
 
-        <div>
+        <div style="flex:1 1 160px;min-width:0">
           <label style="display:block;font-weight:700;margin-bottom:6px">Payment Type</label>
           <select id="payType" style="width:100%;padding:8px;border-radius:6px;border:1px solid #e5e7eb">
             <option value="monthly">Monthly</option>
@@ -2841,25 +2846,31 @@ async function openAddExpenseModal(){
           </select>
         </div>
 
-        <div style="grid-column:1 / -1">
-          <label style="display:block;font-weight:700;margin-bottom:6px">Month</label>
-          <div id="monthsRow" style="display:flex;gap:6px;flex-wrap:wrap">${monthButtonsHtml}</div>
-          <input id="payMonth" type="hidden" value="${curMonth}" />
-        </div>
-
-        <div>
+        <div style="flex:0 0 140px;min-width:120px">
           <label style="display:block;font-weight:700;margin-bottom:6px">Year</label>
-          <select id="payYear" size="10" style="width:100%;padding:6px;border-radius:6px;border:1px solid #e5e7eb;max-height:10rem;overflow:auto">
-            ${yearOptions}
-          </select>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input id="payYear" readonly value="${curYear}" style="padding:8px;border-radius:6px;border:1px solid #e5e7eb;width:5.5ch;text-align:center" />
+            <button id="openYearPicker" type="button" class="btn btn-ghost" style="padding:6px 8px">Change</button>
+          </div>
         </div>
+      </div>
 
-        <div id="multiMonthsWrapper" style="display:none;grid-column:1 / -1">
-          <label style="display:block;font-weight:700;margin-bottom:6px">Select months (multi)</label>
-          <div id="monthsRowMulti" style="display:flex;gap:6px;flex-wrap:wrap">${monthButtonsHtml}</div>
-        </div>
+      <!-- Month row (horizontal, wraps) -->
+      <div id="monthPicker">
+        <label style="display:block;font-weight:700;margin-bottom:6px">Month</label>
+        <div id="monthsRow" style="display:flex;gap:6px;flex-wrap:wrap">${monthButtonsHtml}</div>
+        <input id="payMonth" type="hidden" value="${curMonth}" />
+      </div>
 
-        <div>
+      <!-- Multi-month selector (hidden by default) -->
+      <div id="multiMonthsWrapper" style="display:none">
+        <label style="display:block;font-weight:700;margin-bottom:6px">Select months (multi)</label>
+        <div id="monthsRowMulti" style="display:flex;gap:6px;flex-wrap:wrap">${monthButtonsHtml}</div>
+      </div>
+
+      <!-- Payment method / provider / payer phone -->
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start">
+        <div style="flex:1 1 160px;min-width:0">
           <label style="display:block;font-weight:700;margin-bottom:6px">Payment method</label>
           <select id="payMethod" style="width:100%;padding:8px;border-radius:6px;border:1px solid #e5e7eb">
             <option value="mobile" selected>Mobile</option>
@@ -2868,7 +2879,7 @@ async function openAddExpenseModal(){
           </select>
         </div>
 
-        <div id="mobileProviderWrapper">
+        <div style="flex:1 1 160px;min-width:0">
           <label style="display:block;font-weight:700;margin-bottom:6px">Mobile provider</label>
           <select id="mobileProvider" style="width:100%;padding:8px;border-radius:6px;border:1px solid #e5e7eb">
             <option value="Hormuud" selected>Hormuud (EVC)</option>
@@ -2880,18 +2891,18 @@ async function openAddExpenseModal(){
           </select>
         </div>
 
-        <div>
+        <div style="flex:1 1 160px;min-width:0">
           <label style="display:block;font-weight:700;margin-bottom:6px">Payer Phone</label>
           <input id="payerPhone" value="${escape(defaultPhone)}" style="width:100%;padding:8px;border-radius:6px;border:1px solid #e5e7eb" />
         </div>
-
-        <div style="grid-column:1 / -1">
-          <label style="display:block;font-weight:700;margin-bottom:6px">Note</label>
-          <input id="payNote" placeholder="Optional note" style="width:100%;padding:8px;border-radius:6px;border:1px solid #e5e7eb" />
-        </div>
       </div>
 
-      <div style="display:flex;gap:8px;justify-content:flex-end">
+      <div>
+        <label style="display:block;font-weight:700;margin-bottom:6px">Note</label>
+        <input id="payNote" placeholder="Optional note" style="width:100%;padding:8px;border-radius:6px;border:1px solid #e5e7eb" />
+      </div>
+
+      <div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">
         <button id="payClose" class="btn btn-ghost">Close</button>
         <button id="toggleMultiMonths" class="btn btn-ghost">Select multiple months</button>
         <button id="paySave" class="btn btn-primary">Save</button>
@@ -2899,9 +2910,10 @@ async function openAddExpenseModal(){
     </div>
   `;
 
+  // show modal
   showModal(`Pay • ${escape(target.fullName||target.teacherName||target.id||'')}`, html);
 
-  // prevent background scroll while modal open (restored by wrapped closeModal)
+  // disable background scroll while modal open (restore when modal closed)
   if(!window.__modal_close_wrapped){
     const origClose = window.closeModal || (()=>{});
     window.closeModal = function(){ try{ origClose(); } finally { document.body.style.overflow = ''; } };
@@ -2909,30 +2921,33 @@ async function openAddExpenseModal(){
   }
   document.body.style.overflow = 'hidden';
 
+  // element refs
   const payType = modalBody.querySelector('#payType');
   const multiWrapper = modalBody.querySelector('#multiMonthsWrapper');
   const toggleMulti = modalBody.querySelector('#toggleMultiMonths');
   const payMonthHidden = modalBody.querySelector('#payMonth');
-  const payYear = modalBody.querySelector('#payYear');
+  const payYearEl = modalBody.querySelector('#payYear');
   const payNote = modalBody.querySelector('#payNote');
   const payMethodEl = modalBody.querySelector('#payMethod');
-  const mobileProviderWrapper = modalBody.querySelector('#mobileProviderWrapper');
+  const mobileProviderEl = modalBody.querySelector('#mobileProvider');
+  const monthsRow = modalBody.querySelector('#monthsRow');
+  const monthsRowMulti = modalBody.querySelector('#monthsRowMulti');
 
-  // month button helpers
-  function getMonthButtons(container){
-    return Array.from(container.querySelectorAll('.month-btn'));
-  }
+  // helpers for months buttons
+  function getMonthButtons(container){ return Array.from(container.querySelectorAll('.month-btn')); }
   function clearSelected(btns){
     btns.forEach(b => {
       b.classList.remove('month-selected');
       b.style.background = '#fff';
       b.style.color = '#111';
+      b.setAttribute('aria-pressed','false');
     });
   }
   function setSelectedButton(btn){
     btn.classList.add('month-selected');
     btn.style.background = '#0b74de';
     btn.style.color = '#fff';
+    btn.setAttribute('aria-pressed','true');
   }
   function pickSingleMonth(container, month){
     const btns = getMonthButtons(container);
@@ -2945,22 +2960,21 @@ async function openAddExpenseModal(){
     return getMonthButtons(container).filter(b => b.classList.contains('month-selected')).map(b => b.dataset.month);
   }
 
-  const monthsRow = modalBody.querySelector('#monthsRow');
-  const monthsRowMulti = modalBody.querySelector('#monthsRowMulti');
-
   // init selection
   pickSingleMonth(monthsRow, curMonth);
   pickSingleMonth(monthsRowMulti, curMonth);
 
+  // click handler
   function monthClickHandler(ev){
     const btn = ev.currentTarget;
     const isMulti = (multiWrapper.style.display !== 'none');
     if(isMulti){
-      // toggle style
+      // toggle selection for multi
       if(btn.classList.contains('month-selected')){
         btn.classList.remove('month-selected');
         btn.style.background = '#fff';
         btn.style.color = '#111';
+        btn.setAttribute('aria-pressed','false');
       } else {
         setSelectedButton(btn);
       }
@@ -2970,31 +2984,101 @@ async function openAddExpenseModal(){
       setSelectedButton(btn);
       payMonthHidden.value = btn.dataset.month;
     }
+    fillDefaultNote();
   }
 
   getMonthButtons(monthsRow).forEach(b => b.addEventListener('click', monthClickHandler));
   getMonthButtons(monthsRowMulti).forEach(b => b.addEventListener('click', monthClickHandler));
 
+  // Toggle multi-month UI; change button text to hide/show
+  toggleMulti.addEventListener('click', () => {
+    const showMulti = multiWrapper.style.display === 'none' || multiWrapper.style.display === '';
+    if(showMulti){
+      multiWrapper.style.display = 'block';
+      monthsRow.style.display = 'none';
+      toggleMulti.textContent = 'Hide multiple months';
+      // ensure the same selections carry over
+      const cur = payMonthHidden.value || curMonth;
+      pickSingleMonth(monthsRowMulti, cur);
+    } else {
+      multiWrapper.style.display = 'none';
+      monthsRow.style.display = 'flex';
+      toggleMulti.textContent = 'Select multiple months';
+      // when hiding multi, ensure single row has selection
+      const sel = getSelectedMonthsFrom(monthsRowMulti)[0] || payMonthHidden.value || curMonth;
+      pickSingleMonth(monthsRow, sel);
+      // optionally clear the multi selections
+      clearSelected(getMonthButtons(monthsRowMulti));
+    }
+    fillDefaultNote();
+  });
+
+  // Year picker popup (separate overlay, will not replace main modal)
+  function openYearPickerPopup(){
+    const overlay = document.createElement('div');
+    overlay.className = 'year-picker-overlay';
+    overlay.style.position = 'fixed';
+    overlay.style.left = '0';
+    overlay.style.top = '0';
+    overlay.style.width = '100%';
+    overlay.style.height = '100%';
+    overlay.style.display = 'flex';
+    overlay.style.alignItems = 'center';
+    overlay.style.justifyContent = 'center';
+    overlay.style.background = 'rgba(0,0,0,0.35)';
+    overlay.style.zIndex = '99999';
+
+    const box = document.createElement('div');
+    box.style.background = '#fff';
+    box.style.borderRadius = '10px';
+    box.style.padding = '12px';
+    box.style.maxHeight = '70vh';
+    box.style.overflow = 'auto';
+    box.style.width = desktop ? '420px' : '94%';
+    box.style.boxShadow = '0 8px 30px rgba(0,0,0,0.15)';
+    box.innerHTML = `<div style="font-weight:900;margin-bottom:8px">Select Year</div>
+      <div id="yearList" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">${yearOptionsHtml}</div>
+      <div style="display:flex;justify-content:flex-end;margin-top:10px"><button id="closeYearPicker" class="btn btn-ghost">Close</button></div>`;
+
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+
+    // wire year items
+    box.querySelectorAll('.year-item').forEach(yEl => {
+      yEl.addEventListener('click', () => {
+        const y = yEl.dataset.year;
+        const py = modalBody.querySelector('#payYear');
+        if(py) py.value = y;
+        fillDefaultNote();
+        document.body.removeChild(overlay);
+      });
+    });
+    box.querySelector('#closeYearPicker').addEventListener('click', () => {
+      document.body.removeChild(overlay);
+    });
+  }
+
+  modalBody.querySelector('#openYearPicker').addEventListener('click', openYearPickerPopup);
+
+  // fill default note text using "Lacagta Bisha Jan-2026"
   function fillDefaultNote(){
     const t = payType.value;
-    // format: Lacagta Bisha Jan-2026
-    const mSel = getSelectedMonthsFrom(monthsRow)[0] || payMonthHidden.value || curMonth;
+    const isMulti = (multiWrapper.style.display !== 'none');
+    const mSel = isMulti ? (getSelectedMonthsFrom(monthsRowMulti)[0] || payMonthHidden.value || curMonth)
+                         : (getSelectedMonthsFrom(monthsRow)[0] || payMonthHidden.value || curMonth);
     const mName = monthsShort[(Number(mSel)||curMonth)-1] || monthsShort[curMonth-1];
+    const yVal = payYearEl ? payYearEl.value : curYear;
     if(!payNote.value){
-      if(t==='monthly') payNote.value = `Lacagta Bisha ${mName}-${payYear.value}`;
+      if(t==='monthly') payNote.value = `Lacagta Bisha ${mName}-${yVal}`;
       else if(t==='id-card') payNote.value = 'Lacagta id card';
       else if(t==='registration') payNote.value = 'Lacagta registration';
       else if(t==='salary') payNote.value = 'Lacagta mushaar';
     }
   }
 
+  // wire interactions & preserve original logic
   payType.onchange = () => { modalBody.querySelector('#monthPicker').style.display = payType.value==='monthly' ? 'block' : 'none'; fillDefaultNote(); };
-  payMethodEl.onchange = () => { mobileProviderWrapper.style.display = payMethodEl.value === 'mobile' ? 'block' : 'none'; };
-  toggleMulti.onclick = () => {
-    multiWrapper.style.display = multiWrapper.style.display === 'none' ? 'block' : 'none';
-    modalBody.querySelector('#monthPicker').style.display = multiWrapper.style.display === 'none' ? 'block' : 'none';
-  };
-  payMethodEl.onchange();
+  payMethodEl.onchange = () => { /* mobileProvider visible by default; keep as is */ };
   fillDefaultNote();
 
   modalBody.querySelector('#payClose').onclick = () => { closeModal(); /* closeModal restores overflow */ };
@@ -3011,14 +3095,17 @@ async function openAddExpenseModal(){
 
       let relatedMonths = [];
       if(multiWrapper.style.display !== 'none'){
-        relatedMonths = getSelectedMonthsFrom(monthsRowMulti).map(m => `${payYear.value}-${String(m).padStart(2,'0')}`);
+        relatedMonths = getSelectedMonthsFrom(monthsRowMulti).map(m => `${payYearEl.value}-${String(m).padStart(2,'0')}`);
+        if(relatedMonths.length === 0){
+          toast('Select at least one month'); restoreButton(btnSave, oldHtml); return;
+        }
       } else {
         const sel = getSelectedMonthsFrom(monthsRow)[0] || payMonthHidden.value || curMonth;
-        relatedMonths = [`${payYear.value}-${String(sel).padStart(2,'0')}`];
+        relatedMonths = [`${payYearEl.value}-${String(sel).padStart(2,'0')}`];
       }
 
       const payment_method = payMethodEl.value;
-      const mobile_provider = modalBody.querySelector('#mobileProvider') ? modalBody.querySelector('#mobileProvider').value : null;
+      const mobile_provider = mobileProviderEl ? mobileProviderEl.value : null;
       const payer_phone = modalBody.querySelector('#payerPhone').value.trim() || null;
       const note = modalBody.querySelector('#payNote').value.trim() || null;
 
@@ -3038,7 +3125,7 @@ async function openAddExpenseModal(){
 
       await addDoc(collection(db,'transactions'), tx);
 
-      // update balances for students or salary for teachers/staff (preserve your logic)
+      // update balances (preserve original logic)
       if(type === 'monthly' && targetType === 'student'){
         await updateTargetBalanceGeneric('student', tx.target_id, -amountCents);
       }
@@ -3060,6 +3147,8 @@ async function openAddExpenseModal(){
     }
   };
 }
+
+
 
 
 async function openAdjustmentModal(btnOrEvent){
