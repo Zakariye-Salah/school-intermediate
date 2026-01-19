@@ -2830,8 +2830,8 @@ async function openPayModal(btnOrEvent){
           </div>
         </div>
 
-        <!-- Amount + Type row -->
-        <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start">
+        <!-- Amount + Type row (id=amountTypeRow so we can force same-row on mobile) -->
+        <div id="amountTypeRow" style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start">
           <div style="flex:1 1 160px;min-width:0">
             <label style="display:block;font-weight:700;margin-bottom:6px">Amount</label>
             <input id="payAmount" type="number" step="0.01" value="${c2p(Math.max(0,currentBalance))}" style="width:100%;padding:8px;border-radius:6px;border:1px solid #e5e7eb;box-sizing:border-box" />
@@ -2878,10 +2878,11 @@ async function openPayModal(btnOrEvent){
               <option value="mobile" selected>Mobile</option>
               <option value="cash">Cash</option>
               <option value="card">Card</option>
+              <option value="other">Other</option>
             </select>
           </div>
 
-          <div style="flex:1 1 160px;min-width:0">
+          <div id="mobileProviderWrapper" style="flex:1 1 160px;min-width:0">
             <label style="display:block;font-weight:700;margin-bottom:6px">Mobile provider</label>
             <select id="mobileProvider" style="width:100%;padding:8px;border-radius:6px;border:1px solid #e5e7eb">
               <option value="Hormuud" selected>Hormuud (EVC)</option>
@@ -2895,13 +2896,13 @@ async function openPayModal(btnOrEvent){
 
           <div style="flex:1 1 160px;min-width:0">
             <label style="display:block;font-weight:700;margin-bottom:6px">Payer Phone</label>
-            <input id="payerPhone" value="${escape(defaultPhone)}" style="width:100%;padding:8px;border-radius:6px;border:1px solid #e5e7eb" />
+            <input id="payerPhone" value="${escape(defaultPhone)}" style="width:100%;padding:8px;border-radius:6px;border:1px solid #e5e7eb;box-sizing:border-box" />
           </div>
         </div>
 
         <div style="margin-top:12px">
           <label style="display:block;font-weight:700;margin-bottom:6px">Note</label>
-          <input id="payNote" placeholder="Optional note" style="width:100%;padding:8px;border-radius:6px;border:1px solid #e5e7eb" />
+          <input id="payNote" placeholder="Optional note" style="width:100%;padding:8px;border-radius:6px;border:1px solid #e5e7eb;box-sizing:border-box" />
         </div>
       </div>
 
@@ -2927,6 +2928,7 @@ async function openPayModal(btnOrEvent){
 
   // element refs
   const payType = modalBody.querySelector('#payType');
+  const amountTypeRow = modalBody.querySelector('#amountTypeRow');
   const multiWrapper = modalBody.querySelector('#multiMonthsWrapper');
   const toggleMulti = modalBody.querySelector('#toggleMultiMonths');
   const payMonthHidden = modalBody.querySelector('#payMonth');
@@ -2934,8 +2936,35 @@ async function openPayModal(btnOrEvent){
   const payNote = modalBody.querySelector('#payNote');
   const payMethodEl = modalBody.querySelector('#payMethod');
   const mobileProviderEl = modalBody.querySelector('#mobileProvider');
+  const mobileProviderWrapper = modalBody.querySelector('#mobileProviderWrapper');
   const monthsRow = modalBody.querySelector('#monthsRow');
   const monthsRowMulti = modalBody.querySelector('#monthsRowMulti');
+
+  // === UX fixes requested ===
+  // 1) Show mobile provider only when payment method === 'mobile'
+  function updateMobileProviderVisibility(){
+    if(!mobileProviderWrapper) return;
+    if(payMethodEl.value === 'mobile'){
+      mobileProviderWrapper.style.display = 'block';
+    } else {
+      mobileProviderWrapper.style.display = 'none';
+    }
+  }
+  payMethodEl.addEventListener('change', updateMobileProviderVisibility);
+  // initial
+  updateMobileProviderVisibility();
+
+  // 2) Ensure Amount + Payment Type appear same row on mobile: force children widths when on mobile
+  if(!desktop && amountTypeRow){
+    amountTypeRow.style.flexWrap = 'nowrap';
+    // first two children = amount and type; keep them side-by-side
+    const children = Array.from(amountTypeRow.children);
+    // give first two approx 48% each, but still responsive
+    if(children[0]) children[0].style.flex = '1 1 48%';
+    if(children[1]) children[1].style.flex = '1 1 48%';
+    // year column can remain its fixed width
+    if(children[2]) { children[2].style.flex = '0 0 120px'; children[2].style.minWidth = '90px'; }
+  }
 
   // helpers for months buttons
   function getMonthButtons(container){ return Array.from(container.querySelectorAll('.month-btn')); }
@@ -3041,7 +3070,7 @@ async function openPayModal(btnOrEvent){
     box.style.width = desktop ? '420px' : '94%';
     box.style.boxShadow = '0 8px 30px rgba(0,0,0,0.15)';
     box.innerHTML = `<div style="font-weight:900;margin-bottom:8px">Select Year</div>
-      <div id="yearList" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">${yearOptionsHtml}</div>
+      <div id="yearList" style="display:grid;grid-template-columns:repeat(${desktop?3:2},1fr);gap:8px">${yearOptionsHtml}</div>
       <div style="display:flex;justify-content:flex-end;margin-top:10px"><button id="closeYearPicker" class="btn btn-ghost">Close</button></div>`;
 
     overlay.appendChild(box);
@@ -3082,7 +3111,6 @@ async function openPayModal(btnOrEvent){
 
   // wire interactions & preserve original logic
   payType.onchange = () => { modalBody.querySelector('#monthPicker').style.display = payType.value==='monthly' ? 'block' : 'none'; fillDefaultNote(); };
-  payMethodEl.onchange = () => { /* mobileProvider visible by default; keep as is */ };
   fillDefaultNote();
 
   modalBody.querySelector('#payClose').onclick = () => { closeModal(); /* closeModal restores overflow */ };
