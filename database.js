@@ -4560,106 +4560,933 @@ async function deleteTransaction(e){
   }
 }
 
+/* ---------- renderDashboard (rich admin dashboard) ---------- */
 
 
-/* ------------------------
-  Dashboard (simple widget render)
--------------------------*/
-async function renderDashboard(){
-  // ensure caches loaded
-  await Promise.all([ loadStudents(), loadTeachers(), loadTransactions() ]);
-  const totalStudents = (studentsCache||[]).length;
-  const totalTeachers = (teachersCache||[]).length;
-  const totalStaff = (window.staffCache||[]).length || 0;
-  const totalOutstandingCents = (studentsCache||[]).reduce((s,x)=> s + (x.balance_cents||0), 0) + (teachersCache||[]).reduce((s,x)=> s + (x.balance_cents||0), 0) + ((window.staffCache||[]).reduce((s,x)=> s + (x.balance_cents||0), 0));
-  // due this month: sum of student fee for month + teacher salary owed (simple approximation)
-  const totalDueThisMonthCents = (studentsCache||[]).reduce((s,x)=> s + (p2c(x.fee || 0)), 0) + (teachersCache||[]).reduce((s,x)=> s + (p2c(x.salary || 0)), 0);
+async function renderDashboard(opts = {}) {
+  // opts may contain: forceRefresh boolean
+  // Ensure required caches are loaded
+  await Promise.all([
+    loadStudents && loadStudents(),
+    loadTeachers && loadTeachers(),
+    loadStaff && loadStaff && loadStaff(),
+    loadTransactions && loadTransactions()
+  ]);
 
-  // render / update dashboard card
-  let dash = document.getElementById('dashboardCard');
-  const html = `
-    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:12px">
-      <div class="card"><strong>Total Students</strong><div class="muted" id="totalStudentsVal">${totalStudents}</div></div>
-      <div class="card"><strong>Total Teachers</strong><div class="muted" id="totalTeachersVal">${totalTeachers}</div></div>
-      <div class="card"><strong>Total Staff</strong><div class="muted" id="totalStaffVal">${totalStaff}</div></div>
-      <div class="card"><strong>Total Outstanding</strong><div class="muted" id="totalOutstandingVal">${c2p(totalOutstandingCents)}</div></div>
+  const containerId = 'pageDashboard';
+  let page = document.getElementById(containerId);
+  if (!page) {
+    page = document.createElement('section');
+    page.id = containerId;
+    page.className = 'page';
+    // insert dashboard before other pages (or at top of main)
+    const main = document.querySelector('main');
+    main && main.insertBefore(page, main.firstChild);
+  }
+
+  // --------- helpers & state ----------
+  // readable months/names
+  const monthsShort = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+  // persistent config for Sanad dugsiyeed (store in localStorage)
+  const schoolYearConfig = (() => {
+    try {
+      const raw = localStorage.getItem('schoolYearConfig');
+      if (raw) return JSON.parse(raw);
+    } catch (e) {}
+    // default Somalia-like: Aug → Jun
+    return { startMonth: 8, endMonth: 6 };
+  })();
+
+  // quick helpers for transaction timestamps (support both Firestore-like timestamps and Date)
+  function tsToMs(t) {
+    if (!t) return 0;
+    if (typeof t === 'number') return t * 1000;
+    if (t.seconds) return (t.seconds * 1000) + (t.nanoseconds ? Math.floor(t.nanoseconds / 1000000) : 0);
+    if (t._seconds) return (t._seconds * 1000);
+    const d = new Date(t);
+    return isNaN(d.getTime()) ? 0 : d.getTime();
+  }
+
+  function startOfDayMs(d) { const x = new Date(d); x.setHours(0,0,0,0); return x.getTime(); }
+  function endOfDayMs(d) { const x = new Date(d); x.setHours(23,59,59,999); return x.getTime(); }
+
+  // compute range per filter
+  function computeRangeForFilter(filterName) {
+    const now = new Date();
+    const todayMs = startOfDayMs(now);
+    const thisYearStart = new Date(now.getFullYear(),0,1);
+    const thisYearEnd = new Date(now.getFullYear(),11,31,23,59,59,999);
+    if (filterName === 'Today') {
+      return { start: startOfDayMs(now), end: endOfDayMs(now), label: `Showing: ${new Date(startOfDayMs(now)).toLocaleDateString()} — ${new Date(endOfDayMs(now)).toLocaleDateString()}` };
+    }
+    if (filterName === 'This Week') {
+      // custom week: Saturday -> Wednesday (as requested)
+      // Find current Saturday before or equal to today (Sat = 6)
+      const d = new Date(now);
+      const dow = d.getDay(); // 0 Sun .. 6 Sat
+      // compute offset from Saturday
+      const daysSinceSat = (dow <= 6) ? ((dow + 1) % 7) : 0; // convert so Sat->0
+      // simpler: iterate backward to find Saturday:
+      const sat = new Date(d);
+      while (sat.getDay() !== 6) sat.setDate(sat.getDate() - 1);
+      // find next Wednesday (or the Wednesday in that week)
+      const wed = new Date(sat);
+      // saturday -> wednesday is +4 days
+      wed.setDate(sat.getDate() + 4);
+      return { start: startOfDayMs(sat), end: endOfDayMs(wed), label: `Showing: ${new Date(startOfDayMs(sat)).toLocaleDateString()} — ${new Date(endOfDayMs(wed)).toLocaleDateString()}` };
+    }
+    if (filterName === 'This Month') {
+      const s = new Date(now.getFullYear(), now.getMonth(), 1);
+      const e = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+      return { start: startOfDayMs(s), end: endOfDayMs(e), label: `Showing: ${s.toLocaleDateString()} — ${e.toLocaleDateString()}` };
+    }
+    if (filterName === 'This Year') {
+      return { start: startOfDayMs(thisYearStart), end: endOfDayMs(thisYearEnd), label: `Showing: ${thisYearStart.toLocaleDateString()} — ${thisYearEnd.toLocaleDateString()}` };
+    }
+    if (filterName === 'Sanad dugsiyeed') {
+      // find nearest/current academic year based on schoolYearConfig startMonth/endMonth
+      // startMonth: 1-12 (e.g., 8 for August). End month typically next year (e.g., 6)
+      const sm = Number(schoolYearConfig.startMonth) || 8;
+      const em = Number(schoolYearConfig.endMonth) || 6;
+      // choose academic year that includes today
+      let yearStart, yearEnd;
+      const y = now.getFullYear();
+      // if startMonth <= endMonth that means same year span (unlikely for school), but allow
+      if (sm <= em) {
+        yearStart = new Date(y, sm - 1, 1);
+        yearEnd = new Date(y, em, 0, 23, 59, 59, 999);
+        if (now < yearStart) {
+          yearStart = new Date(y-1, sm - 1, 1);
+          yearEnd = new Date(y-1, em, 0, 23, 59, 59, 999);
+        }
+      } else {
+        // start in Year N (sm) and end in Year N+1 (em)
+        const candidateStartThisYear = new Date(y, sm - 1, 1);
+        const candidateEndThisYear = new Date(y+1, em, 0, 23,59,59,999);
+        if (now >= candidateStartThisYear) {
+          yearStart = candidateStartThisYear;
+          yearEnd = candidateEndThisYear;
+        } else {
+          yearStart = new Date(y-1, sm - 1, 1);
+          yearEnd = new Date(y, em, 0, 23,59,59,999);
+        }
+      }
+      return { start: startOfDayMs(yearStart), end: endOfDayMs(yearEnd), label: `Showing: ${yearStart.toLocaleDateString()} — ${yearEnd.toLocaleDateString()}` };
+    }
+    // All
+    return { start: 0, end: Date.now(), label: 'Showing: All time' };
+  }
+
+  function formatMoney(cents) {
+    try { return c2p(Number(cents||0)); } catch(e){ return (Number(cents||0)/100).toFixed(2); }
+  }
+
+  // helper: filter transactions that fall in ms range
+  function txInRange(tx, startMs, endMs) {
+    const ms = tsToMs(tx.createdAt);
+    return ms >= startMs && ms <= endMs;
+  }
+
+  // compute KPIs from caches + transactionsCache
+  function computeKPIs(range) {
+    const txs = (transactionsCache || []).filter(t => !t.is_deleted && txInRange(t, range.start, range.end));
+    const students = studentsCache || [];
+    const teachers = teachersCache || [];
+    const staff = window.staffCache || [];
+
+    // Total Students/Teachers/Staff/Classes/Subjects
+    const totalStudents = students.length;
+    const totalTeachers = teachers.length;
+    // staff array may be undefined; normalize
+    const totalStaff = staff.length || 0;
+    const totalClasses = (classesCache || []).length;
+    const totalSubjects = (window.subjectsCache || []).length;
+
+    // Totals:
+    // Total Expense: recorded non-payroll expenses (target_type === 'expense')
+    const totalExpenseCents = txs.filter(t => String(t.target_type).toLowerCase() === 'expense').reduce((s,t)=> s + (Number(t.amount_cents||0)), 0);
+
+    // Teacher payouts & staff payments: transactions with type='salary' or target_type==='teacher' payments or 'staff' payments
+    const staffPaymentsCents = txs.filter(t => String(t.target_type).toLowerCase() === 'staff' && Number(t.amount_cents||0) > 0).reduce((s,t)=> s + (Number(t.amount_cents||0)), 0);
+    const teacherPaymentsCents = txs.filter(t => String(t.target_type).toLowerCase() === 'teacher' && Number(t.amount_cents||0) > 0).reduce((s,t)=> s + (Number(t.amount_cents||0)), 0);
+
+    // Total Expenses+ = totalExpense + staff payments + teacher payments
+    const totalExpensesPlusCents = totalExpenseCents + staffPaymentsCents + teacherPaymentsCents;
+
+    // Total Revenue = sum of all student payments in range
+    const totalRevenueCents = txs.filter(t => String(t.target_type).toLowerCase() === 'student' || (t.target_type==='payment' || t.type === 'monthly' || t.type==='payment')).reduce((s,t)=> s + (Number(t.amount_cents||0)), 0);
+
+    // Total Balance (Students) = sum of student.balance_cents (outstanding) — but must represent outstanding in the selected period
+    const totalStudentsBalanceCents = (students || []).reduce((s,st) => s + (Number(st.balance_cents||0)), 0);
+
+    // Total Balance (Teachers) = sum of teacher.balance_cents (amount owed to teachers)
+    const totalTeachersBalanceCents = (teachers || []).reduce((s,tch) => s + (Number(tch.balance_cents||0)), 0);
+
+    // Total Profit
+    const profitCents = totalRevenueCents - totalExpensesPlusCents;
+
+    // change vs previous equivalent period: calculate previous period range
+    const periodLengthMs = Math.max(1, (range.end - range.start));
+    const prevStart = range.start - periodLengthMs;
+    const prevEnd = range.start - 1;
+    const txsPrev = (transactionsCache || []).filter(t => !t.is_deleted && txToRange(t, prevStart, prevEnd));
+    // helper for previous sums (limited to revenue)
+    const prevRevenueCents = txsPrev.filter(t => String(t.target_type).toLowerCase() === 'student').reduce((s,t)=> s + (Number(t.amount_cents||0)), 0);
+
+    return {
+      totalStudents,
+      totalTeachers,
+      totalStaff,
+      totalClasses,
+      totalSubjects,
+      totalExpenseCents,
+      staffPaymentsCents,
+      teacherPaymentsCents,
+      totalExpensesPlusCents,
+      totalRevenueCents,
+      totalStudentsBalanceCents,
+      totalTeachersBalanceCents,
+      profitCents,
+      prevRevenueCents
+    };
+  }
+
+  // fallback tx->range check used above
+  function txToRange(tx, startMs, endMs) {
+    const ms = tsToMs(tx.createdAt);
+    return ms >= startMs && ms <= endMs;
+  }
+
+  // ---------- build DOM ----------
+  // initial filter - default This Month
+  let activeFilter = opts.defaultFilter || 'This Month';
+  let totalBalanceMode = localStorage.getItem('dashboard_total_balance_mode') || 'students'; // 'students' | 'teachers'
+
+  // content HTML skeleton (responsive)
+  page.innerHTML = `
+    <div class="page-header" style="align-items:center;justify-content:space-between">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <div style="display:flex;gap:6px" role="tablist" aria-label="Date filters">
+          <button class="tab filter-btn" data-filter="Today">Today</button>
+          <button class="tab filter-btn active" data-filter="This Month">This Month</button>
+          <button class="tab filter-btn" data-filter="This Week">This Week</button>
+          <button class="tab filter-btn" data-filter="This Year">This Year</button>
+          <button class="tab filter-btn" data-filter="Sanad dugsiyeed">Sanad dugsiyeed</button>
+          <button class="tab filter-btn" data-filter="All">All</button>
+        </div>
+        <div id="filterInfo" class="muted" style="margin-left:12px"></div>
+      </div>
+
+      <div style="display:flex;gap:8px;align-items:center">
+        <div style="display:flex;gap:8px;align-items:center">
+          <button id="dashboardRefresh" class="btn btn-ghost" title="Refresh">↻</button>
+          <div id="dashboardLastRef" class="muted" style="font-size:0.85rem"></div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button id="dashboardExportPdf" class="btn btn-ghost">Export PDF</button>
+          <button id="dashboardExportCsv" class="btn btn-ghost">Export CSV</button>
+          <button id="dashboardSettings" class="btn btn-ghost">⚙️</button>
+          <button id="dashboardNotifications" class="btn btn-ghost" title="Notifications">🔔 <span id="notifBadge" style="display:none;background:#ef4444;color:#fff;border-radius:999px;padding:2px 6px;margin-left:6px;font-weight:900">0</span></button>
+        </div>
+      </div>
     </div>
-    <div style="display:flex;gap:8px;margin-bottom:12px">
-      <button id="openPaymentsQuick" class="btn btn-primary">Open Payments</button>
-      <button id="openAttendanceQuick" class="btn btn-ghost">Open Attendance</button>
-      <button id="openAddExpenseQuick" class="btn btn-ghost">New Expense</button>
-      <button id="openExportQuick" class="btn btn-ghost">Export Reports</button>
+
+    <div id="kpis" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-top:12px"></div>
+
+    <div id="chartsRow" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
+      <div class="card" style="padding:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div><strong>Student Payments</strong><div class="muted" style="font-size:0.85rem" id="chartPaymentsInfo"></div></div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <select id="chartPaymentsGranularity" style="padding:6px;border-radius:8px"><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly" selected>Monthly</option></select>
+            <button id="exportChartPayments" class="btn btn-ghost">Export CSV</button>
+          </div>
+        </div>
+        <canvas id="chartPayments" height="220"></canvas>
+      </div>
+
+      <div class="card" style="padding:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div><strong>Teacher Payments (paid)</strong><div class="muted" id="chartTeachersInfo" style="font-size:0.85rem"></div></div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <select id="chartTeachersGranularity" style="padding:6px;border-radius:8px"><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly" selected>Monthly</option></select>
+            <button id="exportChartTeachers" class="btn btn-ghost">Export CSV</button>
+          </div>
+        </div>
+        <canvas id="chartTeachers" height="220"></canvas>
+      </div>
     </div>
-    <div style="margin-bottom:12px"><strong>Totals</strong> <div class="muted">Due this month: ${c2p(totalDueThisMonthCents)}</div></div>
-    <div style="margin-top:8px"><strong>Recent Transactions</strong></div>
-    <div id="dashboardRecentTx"></div>
+
+    <div style="display:grid;grid-template-columns:2fr 1fr;gap:12px;margin-top:12px">
+      <div class="card" id="outstandingCard" style="padding:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div><strong>Top 10 Outstanding Student Payments</strong><div class="muted" id="outstandingRange"></div></div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input id="outstandingSearch" placeholder="Search name / ID" style="padding:6px;border-radius:8px;border:1px solid #eef2f9" />
+            <button id="outstandingExport" class="btn btn-ghost">Export CSV</button>
+            <button id="outstandingBulkReminder" class="btn btn-primary">Send Reminder</button>
+          </div>
+        </div>
+        <div id="outstandingTable"></div>
+      </div>
+
+      <div class="card" id="leaderboardCard" style="padding:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div><strong>Top-10 Students (Exam leaderboard)</strong><div class="muted" id="leaderboardExamInfo"></div></div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <select id="leaderboardKind"><option value="school">Top 10 — School</option><option value="class">Top 10 — Class</option></select>
+            <select id="leaderboardExam"></select>
+            <select id="leaderboardClass" style="display:none"></select>
+            <button id="leaderboardExport" class="btn btn-ghost">Export</button>
+          </div>
+        </div>
+        <div id="leaderboardList"></div>
+      </div>
+    </div>
+
+    <div id="dashFooter" style="margin-top:12px;display:flex;justify-content:space-between;align-items:center">
+      <div class="muted" id="dashSources">Data source: local cache (transactions / students / teachers)</div>
+      <div class="muted" id="dashStatus"></div>
+    </div>
   `;
 
-  if(!dash){
-    dash = document.createElement('div');
-    dash.id = 'dashboardCard';
-    dash.className = 'page';
-    const main = document.querySelector('main');
-    main && main.prepend(dash);
-  }
-  dash.innerHTML = html;
+  // --------- DOM refs ----------
+  const filterButtons = page.querySelectorAll('.filter-btn');
+  const filterInfo = page.querySelector('#filterInfo');
+  const lastRefEl = page.querySelector('#dashboardLastRef');
+  const kpisRoot = page.querySelector('#kpis');
+  const dashSources = page.querySelector('#dashSources');
+  const dashStatus = page.querySelector('#dashStatus');
 
-  document.getElementById('openPaymentsQuick').onclick = ()=>{ renderPayments(); showPage && showPage('payments'); };
-  document.getElementById('openAttendanceQuick').onclick = ()=>{ renderAttendance(); showPage && showPage('attendance'); };
-  document.getElementById('openAddExpenseQuick').onclick = async () => {
-    // open small add-expense modal
-    const html = `
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-        <div><label>Expense Name</label><input id="expName" /></div>
-        <div><label>Category</label><input id="expCategory" /></div>
-        <div><label>Amount</label><input id="expAmount" type="number" step="0.01" /></div>
-        <div><label>Date</label><input id="expDate" type="date" value="${new Date().toISOString().slice(0,10)}" /></div>
-        <div style="grid-column:1 / -1"><label>Note</label><input id="expNote" /></div>
-      </div>
-      <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
-        <button id="expClose" class="btn btn-ghost">Close</button>
-        <button id="expSave" class="btn btn-primary">Save</button>
+  // charts
+  const chartPaymentsCanvas = page.querySelector('#chartPayments');
+  const chartTeachersCanvas = page.querySelector('#chartTeachers');
+
+  // outstanding & leaderboard
+  const outstandingTableRoot = page.querySelector('#outstandingTable');
+  const outstandingRange = page.querySelector('#outstandingRange');
+  const outstandingSearch = page.querySelector('#outstandingSearch');
+  const leaderboardExamSel = page.querySelector('#leaderboardExam');
+  const leaderboardListRoot = page.querySelector('#leaderboardList');
+  const leaderboardKind = page.querySelector('#leaderboardKind');
+  const leaderboardClassSel = page.querySelector('#leaderboardClass');
+  const leaderboardExamInfo = page.querySelector('#leaderboardExamInfo');
+
+  // show initial active filter button state
+  function setActiveFilterButton(name) {
+    filterButtons.forEach(b => b.classList.toggle('active', b.dataset.filter === name));
+    const range = computeRangeForFilter(name);
+    filterInfo.textContent = range.label;
+  }
+  setActiveFilterButton(activeFilter);
+
+  // date range and update helpers
+  let currentRange = computeRangeForFilter(activeFilter);
+
+  // ---------- KPI rendering ----------
+  function renderKPIs(kpis) {
+    // We show tiles: Total Students, Total Teachers, Total Staff, Total Classes, Total Subjects,
+    // Total Expense, Total Expenses+, Total Revenue, Total Balance (toggle), Total Profit
+
+    const percentChange = (cur, prev) => {
+      if (!prev) return '—';
+      try {
+        const pc = ((cur - prev) / Math.abs(prev)) * 100;
+        const sign = pc > 0 ? '+' : (pc < 0 ? '' : '');
+        return `${sign}${pc.toFixed(1)}%`;
+      } catch(e) { return '—'; }
+    };
+
+    // Build tiles HTML
+    kpisRoot.innerHTML = `
+      ${tileHtml('mdi-school','Total Students', kpis.totalStudents, 'students', `Count of registered students`, false)}
+      ${tileHtml('mdi-teacher','Total Teachers', kpis.totalTeachers, 'teachers', `Count of registered teachers`, false)}
+      ${tileHtml('mdi-account-group','Total Staff', kpis.totalStaff, 'staff', `Count of registered staff`, false)}
+      ${tileHtml('mdi-domain','Total Classes', kpis.totalClasses, 'classes', `Count of classes`, false)}
+      ${tileHtml('mdi-book-open-page-variant','Total Subjects', kpis.totalSubjects, 'subjects', `Count of subjects`, false)}
+
+      ${tileHtml('mdi-file-cabinet','Total Expense', formatMoney(kpis.totalExpenseCents), 'expense', `Total recorded non-payroll expenses between selected dates. Source: transactions (target_type='expense')`, true)}
+      ${tileHtml('mdi-cash-multiple','Total Expenses+', formatMoney(kpis.totalExpensesPlusCents), 'expenses_plus', `Total Expenses+ = recorded expenses + staff payments + teacher payouts.`, true)}
+      ${tileHtml('mdi-currency-usd','Total Revenue', formatMoney(kpis.totalRevenueCents), 'revenue', `Total Revenue = sum of student payments recorded in selected date range. Source: Payments/transactions`, true)}
+      ${tileHtmlToggleBalance(kpis, totalBalanceMode)}
+      ${tileHtml('mdi-chart-line','Total Profit', formatMoney(kpis.profitCents), 'profit', `Total Profit = Total Revenue − Total Expenses+`, true)}
+    `;
+
+    // attach click handlers for drilldowns
+    kpisRoot.querySelectorAll('.kpi-tile').forEach(tile => {
+      tile.addEventListener('click', (e) => {
+        const key = tile.dataset.key;
+        openKpiDrillDown(key);
+      });
+    });
+
+    // toggle behavior for total balance
+    const toggleBtn = kpisRoot.querySelector('#kpi-balance-toggle');
+    if (toggleBtn) {
+      toggleBtn.addEventListener('click', () => {
+        totalBalanceMode = totalBalanceMode === 'students' ? 'teachers' : 'students';
+        localStorage.setItem('dashboard_total_balance_mode', totalBalanceMode);
+        // re-render KPIs only (cheap)
+        renderKPIs(kpis);
+      });
+    }
+  }
+
+  // helper: produce tile HTML
+  function tileHtml(icon, label, value, key, tooltip, showChange) {
+    return `
+      <div class="card kpi-tile" data-key="${key}" title="${tooltip || ''}" style="padding:12px;cursor:pointer">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div style="display:flex;gap:8px;align-items:center">
+            <div style="width:38px;height:38px;border-radius:8px;background:#f1f5f9;display:flex;align-items:center;justify-content:center;font-weight:900">${iconToSvg(icon)}</div>
+            <div>
+              <div style="font-weight:800">${label}</div>
+              <div style="font-weight:900;font-size:1.05rem;margin-top:6px">${value}</div>
+            </div>
+          </div>
+          <div style="text-align:right">
+            ${showChange ? `<div class="muted" style="font-size:0.85rem">vs prev</div><div class="muted" style="font-size:0.85rem">—</div>` : ''}
+          </div>
+        </div>
       </div>
     `;
-    showModal('Add Expense', html);
-    modalBody.querySelector('#expClose').onclick = closeModal;
-    modalBody.querySelector('#expSave').onclick = async () => {
-      const name = modalBody.querySelector('#expName').value.trim();
-      const cat = modalBody.querySelector('#expCategory').value.trim();
-      const amt = modalBody.querySelector('#expAmount').value;
-      const date = modalBody.querySelector('#expDate').value;
-      const note = modalBody.querySelector('#expNote').value.trim();
-      if(!name || !amt) return toast('Name and amount required');
-      const cents = p2c(amt);
-      const tx = {
-        actor: currentUser ? currentUser.uid : null,
-        target_type: 'expense',
-        target_id: `EXP-${Date.now()}`,
-        type: 'expense',
-        subtype: cat || null,
-        amount_cents: cents,
-        payment_method: 'manual',
-        mobile_provider: null,
-        payer_phone: null,
-        note: name + (note ? ' - ' + note : ''),
-        related_months: [],
-        is_reversal: false,
-        original_transaction_id: null,
-        createdAt: Timestamp.now()
-      };
-      await addDoc(collection(db,'transactions'), tx);
-      await toast('Expense recorded');
+  }
+
+  function tileHtmlToggleBalance(kpis, mode) {
+    const studentsVal = formatMoney(kpis.totalStudentsBalanceCents);
+    const teachersVal = formatMoney(kpis.totalTeachersBalanceCents);
+    const shown = mode === 'students' ? studentsVal : teachersVal;
+    const label = `Total Balance: ${mode === 'students' ? 'Students' : 'Teachers'}`;
+    return `
+      <div class="card kpi-tile" data-key="total_balance" style="padding:12px;cursor:pointer">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div style="display:flex;gap:8px;align-items:center">
+            <div style="width:38px;height:38px;border-radius:8px;background:#fff4e6;display:flex;align-items:center;justify-content:center;font-weight:900">⚖️</div>
+            <div>
+              <div style="font-weight:800">${label}</div>
+              <div style="font-weight:900;font-size:1.05rem;margin-top:6px">${shown}</div>
+              <div style="margin-top:6px"><button id="kpi-balance-toggle" class="btn btn-ghost" style="padding:6px 8px">${mode === 'students' ? 'Switch to Teachers' : 'Switch to Students'}</button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  // small SVG helper (minimal icons)
+  function iconToSvg(name) {
+    // keep tiny, readable placeholders: in your real project replace with lucide or similar
+    const map = {
+      'mdi-school':'🎓',
+      'mdi-teacher':'👩‍🏫',
+      'mdi-account-group':'🧑‍🤝‍🧑',
+      'mdi-domain':'🏫',
+      'mdi-book-open-page-variant':'📚',
+      'mdi-file-cabinet':'📁',
+      'mdi-cash-multiple':'💸',
+      'mdi-currency-usd':'💰',
+      'mdi-chart-line':'📈'
+    };
+    return `<span style="display:inline-block;font-size:18px">${map[name]||'📊'}</span>`;
+  }
+
+  // ---------- Drill-downs ----------
+  function openKpiDrillDown(key) {
+    if (key === 'students') {
+      showPage && showPage('students');
+      // optionally scroll to students list
+    } else if (key === 'teachers') {
+      showPage && showPage('teachers');
+    } else if (key === 'expense' || key === 'expenses_plus') {
+      showPage && showPage('payments');
+      // open payments filter for expenses
+    } else if (key === 'revenue') {
+      showPage && showPage('payments');
+    } else if (key === 'total_balance') {
+      if (totalBalanceMode === 'students') {
+        // open a modal list of students with outstanding balances
+        openOutstandingDrillDown('students');
+      } else {
+        openOutstandingDrillDown('teachers');
+      }
+    } else if (key === 'profit') {
+      // open a small profit breakdown modal
+      const range = currentRange;
+      const k = computeKPIs(range);
+      const html = `
+        <div><strong>Profit breakdown</strong></div>
+        <div style="margin-top:8px">Total Revenue: <strong>${formatMoney(k.totalRevenueCents)}</strong></div>
+        <div>Total Expense: <strong>${formatMoney(k.totalExpenseCents)}</strong></div>
+        <div>Staff payments: <strong>${formatMoney(k.staffPaymentsCents)}</strong></div>
+        <div>Teacher payouts: <strong>${formatMoney(k.teacherPaymentsCents)}</strong></div>
+        <div style="margin-top:10px">Profit: <strong>${formatMoney(k.profitCents)}</strong></div>
+      `;
+      showModal('Profit breakdown', html);
+    }
+  }
+
+  function openOutstandingDrillDown(kind) {
+    const rows = kind === 'students' ? (studentsCache || []) : (teachersCache || []);
+    // build modal table
+    const body = document.createElement('div');
+    body.innerHTML = `<div style="font-weight:900">${kind === 'students' ? 'Students' : 'Teachers'} outstanding</div>`;
+    const table = document.createElement('div');
+    table.style.marginTop = '8px';
+    table.innerHTML = `<div style="max-height:60vh;overflow:auto"><table style="width:100%;border-collapse:collapse"><thead><tr><th>No</th><th>Name / ID</th><th>Balance</th><th>Action</th></tr></thead><tbody>${
+      rows.map((r, idx) => `<tr style="border-bottom:1px solid #f1f5f9"><td>${idx+1}</td><td>${escape(r.fullName||'')}<div class="muted">${escape(r.studentId||r.teacherId||r.staffId||r.id||'')}</div></td><td>${formatMoney(r.balance_cents||0)}</td><td><button class="btn btn-primary record-pay" data-id="${escape(r.studentId||r.teacherId||r.staffId||r.id||'')}">Record Payment</button> <button class="btn btn-ghost view-tx" data-id="${escape(r.studentId||r.teacherId||r.staffId||r.id||'')}">View</button></td></tr>`).join('')
+    }</tbody></table></div>`;
+    body.appendChild(table);
+    showModal(`${kind === 'students' ? 'Students' : 'Teachers'} Outstanding`, body.innerHTML);
+    modalBody.querySelectorAll('.record-pay').forEach(b => b.addEventListener('click', ev => openPayModal(ev.currentTarget)));
+    modalBody.querySelectorAll('.view-tx').forEach(b => b.addEventListener('click', ev => openViewTransactions(ev.currentTarget.dataset.id || ev.currentTarget.dataset.id)));
+  }
+
+  // ---------- Charts rendering (Chart.js) ----------
+  // We'll use Chart.js; ensure Chart is available
+  let paymentsChart = page._paymentsChart || null;
+  let teachersChart = page._teachersChart || null;
+
+  function aggregateTransactionsForChart(txs, range, granularity) {
+    // granularity: daily | weekly | monthly
+    // returns: { labels:[], seriesSum:[] }
+    const buckets = {};
+    const toKey = (ms) => {
+      const d = new Date(ms);
+      if (granularity === 'daily') {
+        return d.toISOString().slice(0,10);
+      } else if (granularity === 'weekly') {
+        // week key: yyyy-Www (ISO week less important; use start date of week Sat)
+        const sat = new Date(d);
+        while (sat.getDay() !== 6) sat.setDate(sat.getDate() - 1);
+        return sat.toISOString().slice(0,10);
+      } else {
+        return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+      }
+    };
+
+    // seed buckets across full range for nicer charts
+    const labelsSet = new Set();
+    const start = new Date(range.start);
+    const end = new Date(range.end);
+
+    const cursor = new Date(range.start);
+    while (cursor.getTime() <= range.end) {
+      labelsSet.add(toKey(cursor.getTime()));
+      if (granularity === 'daily') cursor.setDate(cursor.getDate() + 1);
+      else if (granularity === 'weekly') cursor.setDate(cursor.getDate() + 7);
+      else cursor.setMonth(cursor.getMonth() + 1);
+    }
+
+    (txs || []).forEach(t => {
+      const ms = tsToMs(t.createdAt);
+      if (ms < range.start || ms > range.end) return;
+      const key = toKey(ms);
+      buckets[key] = (buckets[key] || 0) + Number(t.amount_cents || 0);
+    });
+
+    const labels = Array.from(labelsSet).sort();
+    const series = labels.map(l => buckets[l] || 0);
+    return { labels, series };
+  }
+
+  function renderCharts(range) {
+    const allTxs = (transactionsCache || []).filter(t => !t.is_deleted);
+
+    // Payments (student payments)
+    const payments = allTxs.filter(t => String(t.target_type).toLowerCase() === 'student' || t.type === 'monthly');
+    const granPayments = page.querySelector('#chartPaymentsGranularity').value || 'monthly';
+    const aggPayments = aggregateTransactionsForChart(payments, range, granPayments);
+
+    // Teachers (payouts)
+    const teachers = allTxs.filter(t => String(t.target_type).toLowerCase() === 'teacher' || String(t.type).toLowerCase() === 'salary' || (t.target_type === 'staff'));
+    const granTeach = page.querySelector('#chartTeachersGranularity').value || 'monthly';
+    const aggTeachers = aggregateTransactionsForChart(teachers, range, granTeach);
+
+    // create/update Chart.js charts
+    if (typeof Chart === 'undefined') {
+      // Chart.js missing — show message
+      if (chartPaymentsCanvas) {
+        chartPaymentsCanvas.getContext && chartPaymentsCanvas.getContext('2d').fillText('Chart.js not loaded', 10, 20);
+      }
+      return;
+    }
+
+    // Payments chart
+    if (paymentsChart) paymentsChart.destroy();
+    paymentsChart = new Chart(chartPaymentsCanvas.getContext('2d'), {
+      type: 'bar',
+      data: {
+        labels: aggPayments.labels,
+        datasets: [{
+          label: 'Student payments',
+          data: aggPayments.series.map(v => v/100),
+          borderWidth: 0,
+          backgroundColor: 'rgba(11,116,255,0.9)'
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          tooltip: {
+            callbacks: {
+              label: ctx => `${ctx.dataset.label}: ${c2p(Math.round(ctx.raw*100))}`
+            }
+          }
+        },
+        scales: { y:{ beginAtZero: true } }
+      }
+    });
+    page._paymentsChart = paymentsChart;
+
+    // Teachers chart
+    if (teachersChart) teachersChart.destroy();
+    teachersChart = new Chart(chartTeachersCanvas.getContext('2d'), {
+      type: 'line',
+      data: {
+        labels: aggTeachers.labels,
+        datasets: [{
+          label: 'Teacher payouts',
+          data: aggTeachers.series.map(v => v/100),
+          borderWidth: 2,
+          tension: 0.2,
+          fill: false,
+          borderColor: 'rgba(255,99,71,0.9)'
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          tooltip: {
+            callbacks: {
+              label: ctx => `${ctx.dataset.label}: ${c2p(Math.round(ctx.raw*100))}`
+            }
+          }
+        },
+        scales: { y:{ beginAtZero: true } }
+      }
+    });
+    page._teachersChart = teachersChart;
+
+    // "Last refreshed"
+    const dnow = new Date();
+    lastRefEl.textContent = `Last refreshed: ${dnow.toLocaleString()}`;
+  }
+
+  // ---------- Outstanding table ----------
+  function renderOutstandingTable(range) {
+    // compute outstanding balances per student (use student.balance_cents)
+    const students = (studentsCache || []).slice();
+    const rows = students
+      .map(s => ({ id: s.studentId || s.id, name: s.fullName, balance: Number(s.balance_cents || 0), class: resolveClassName(s) || '—', phone: s.parentPhone || s.phone || '—' }))
+      .filter(r => r.balance > 0)
+      .sort((a,b) => b.balance - a.balance)
+      .slice(0, 100); // we'll support search & top 10 display
+
+    // top 10
+    const top10 = rows.slice(0, 10);
+    outstandingRange.textContent = `${new Date(range.start).toLocaleDateString()} — ${new Date(range.end).toLocaleDateString()}`;
+    const html = `<div style="display:flex;flex-direction:column;gap:8px">
+      ${top10.map((r, idx) => `
+        <div class="list-row" style="align-items:center">
+          <div class="row-left">
+            <div class="no-badge">${idx+1}</div>
+            <div style="min-width:0">
+              <div class="title">${escape(r.name)}</div>
+              <div class="sub id">ID: ${escape(String(r.id).slice(-6))} • ${escape(r.class)}</div>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:12px">
+            <div style="text-align:right;font-weight:900;color:#b91c1c">${formatMoney(r.balance)}</div>
+            <div>
+              <button class="btn btn-primary record-pay" data-id="${escape(r.id)}">Record Payment</button>
+              <button class="btn btn-ghost view-trans" data-id="${escape(r.id)}">View</button>
+            </div>
+          </div>
+        </div>
+      `).join('')}
+    </div>`;
+    outstandingTableRoot.innerHTML = html;
+
+    outstandingTableRoot.querySelectorAll('.record-pay').forEach(b => b.addEventListener('click', ev => openPayModal(ev.currentTarget)));
+    outstandingTableRoot.querySelectorAll('.view-trans').forEach(b => b.addEventListener('click', ev => openViewTransactions(ev.currentTarget.dataset.id)));
+  }
+
+  // ---------- Leaderboard ----------
+  function loadExamsIntoLeaderboard() {
+    // populate exam dropdown with last published exam first (if you have exams cache)
+    const exams = window.examsCache || [];
+    leaderboardExamSel.innerHTML = exams.length ? exams.map(e => `<option value="${escape(e.id)}">${escape(e.name || e.id)}${e.publishedAt ? ' • ' + new Date(tsToMs(e.publishedAt)).toLocaleDateString() : ''}</option>`).join('') : '<option value="">No exams</option>';
+    leaderboardKind.addEventListener('change', () => { leaderboardClassSel.style.display = leaderboardKind.value === 'class' ? 'inline-block' : 'none'; renderLeaderboard(); });
+    leaderboardExamSel.addEventListener('change', () => renderLeaderboard());
+    leaderboardClassSel.addEventListener('change', () => renderLeaderboard());
+  }
+
+  function renderLeaderboard() {
+    const kind = leaderboardKind.value;
+    const examId = leaderboardExamSel.value;
+    leaderboardExamInfo.textContent = examId ? `Exam: ${examId}` : 'No exam selected';
+
+    // fetch results from exam results cache if available
+    const examResults = (window.examResultsCache || []).filter(r => r.examId === examId);
+    // if class mode, filter by leaderboardClassSel
+    let rows = examResults.map(r => {
+      const s = (studentsCache || []).find(x => x.id === r.studentId || x.studentId === r.studentId);
+      return { studentId: r.studentId, name: s ? s.fullName : r.studentId, className: (s && resolveClassName(s)) || r.className || '—', score: r.total || 0, pct: (r.total / (r.max || 1)) * 100 };
+    });
+    if (kind === 'class' && leaderboardClassSel.value) rows = rows.filter(r => r.className === leaderboardClassSel.value);
+
+    rows = rows.sort((a,b) => b.score - a.score).slice(0, 10);
+
+    const html = `<div style="display:flex;flex-direction:column;gap:8px">
+      ${rows.map((r, idx) => `
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+          <div style="display:flex;align-items:center;gap:8px">
+            <div style="width:36px;height:36px;border-radius:999px;background:#f1f5f9;display:flex;align-items:center;justify-content:center">${idx < 3 ? medalEmoji(idx) : idx+1}</div>
+            <div style="min-width:0">
+              <div style="font-weight:900">${escape(r.name)}</div>
+              <div class="muted">${escape(r.className)} • ID: ${escape(String(r.studentId).slice(-4))}</div>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <div style="width:120px"><progress value="${Math.round(r.pct)}" max="100" style="width:100%"></progress></div>
+            <div style="min-width:60px;text-align:right;font-weight:900">${r.pct.toFixed(1)}%</div>
+            <div><button class="btn btn-ghost view-marks" data-id="${escape(r.studentId)}" data-exam="${escape(examId)}">View</button></div>
+          </div>
+        </div>
+      `).join('')}
+    </div>`;
+    leaderboardListRoot.innerHTML = html;
+
+    leaderboardListRoot.querySelectorAll('.view-marks').forEach(b => b.addEventListener('click', ev => {
+      const sid = ev.currentTarget.dataset.id;
+      const ex = ev.currentTarget.dataset.exam;
+      // hook: openStudentMarksModal(studentId, examId)
+      if (typeof openStudentMarksModal === 'function') openStudentMarksModal(sid, ex);
+      else showModal('Marks', `<div>Open marks for ${escape(sid)} (exam ${escape(ex)})</div>`);
+    }));
+  }
+
+  function medalEmoji(i) { return i === 0 ? '🏆' : (i === 1 ? '🥈' : (i === 2 ? '🥉' : (i+1))); }
+
+  // ---------- Notifications ----------
+  function computeNotifications(range) {
+    // basic rules (admin-configurable thresholds in localStorage)
+    const cfgRaw = localStorage.getItem('dashboard_alerts_cfg');
+    const cfg = cfgRaw ? JSON.parse(cfgRaw) : { thresholdAmount: 50000, thresholdCount: 5, revenueDropPct: 10 };
+    const noteList = [];
+    // 1) outstanding > thresholdAmount
+    const outstandingSum = (studentsCache || []).reduce((s,st) => s + (Number(st.balance_cents||0)), 0);
+    if (outstandingSum > cfg.thresholdAmount) noteList.push({ severity: 'warn', text: `⚠️ Outstanding total is ${formatMoney(outstandingSum)} (> ${formatMoney(cfg.thresholdAmount)}).`, action: () => openOutstandingDrillDown('students') });
+
+    // 2) count overdue students (simple: balance > 0)
+    const overdueCount = (studentsCache || []).filter(s => Number(s.balance_cents || 0) > 0).length;
+    if (overdueCount > cfg.thresholdCount) noteList.push({ severity: 'warn', text: `⚠️ ${overdueCount} students overdue — View outstanding`, action: () => openOutstandingDrillDown('students') });
+
+    // 3) revenue drop vs previous period
+    const k = computeKPIs(range);
+    const prevRev = k.prevRevenueCents || 0;
+    if (prevRev > 0) {
+      const drop = ((prevRev - k.totalRevenueCents) / prevRev) * 100;
+      if (drop > (cfg.revenueDropPct||10)) noteList.push({ severity: 'alert', text: `📢 Revenue down ${drop.toFixed(1)}% vs previous period`, action: () => showModal('Revenue drop', `<div>Revenue dropped by ${drop.toFixed(1)}%.</div>`) });
+    }
+
+    return noteList;
+  }
+
+  function renderNotifications(range) {
+    const notes = computeNotifications(range);
+    const badge = page.querySelector('#notifBadge');
+    if (notes.length) {
+      badge.style.display = 'inline-block';
+      badge.textContent = String(notes.length);
+    } else {
+      badge.style.display = 'none';
+    }
+    // clicking the bell opens a modal with list
+    page.querySelector('#dashboardNotifications').onclick = () => {
+      const html = `<div><strong>Notifications</strong></div><div style="margin-top:8px">${notes.map((n, i) => `<div style="margin-bottom:8px"><div>${n.text}</div><div style="margin-top:6px"><button class="btn btn-primary notif-act" data-i="${i}">Open</button></div></div>`).join('')}</div>`;
+      showModal('Notifications', html);
+      modalBody.querySelectorAll('.notif-act').forEach(b => b.addEventListener('click', ev => {
+        const n = notes[Number(ev.currentTarget.dataset.i)];
+        if (n && typeof n.action === 'function') n.action();
+        closeModal();
+      }));
+    };
+  }
+
+  // ---------- Wiring filter buttons ----------
+  filterButtons.forEach(b => {
+    b.addEventListener('click', () => {
+      activeFilter = b.dataset.filter;
+      setActiveFilterButton(activeFilter);
+      currentRange = computeRangeForFilter(activeFilter);
+      refreshDashboard();
+    });
+  });
+
+  // settings button opens small modal to set school year and alert thresholds
+  page.querySelector('#dashboardSettings').onclick = () => {
+    const cfgRaw = localStorage.getItem('schoolYearConfig') || JSON.stringify(schoolYearConfig);
+    const alertCfg = localStorage.getItem('dashboard_alerts_cfg') || JSON.stringify({ thresholdAmount: 50000, thresholdCount: 5, revenueDropPct: 10 });
+    const html = `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div>
+          <label>School year start month</label>
+          <select id="cfgStart">${Array.from({length:12}, (_,i)=>`<option value="${i+1}" ${Number(schoolYearConfig.startMonth)===i+1?'selected':''}>${monthsShort[i]}</option>`).join('')}</select>
+        </div>
+        <div>
+          <label>School year end month</label>
+          <select id="cfgEnd">${Array.from({length:12}, (_,i)=>`<option value="${i+1}" ${Number(schoolYearConfig.endMonth)===i+1?'selected':''}>${monthsShort[i]}</option>`).join('')}</select>
+        </div>
+      </div>
+      <div style="margin-top:10px"><strong>Alerts</strong></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px">
+        <div><label>Threshold amount (cents)</label><input id="cfgThreshAmt" value="${JSON.parse(alertCfg).thresholdAmount}" /></div>
+        <div><label>Threshold count</label><input id="cfgThreshCount" value="${JSON.parse(alertCfg).thresholdCount}" /></div>
+        <div><label>Revenue drop pct</label><input id="cfgDropPct" value="${JSON.parse(alertCfg).revenueDropPct}" /></div>
+      </div>
+      <div class="modal-actions"><button id="cfgClose" class="btn btn-ghost">Close</button><button id="cfgSave" class="btn btn-primary">Save</button></div>
+    `;
+    showModal('Dashboard settings', html);
+    modalBody.querySelector('#cfgClose').onclick = closeModal;
+    modalBody.querySelector('#cfgSave').onclick = () => {
+      const s = Number(modalBody.querySelector('#cfgStart').value);
+      const e = Number(modalBody.querySelector('#cfgEnd').value);
+      const amt = Number(modalBody.querySelector('#cfgThreshAmt').value) || 50000;
+      const cnt = Number(modalBody.querySelector('#cfgThreshCount').value) || 5;
+      const pct = Number(modalBody.querySelector('#cfgDropPct').value) || 10;
+      localStorage.setItem('schoolYearConfig', JSON.stringify({ startMonth: s, endMonth: e }));
+      localStorage.setItem('dashboard_alerts_cfg', JSON.stringify({ thresholdAmount: amt, thresholdCount: cnt, revenueDropPct: pct }));
+      toast('Settings saved');
       closeModal();
-      await loadTransactions();
-      renderPaymentsList('expenses');
-      renderDashboard && renderDashboard();
+      renderDashboard(); // reload to apply
     };
   };
 
-  // recent 10 tx
-  const recent = (transactionsCache || []).filter(t=> !t.is_deleted).sort((a,b)=> (b.createdAt?.seconds||0) - (a.createdAt?.seconds||0)).slice(0,10);
-  const recentDiv = document.getElementById('dashboardRecentTx');
-  recentDiv.innerHTML = `<table style="width:100%"><thead><tr><th>Date</th><th>Target</th><th>Type</th><th>Amount</th><th>Method</th></tr></thead><tbody>${recent.map(r => `<tr><td>${r.createdAt ? new Date(r.createdAt.seconds*1000).toLocaleString() : ''}</td><td>${escape(r.target_type||'')} ${escape(r.target_id||'')}</td><td>${escape(r.type||'')}</td><td>${c2p(r.amount_cents||0)}</td><td>${escape(r.payment_method||'')}</td></tr>`).join('')}</tbody></table>`;
+  // refresh button
+  page.querySelector('#dashboardRefresh').onclick = async () => {
+    dashStatus.textContent = 'Refreshing...';
+    try {
+      await Promise.all([ loadStudents && loadStudents(), loadTeachers && loadTeachers(), loadStaff && loadStaff && loadStaff(), loadTransactions && loadTransactions() ]);
+      toast('Refreshed');
+    } catch(err) {
+      toast('Refresh failed'); console.error(err);
+    } finally { dashStatus.textContent = ''; refreshDashboard(); }
+  };
+
+  // export buttons (basic CSV + PDF) — implement basic CSV export for the current view
+  page.querySelector('#dashboardExportCsv').onclick = () => exportCsvFromDashboard();
+  page.querySelector('#dashboardExportPdf').onclick = () => exportPdfFromDashboard();
+
+  function exportCsvFromDashboard() {
+    // simple CSV from KPIs + outstanding sample
+    const rangeLabel = currentRange.label || '';
+    const lines = [['Metric','Value'], ['Date range', rangeLabel]];
+    const k = computeKPIs(currentRange);
+    lines.push(['Total Students', k.totalStudents]);
+    lines.push(['Total Revenue', formatMoney(k.totalRevenueCents)]);
+    lines.push(['Total Expenses+', formatMoney(k.totalExpensesPlusCents)]);
+    const csv = lines.map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = `dashboard_export_${Date.now()}.csv`; a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function exportPdfFromDashboard(){
+    // quick pdf of the KPIs using html2canvas + jspdf
+    const el = kpisRoot;
+    html2canvas(el).then(canvas => {
+      const img = canvas.toDataURL('image/png');
+      const { jsPDF } = window.jspdf;
+      const pdf = new jsPDF('landscape');
+      const w = pdf.internal.pageSize.getWidth();
+      const h = (canvas.height / canvas.width) * w;
+      pdf.addImage(img, 'PNG', 10, 10, w-20, h-20);
+      pdf.save(`dashboard_${Date.now()}.pdf`);
+    }).catch(err => { console.error(err); toast('PDF export failed'); });
+  }
+
+  // ---------- refresh / orchestrator ----------
+  function refreshDashboard() {
+    // compute KPIs and render everything
+    currentRange = computeRangeForFilter(activeFilter);
+    filterInfo.textContent = currentRange.label;
+    const k = computeKPIs(currentRange);
+    renderKPIs(k);
+    renderCharts(currentRange);
+    renderOutstandingTable(currentRange);
+    loadExamsIntoLeaderboard();
+    renderLeaderboard();
+    renderNotifications(currentRange);
+    dashSources.textContent = `Data source: local cache (transactions ${transactionsCache ? transactionsCache.length : 0}, students ${studentsCache ? studentsCache.length : 0})`;
+  }
+
+  // wire chart granularity changes & exports
+  page.querySelector('#chartPaymentsGranularity').addEventListener('change', () => renderCharts(currentRange));
+  page.querySelector('#chartTeachersGranularity').addEventListener('change', () => renderCharts(currentRange));
+  page.querySelector('#exportChartPayments').addEventListener('click', () => {
+    // export CSV of aggregated payments chart
+    const agg = aggregateTransactionsForChart((transactionsCache||[]).filter(t => String(t.target_type).toLowerCase()==='student'), currentRange, page.querySelector('#chartPaymentsGranularity').value);
+    const csv = ['label,amount'].concat(agg.labels.map((l,i) => `${l},${(agg.series[i]||0)/100}`)).join('\n');
+    const blob = new Blob([csv], {type:'text/csv'}); const url = URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='payments_chart.csv'; a.click(); URL.revokeObjectURL(url);
+  });
+  page.querySelector('#exportChartTeachers').addEventListener('click', () => {
+    const agg = aggregateTransactionsForChart((transactionsCache||[]).filter(t => String(t.target_type).toLowerCase()==='teacher'), currentRange, page.querySelector('#chartTeachersGranularity').value);
+    const csv = ['label,amount'].concat(agg.labels.map((l,i) => `${l},${(agg.series[i]||0)/100}`)).join('\n');
+    const blob = new Blob([csv], {type:'text/csv'}); const url = URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='teacher_payouts_chart.csv'; a.click(); URL.revokeObjectURL(url);
+  });
+
+  // outstanding search filter
+  outstandingSearch.addEventListener('input', () => {
+    const q = outstandingSearch.value.trim().toLowerCase();
+    if (!q) { renderOutstandingTable(currentRange); return; }
+    // filter and show top results matching
+    const students = (studentsCache || []).filter(s => (s.fullName||'').toLowerCase().includes(q) || (String(s.studentId||'')).includes(q)).sort((a,b)=> (b.balance_cents||0)-(a.balance_cents||0)).slice(0,10);
+    outstandingTableRoot.innerHTML = `<div style="display:flex;flex-direction:column;gap:8px">
+      ${students.map((r, idx) => `<div class="list-row"><div class="row-left"><div class="no-badge">${idx+1}</div><div><div class="title">${escape(r.fullName)}</div><div class="sub">ID:${escape(r.studentId||r.id)} • ${escape(resolveClassName(r)||'—')}</div></div></div><div style="display:flex;align-items:center;gap:10px"><div style="font-weight:900;color:#b91c1c">${formatMoney(r.balance_cents||0)}</div><div><button class="btn btn-primary record-pay" data-id="${escape(r.studentId||r.id)}">Record Payment</button></div></div></div>`).join('')}
+    </div>`;
+    outstandingTableRoot.querySelectorAll('.record-pay').forEach(b => b.addEventListener('click', ev => openPayModal(ev.currentTarget)));
+  });
+
+  // outstanding bulk reminder
+  page.querySelector('#outstandingBulkReminder').onclick = async () => {
+    // send reminders if messaging configured — here we just open a modal with list
+    const toRemind = (studentsCache||[]).filter(s => Number(s.balance_cents||0) > 0).slice(0,50);
+    if (!toRemind.length) return toast('No outstanding students to remind');
+    const html = `<div><strong>Send reminders to ${toRemind.length} students?</strong></div><div style="margin-top:8px;display:flex;justify-content:flex-end"><button id="cancelRem" class="btn btn-ghost">Cancel</button><button id="sendRem" class="btn btn-primary">Send</button></div>`;
+    showModal('Send reminders', html);
+    modalBody.querySelector('#cancelRem').onclick = closeModal;
+    modalBody.querySelector('#sendRem').onclick = () => {
+      // placeholder: integrate with messaging system
+      toast(`Reminders queued for ${toRemind.length} students (messaging not configured)`);
+      closeModal();
+    };
+  };
+
+  // leaderboard exports
+  page.querySelector('#leaderboardExport').addEventListener('click', () => {
+    // export current leaderboard as CSV
+    const rows = Array.from(leaderboardListRoot.querySelectorAll('.list-row')).map((r, i) => {
+      return [`${i+1}`, r.querySelector('.title') ? r.querySelector('.title').textContent.trim() : '', '—', '—'].join(',');
+    });
+    const csv = ['Rank,Name,Class,Score'].concat(rows).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'leaderboard.csv'; a.click(); URL.revokeObjectURL(url);
+  });
+
+  // KPI tile drilldowns (already wired in renderKPIs)
+
+  // finally: initial render
+  refreshDashboard();
+
+  // expose refresh function for outside callers
+  page.refreshDashboard = refreshDashboard;
+
+  // ensure dashboard page is active & visible
+  showPage && showPage('dashboard');
 }
 
 /* ------------------------
