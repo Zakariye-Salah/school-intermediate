@@ -2918,6 +2918,15 @@ async function openPayModal(btnOrEvent){
   // show modal
   showModal(`Pay • ${escape(target.fullName||target.teacherName||target.id||'')}`, html);
 
+  // remove extra bottom space under Note on mobile
+// if(!desktop){
+//   const scroll = modalBody.querySelector('#payModalScroll');
+//   if(scroll){
+//     scroll.style.paddingBottom = '6px';
+//   }
+// }
+
+
   // disable background scroll while modal open (restore when modal closed)
   if(!window.__modal_close_wrapped){
     const origClose = window.closeModal || (()=>{});
@@ -3017,7 +3026,9 @@ async function openPayModal(btnOrEvent){
       setSelectedButton(btn);
       payMonthHidden.value = btn.dataset.month;
     }
-    fillDefaultNote();
+    // fillDefaultNote();
+    fillDefaultNote(true);
+
   }
 
   getMonthButtons(monthsRow).forEach(b => b.addEventListener('click', monthClickHandler));
@@ -3043,7 +3054,7 @@ async function openPayModal(btnOrEvent){
       // optionally clear the multi selections
       clearSelected(getMonthButtons(monthsRowMulti));
     }
-    fillDefaultNote();
+    fillDefaultNote(true);
   });
 
   // Year picker popup (separate overlay, will not replace main modal)
@@ -3082,7 +3093,7 @@ async function openPayModal(btnOrEvent){
         const y = yEl.dataset.year;
         const py = modalBody.querySelector('#payYear');
         if(py) py.value = y;
-        fillDefaultNote();
+        fillDefaultNote(true);
         document.body.removeChild(overlay);
       });
     });
@@ -3094,24 +3105,60 @@ async function openPayModal(btnOrEvent){
   modalBody.querySelector('#openYearPicker').addEventListener('click', openYearPickerPopup);
 
   // fill default note text using "Lacagta Bisha Jan-2026"
-  function fillDefaultNote(){
+  function fillDefaultNote(force = false){
+    // do not overwrite if user already typed something (unless forced)
+    if(payNote.value && !force) return;
+  
     const t = payType.value;
-    const isMulti = (multiWrapper.style.display !== 'none');
-    const mSel = isMulti ? (getSelectedMonthsFrom(monthsRowMulti)[0] || payMonthHidden.value || curMonth)
-                         : (getSelectedMonthsFrom(monthsRow)[0] || payMonthHidden.value || curMonth);
-    const mName = monthsShort[(Number(mSel)||curMonth)-1] || monthsShort[curMonth-1];
     const yVal = payYearEl ? payYearEl.value : curYear;
-    if(!payNote.value){
-      if(t==='monthly') payNote.value = `Lacagta Bisha ${mName}-${yVal}`;
-      else if(t==='id-card') payNote.value = 'Lacagta id card';
-      else if(t==='registration') payNote.value = 'Lacagta registration';
-      else if(t==='salary') payNote.value = 'Lacagta mushaar';
+    const isMulti = (multiWrapper.style.display !== 'none');
+  
+    // collect selected months
+    let months = [];
+    if(t === 'monthly'){
+      if(isMulti){
+        months = getSelectedMonthsFrom(monthsRowMulti);
+      } else {
+        months = [getSelectedMonthsFrom(monthsRow)[0] || payMonthHidden.value || curMonth];
+      }
     }
+  
+    // convert month numbers → names
+    const monthNames = months
+      .map(m => monthsShort[(Number(m) || curMonth) - 1])
+      .filter(Boolean);
+  
+    let text = '';
+  
+    if(t === 'monthly'){
+      const joined = monthNames.join('/');
+      text = `Lacagta Bisha ${joined}-${yVal}`;
+    }
+    else if(t === 'id-card'){
+      text = 'Lacagta-ID-card';
+    }
+    else if(t === 'registration'){
+      text = 'Lacagta Registeration';
+    }
+    else if(t === 'salary'){
+      text = 'Lacagta mushaar';
+    }
+    else {
+      text = 'Lacagta Kale';
+    }
+  
+    payNote.value = text;
   }
-
+  
   // wire interactions & preserve original logic
-  payType.onchange = () => { modalBody.querySelector('#monthPicker').style.display = payType.value==='monthly' ? 'block' : 'none'; fillDefaultNote(); };
-  fillDefaultNote();
+  payType.onchange = () => {
+    modalBody.querySelector('#monthPicker').style.display =
+      payType.value === 'monthly' ? 'block' : 'none';
+    fillDefaultNote(true);
+  };
+  
+  // payType.onchange = () => { modalBody.querySelector('#monthPicker').style.display = payType.value==='monthly' ? 'block' : 'none'; fillDefaultNote(); };
+  // fillDefaultNote();
 
   modalBody.querySelector('#payClose').onclick = () => { closeModal(); /* closeModal restores overflow */ };
 
