@@ -3981,15 +3981,59 @@ async function renderPaymentsList(view = 'students'){
         const id = ev.currentTarget.dataset.id;
         const item = (window.staffCache||[]).find(x => (String(x.id) === String(id) || String(x.staffId) === String(id)));
         if(!item) return;
-        const body = `<div style="font-weight:900">${escape(item.fullName||'')}</div>
-          <div class="muted">Role: ${escape(item.role||'')}</div>
-          <div style="margin-top:8px">Phone: ${escape(item.phone||'—')}</div>
-          <div style="margin-top:8px">Balance: <strong style="color:#b91c1c">${c2p(item.balance_cents||0)}</strong></div>
-          <div class="modal-more-actions" style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
-            <button class="btn btn-ghost edit-staff" data-id="${escape(item.id||'')}">${svgEdit()} Edit</button>
-            <button class="btn btn-danger del-staff" data-id="${escape(item.id||'')}">${svgDelete()} Delete</button>
-          </div>`;
+        const body = `
+        <div style="font-weight:900">${escape(item.fullName||'')}</div>
+        <div class="muted">Role: ${escape(item.role||'')}</div>
+        <div style="margin-top:6px">Phone: ${escape(item.phone||'—')}</div>
+      
+        <div style="margin-top:6px">
+          Balance:
+          <strong style="color:#b91c1c">${c2p(item.balance_cents||0)}</strong>
+        </div>
+      
+        <div class="modal-more-actions"
+             style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
+      
+          <button class="btn btn-primary pay-btn"
+                  data-id="${escape(item.staffId||item.id||'')}">
+            ${svgPay()} Pay
+          </button>
+      
+          <button class="btn btn-secondary adj-btn"
+                  data-id="${escape(item.staffId||item.id||'')}">
+            ${svgReesto()} Reesto Hore
+          </button>
+      
+          <button class="btn btn-ghost view-trans-btn"
+                  data-id="${escape(item.staffId||item.id||'')}">
+            ${svgView()} View
+          </button>
+      
+          <button class="btn btn-ghost edit-staff"
+                  data-id="${escape(item.id||'')}">
+            ${svgEdit()} Edit
+          </button>
+      
+          <button class="btn btn-danger del-staff"
+                  data-id="${escape(item.id||'')}">
+            ${svgDelete()} Delete
+          </button>
+        </div>
+      `;
+      
         showModal('Staff', body);
+
+        modalBody.querySelectorAll('.pay-btn')
+  .forEach(b => b.addEventListener('click', e => openPayModal(e.currentTarget)));
+
+modalBody.querySelectorAll('.adj-btn')
+  .forEach(b => b.addEventListener('click', e => openAdjustmentModal(e.currentTarget)));
+
+modalBody.querySelectorAll('.view-trans-btn')
+  .forEach(b => b.addEventListener('click', e => openViewTransactionsModal(e.currentTarget)));
+
+
+
         modalBody.querySelectorAll('.edit-staff').forEach(bb => bb.addEventListener('click', ev => toast('Edit staff not implemented - tell me if you want it')));
         modalBody.querySelectorAll('.del-staff').forEach(bb => bb.addEventListener('click', async ev => {
           const sid = ev.currentTarget.dataset.id;
@@ -4002,8 +4046,9 @@ async function renderPaymentsList(view = 'students'){
     }
 
    // DESKTOP teacher table (unchanged; full IDs & salary column)
-   if(isTeacherView){
-    let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><strong>Teachers — ${list.length}</strong><div class="muted">Columns: No, ID, Name, Subject, Class, Salary, Balance, Paid(this month), Actions</div></div>`;
+// DESKTOP teacher table
+if(view === 'teachers'){
+  let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><strong>Teachers — ${list.length}</strong><div class="muted">Columns: No, ID, Name, Subject, Class, Salary, Balance, Paid(this month), Actions</div></div>`;
     html += `<div style="overflow:auto"><table style="width:100%;border-collapse:collapse"><thead><tr>
       <th>No</th><th>ID</th><th>Name</th><th>Subject</th><th>Class</th><th style="text-align:right">Salary</th><th style="text-align:right">Balance</th><th style="text-align:right">Paid (this month)</th><th>Actions</th>
     </tr></thead><tbody>`;
