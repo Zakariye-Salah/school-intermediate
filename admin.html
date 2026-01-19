@@ -115,128 +115,7 @@
 }
 .card.chart-card { min-height: 260px; }
 
-.mobile-top10-header{
-  display:flex;
-  flex-direction:column;
-  gap:8px;
-  margin-bottom:12px;
-}
 
-.mobile-top10-header .h-title{
-  font-weight:900;
-  font-size:1.05rem;
-}
-
-.mobile-top10-header .h-sub{
-  font-size:0.85rem;
-  color:#6b7280;
-}
-
-.mobile-top10-header .h-row input{
-  width:100%;
-  padding:8px 10px;
-  border-radius:8px;
-  border:1px solid #e5e7eb;
-}
-
-.mobile-top10-header .h-actions{
-  display:flex;
-  gap:8px;
-}
-
-
-/* ===============================
-   Mobile Top-10 Header Fix
-   =============================== */
-   @media (max-width: 768px) {
-
-.mobile-top10-header {
-  padding: 12px;
-  border-bottom: 1px solid #eef2f9;
-}
-
-.mobile-top10-header .h-title {
-  font-size: 1rem;
-  font-weight: 900;
-  margin-bottom: 2px;
-}
-
-.mobile-top10-header .h-sub {
-  font-size: 0.82rem;
-  color: #6b7280;
-  line-height: 1.2;
-}
-
-/* 🔍 Search row */
-.mobile-top10-header .h-row {
-  margin-top: 8px;
-}
-
-.mobile-top10-header input[type="search"] {
-  width: 100%;
-  max-width: 100%;
-  padding: 10px;
-  font-size: 0.9rem;
-  border-radius: 10px;
-  border: 1px solid #e5e7eb;
-}
-
-/* 🎯 Action buttons row */
-.mobile-top10-header .h-actions {
-  margin-top: 8px;
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.mobile-top10-header .h-actions .btn {
-  flex: 1 1 48%;
-  padding: 8px 10px;
-  font-size: 0.85rem;
-  border-radius: 10px;
-  text-align: center;
-}
-
-/* ===============================
-   List rows action buttons
-   =============================== */
-
-.list-row {
-  padding: 10px;
-  gap: 10px;
-}
-
-.list-row .row-left {
-  min-width: 0;
-}
-
-.list-row .title {
-  font-size: 0.95rem;
-  font-weight: 900;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.list-row .sub {
-  font-size: 0.78rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* 👁️ Pay / View buttons */
-.list-row .btn {
-  padding: 6px 8px;
-  min-width: 40px;
-  height: 36px;
-  border-radius: 999px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-}
 /* Hide desktop-only headers on mobile */
 @media (max-width: 768px) {
 
@@ -376,6 +255,7 @@
   .mobile-top10-header { padding:10px 8px; border-bottom:1px solid #eef2f9; }
   .list-row { box-shadow: 0 6px 12px rgba(2,6,23,0.03); }
 }
+
 
 </style>
 
