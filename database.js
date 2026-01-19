@@ -6102,7 +6102,6 @@ leaderboardListRoot.innerHTML = isMobileViewport()
   ? leaderboardHeaderMobile + html
   : html;
 
-  leaderboardListRoot.innerHTML = html;
  
   leaderboardListRoot.querySelectorAll('.view-marks').forEach(b => b.addEventListener('click', async ev => {
     const sid = ev.currentTarget.dataset.id;
