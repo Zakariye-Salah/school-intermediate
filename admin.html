@@ -341,6 +341,42 @@
 
 }
 
+/* === enforce mobile/desktop header visibility and compact rows === */
+/* Make desktop-only hidden on small screens and mobile-only hidden on desktop */
+.desktop-only { display: block; }
+.mobile-only { display: none; }
+
+@media (max-width: 768px) {
+  .desktop-only { display: none !important; }
+  .mobile-only { display: block !important; }
+
+  /* tighter title truncation and amount + action sizing */
+  .list-row .title { max-width: calc(100% - 140px); /* space for amount + actions */ }
+  .list-row .sub.id { max-width: 110px; }
+
+  .list-row .amount {
+    min-width:72px; text-align:right; font-weight:900; color:var(--danger); margin-left:8px;
+  }
+
+  .list-row .row-actions { display:flex; flex-direction:column; gap:8px; align-items:center; flex:0 0 auto; margin-left:8px; }
+  .list-row .row-actions .btn {
+    width:36px; height:36px; padding:0; min-width:36px; border-radius:999px; display:inline-flex;
+    align-items:center; justify-content:center; box-shadow:none; border:1px solid rgba(2,6,23,0.06); background:#fff;
+  }
+  .list-row .row-actions .btn-primary { background:var(--primary); color:#fff; border: none; }
+
+  /* ensure header actions sit side-by-side and don't push search offscreen */
+  .mobile-top10-header .h-actions { display:flex; gap:8px; flex-wrap:wrap; justify-content:space-between; }
+  .mobile-top10-header .h-actions .btn { flex:0 0 calc(50% - 6px); min-width:0; padding:8px 6px; }
+
+  /* make search full-width */
+  .mobile-top10-header .h-row input[type="search"] { width:100%; box-sizing:border-box; }
+
+  /* minor spacing */
+  .mobile-top10-header { padding:10px 8px; border-bottom:1px solid #eef2f9; }
+  .list-row { box-shadow: 0 6px 12px rgba(2,6,23,0.03); }
+}
+
 </style>
 
 </head>
