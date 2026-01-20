@@ -226,95 +226,6 @@
     </div>
   </main>
 
-  <!-- <script type="module">
-    import { auth } from './firebase-config.js';
-    import { signInWithEmailAndPassword } from 'https://www.gstatic.com/firebasejs/9.22.2/firebase-auth.js';
-    import { doc, getDoc, getFirestore } from 'https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore.js';
-    import { db } from './firebase-config.js';
-
-    // keep your original IDs and logic intact
-    const emailI = document.getElementById('email');
-    const passI = document.getElementById('password');
-    const loginBtn = document.getElementById('login');
-    const msg = document.getElementById('msg');
-
-    // --- Show / hide password toggle (non-intrusive, preserves your IDs) ---
-    const toggleBtn = document.getElementById('togglePassword');
-    const eyeIcon = document.getElementById('eyeIcon');
-
-    function setEyeIcon(isHidden){
-      // isHidden=true when the password is hidden (type=password) so show "eye" icon
-      // isHidden=false when password is visible so show "eye-off" icon
-      if(isHidden){
-        eyeIcon.innerHTML = `
-          <path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
-          <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
-        `;
-        toggleBtn.setAttribute('aria-label','Show password');
-        toggleBtn.title = 'Show password';
-      }else{
-        // eye-off icon
-        eyeIcon.innerHTML = `
-          <path d="M3 3l18 18" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
-          <path d="M17.94 17.94A9.95 9.95 0 0 1 12 19c-6 0-10-7-10-7a19.5 19.5 0 0 1 4.13-5.13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
-          <path d="M9.88 9.88A3 3 0 0 0 14.12 14.12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
-        `;
-        toggleBtn.setAttribute('aria-label','Hide password');
-        toggleBtn.title = 'Hide password';
-      }
-    }
-
-    // initial state (password hidden)
-    setEyeIcon(true);
-
-    toggleBtn.addEventListener('click', () => {
-      const currentType = passI.getAttribute('type') || 'password';
-      if (currentType === 'password') {
-        passI.setAttribute('type', 'text');
-        setEyeIcon(false);
-      } else {
-        passI.setAttribute('type', 'password');
-        setEyeIcon(true);
-      }
-      // keep focus on password after toggling
-      passI.focus();
-    });
-
-    // allow pressing Enter to submit when focused in inputs
-    [emailI, passI].forEach(inp => {
-      inp.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          loginBtn.click();
-        }
-      });
-    });
-
-    // --- Your original login logic preserved and unchanged ---
-    loginBtn.onclick = async () => {
-      msg.textContent = '';
-      try {
-        const userCred = await signInWithEmailAndPassword(auth, emailI.value.trim(), passI.value);
-        // Check admins collection for this uid or email
-        const adminDocByUid = await getDoc(doc(db, 'admin', userCred.user.uid));
-        const adminDocByEmail = await getDoc(doc(db, 'adminsEmails', userCred.user.email.replace('.',',')));
-        const isAdmin = (adminDocByUid.exists() && adminDocByUid.data().isAdmin) || (adminDocByEmail.exists() && adminDocByEmail.data().isAdmin);
-        if (!isAdmin) {
-          msg.textContent = 'Access denied. No admin record found.';
-          await auth.signOut();
-          return;
-        }
-        // redirect to admin page
-        window.location.href = 'admin.html';
-      } catch (err) {
-        console.error(err);
-        // Clean common firebase messages to be user-friendly (optional)
-        const raw = err && err.message ? err.message : 'Login failed';
-        // you can keep raw if you prefer the full error
-        msg.textContent = raw;
-      }
-    };
-  </script> -->
 
   <script type="module">
     /* login.js - admin login with email/password (keeps your IDs & toggle) */
@@ -384,20 +295,55 @@
         if(!email || !password){ msg.textContent = 'Enter email and password.'; return; }
     
         const userCred = await signInWithEmailAndPassword(auth, email, password);
-        const uid = userCred.user.uid;
-        const userEmail = (userCred.user.email || '').toLowerCase();
+        // const uid = userCred.user.uid;
+        // const userEmail = (userCred.user.email || '').toLowerCase();
     
-        // Check "admin" collection for either a document with matching uid or matching email field.
-        // (You said your collection is named 'admin' — keep that name)
-        const snapsByUid = await getDocs(query(collection(db,'admin'), where('uid','==', uid)));
-        const snapsByEmail = await getDocs(query(collection(db,'admin'), where('email','==', userEmail)));
-        const isAdmin = (snapsByUid.size > 0) || (snapsByEmail.size > 0);
+        // // Check "admin" collection for either a document with matching uid or matching email field.
+        // // (You said your collection is named 'admin' — keep that name)
+        // const snapsByUid = await getDocs(query(collection(db,'admin'), where('uid','==', uid)));
+        // const snapsByEmail = await getDocs(query(collection(db,'admin'), where('email','==', userEmail)));
+        // const isAdmin = (snapsByUid.size > 0) || (snapsByEmail.size > 0);
     
-        if(!isAdmin){
-          msg.textContent = 'Access denied. No admin record found.';
-          await auth.signOut();
-          return;
-        }
+        // if(!isAdmin){
+        //   msg.textContent = 'Access denied. No admin record found.';
+        //   await auth.signOut();
+        //   return;
+        // }
+
+        // after signInWithEmailAndPassword succeeds:
+const uid = userCred.user.uid;
+const userEmail = (userCred.user.email || '').toLowerCase();
+
+// check admin collection (existing behaviour)
+const snapsByUid = await getDocs(query(collection(db,'admin'), where('uid','==', uid)));
+const snapsByEmail = await getDocs(query(collection(db,'admin'), where('email','==', userEmail)));
+const isAdmin = (snapsByUid.size > 0) || (snapsByEmail.size > 0);
+
+if (isAdmin) {
+  // admin -> go to admin.html
+  localStorage.setItem('verifiedRole','admin');
+  window.location.href = next;
+  return;
+}
+
+// otherwise check teachers collection
+const teacherQueryByUid = await getDocs(query(collection(db,'teachers'), where('authUid','==', uid)));
+const teacherQueryByEmail = await getDocs(query(collection(db,'teachers'), where('email','==', userEmail)));
+if (teacherQueryByUid.size > 0 || teacherQueryByEmail.size > 0) {
+  // teacher found -> go to teacher portal
+  const docSnap = (teacherQueryByUid.size>0) ? teacherQueryByUid.docs[0] : teacherQueryByEmail.docs[0];
+  const teacherDoc = { id: docSnap.id, ...docSnap.data() };
+  localStorage.setItem('verifiedRole','teacher');
+  localStorage.setItem('verifiedTeacherId', teacherDoc.id);
+  // redirect to teacher portal page (create below)
+  window.location.href = 'teacher.html';
+  return;
+}
+
+// else: no access
+msg.textContent = 'Access denied. Not an admin or teacher.';
+await auth.signOut();
+
     
         // persist small users mapping so other pages can detect role quickly
         try {
