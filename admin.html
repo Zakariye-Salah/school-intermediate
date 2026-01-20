@@ -315,6 +315,7 @@
 
 /* row styles */
 
+
 .att-row{ display:flex; gap:12px; padding:10px; border-bottom:1px solid #f4f6f9; align-items:center }
 .att-row .name{ flex:1; font-weight:800 }
 .att-row .row-pct{ color:#6b7280; font-weight:800 }
@@ -434,6 +435,12 @@
   gap: 6px;
 }
 
+.att-row{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+}
+
 .att-row > div:first-child{
   display:none; /* hide number column on mobile */
 }
@@ -508,6 +515,61 @@
 .export-menu button:hover{
   background:#eef2ff;
 }
+
+/* preview rows */
+.att-row-preview{
+  border-bottom:1px solid #f1f5f9;
+  padding:10px 6px;
+}
+
+.att-line{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+}
+
+.att-line-1{
+  font-weight:700;
+}
+
+.att-left{
+  display:flex;
+  gap:8px;
+  align-items:center;
+}
+
+.att-no{
+  width:22px;
+  color:#64748b;
+}
+
+.att-name{
+  font-weight:800;
+}
+
+.att-line-2{
+  margin-top:4px;
+}
+
+.att-edit{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  font-size:0.9rem;
+  color:#6b7280;
+}
+
+.student-id{
+  letter-spacing:0.3px;
+}
+
+/* desktop: keep compact */
+@media(min-width:721px){
+  .att-line-2{
+    display:none;
+  }
+}
+
 
 </style>
 
