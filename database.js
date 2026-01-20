@@ -1,5 +1,14 @@
+// import { auth, db } from './firebase-config.js';
+// import { onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/9.22.2/firebase-auth.js';
+// import {
+//   collection, doc, getDoc, getDocs, addDoc, setDoc, updateDoc, deleteDoc,
+//   query, where, Timestamp
+// } from 'https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore.js';
+
+
 import { auth, db } from './firebase-config.js';
-import { onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/9.22.2/firebase-auth.js';
+import { onAuthStateChanged, signOut, createUserWithEmailAndPassword, sendPasswordResetEmail } 
+from 'https://www.gstatic.com/firebasejs/9.22.2/firebase-auth.js';
 import {
   collection, doc, getDoc, getDocs, addDoc, setDoc, updateDoc, deleteDoc,
   query, where, Timestamp
@@ -159,6 +168,18 @@ async function generateDefaultId(collectionName, prefix, digits){
   return `${prefix}${String(t).padStart(digits,'0')}`;
 }
 
+// returns true if another teacher uses this email (case-insensitive). excludeId optional to ignore same teacher on edit.
+function isTeacherEmailDuplicate(email, excludeId) {
+  if (!email) return false;
+  const e = String(email).trim().toLowerCase();
+  const list = teachersCache || [];
+  return list.some(t => {
+    if (!t.email) return false;
+    if (excludeId && (t.id === excludeId || t.teacherId === excludeId)) return false;
+    return String(t.email).trim().toLowerCase() === e;
+  });
+}
+
 /* init/auth */
 onAuthStateChanged(auth, async user => {
   if(!user) { window.location.href = 'login.html'; return; }
@@ -297,19 +318,23 @@ function renderTeachers(){
     list = list.filter(t => {
       if(subjFilter && (!(t.subjects || []).includes(subjFilter))) return false;
       if(!q) return true;
-      return (t.fullName||'').toLowerCase().includes(q) || (t.phone||'').toLowerCase().includes(q) || (t.id||'').toLowerCase().includes(q);
+      return (t.fullName||'').toLowerCase().includes(q) || (t.phone||'').toLowerCase().includes(q) || (String(t.id||t.teacherId||'')).toLowerCase().includes(q) || ((t.email||'').toLowerCase().includes(q));
     });
 
     list.forEach((t, idx) => {
       const id = escape(t.id || t.teacherId || '');
       const name = escape(t.fullName || '');
+      const email = escape(t.email || '—');
       html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px;border-bottom:1px solid #f1f5f9">
         <div style="display:flex;gap:12px;align-items:center">
           <div style="min-width:28px;text-align:center;font-weight:700">${idx+1}</div>
           <div style="min-width:90px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${id}</div>
           <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${name}</div>
         </div>
-        <div><button class="btn btn-ghost btn-sm mobile-teacher-view" data-id="${escape(t.id||t.teacherId||'')}">View</button></div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="min-width:160px;text-align:right;font-size:0.9rem;color:#555">${email}</div>
+          <div><button class="btn btn-ghost btn-sm mobile-teacher-view" data-id="${escape(t.id||t.teacherId||'')}">⋮</button></div>
+        </div>
       </div>`;
     });
     html += `</div>`;
@@ -321,10 +346,10 @@ function renderTeachers(){
     return;
   }
 
-  // desktop table (unchanged)
+  // desktop table (with Email column)
   let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
       <strong>Total teachers: ${total}</strong>
-      <div class="muted">Showing ID, Name, Salary — click View for more</div>
+      <div class="muted">Showing ID, Name, Salary, Email — click View for more</div>
     </div>`;
   html += `<div style="overflow:auto"><table style="width:100%;border-collapse:collapse">
     <thead>
@@ -332,6 +357,7 @@ function renderTeachers(){
         <th style="padding:8px;width:48px">No</th>
         <th style="padding:8px;width:140px">ID</th>
         <th style="padding:8px">Name</th>
+        <th style="padding:8px;width:160px">Email</th>
         <th style="padding:8px;width:120px">Salary</th>
         <th style="padding:8px;width:220px">Actions</th>
       </tr>
@@ -343,17 +369,19 @@ function renderTeachers(){
   list = list.filter(t => {
     if(subjFilter && (!(t.subjects || []).includes(subjFilter))) return false;
     if(!q) return true;
-    return (t.fullName||'').toLowerCase().includes(q) || (t.phone||'').toLowerCase().includes(q) || (t.id||'').toLowerCase().includes(q);
+    return (t.fullName||'').toLowerCase().includes(q) || (t.phone||'').toLowerCase().includes(q) || (String(t.id||t.teacherId||'')).toLowerCase().includes(q) || ((t.email||'').toLowerCase().includes(q));
   });
 
   list.forEach((t, idx) => {
     const id = escape(t.id || t.teacherId || '');
     const name = escape(t.fullName || '');
+    const email = escape(t.email || '—');
     const salary = (typeof t.salary !== 'undefined' && t.salary !== null) ? escape(String(t.salary)) : '—';
     html += `<tr style="border-bottom:1px solid #f1f5f9">
       <td style="padding:8px;vertical-align:middle">${idx+1}</td>
       <td style="padding:8px;vertical-align:middle">${id}</td>
       <td style="padding:8px;vertical-align:middle">${name}</td>
+      <td style="padding:8px;vertical-align:middle">${email}</td>
       <td style="padding:8px;vertical-align:middle">${salary}</td>
       <td style="padding:8px;vertical-align:middle">
         <button class="btn btn-ghost btn-sm view-teacher" data-id="${id}">View</button>
@@ -371,6 +399,7 @@ function renderTeachers(){
   teachersList.querySelectorAll('.del-teacher').forEach(b => b.onclick = deleteTeacher);
 }
 
+
 async function openViewTeacherModal(e){
   const id = (e && e.target) ? e.target.dataset.id : (e && e.dataset ? e.dataset.id : e);
   if(!id) return;
@@ -384,13 +413,17 @@ async function openViewTeacherModal(e){
   if(!t) return toast('Teacher not found');
 
   const classesText = (t.classes && t.classes.length) ? t.classes.join(', ') : 'No classes';
-  const subsText = (t.subjects && t.subjects.length) ? t.subjects.join(', ') : 'No subjects';
+  const subsText = (t.subjects && t.subjects.length) ? (t.subjects.map(s=>{
+    // try map id -> subject.name if subjectsCache contains id
+    const found = (subjectsCache||[]).find(x => x.id === s || x.name === s);
+    return found ? found.name : s;
+  }).join(', ')) : 'No subjects';
   const html = `
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
       <div><strong>ID</strong><div class="muted">${escape(t.id || t.teacherId || '')}</div></div>
       <div><strong>Name</strong><div class="muted">${escape(t.fullName||'')}</div></div>
       <div><strong>Phone</strong><div class="muted">${escape(t.phone||'')}</div></div>
-      <div><strong>Parent phone</strong><div class="muted">${escape(t.parentPhone||'')}</div></div>
+      <div><strong>Email</strong><div class="muted">${escape(t.email||'—')}</div></div>
       <div><strong>Salary</strong><div class="muted">${typeof t.salary !== 'undefined' ? escape(String(t.salary)) : '—'}</div></div>
       <div><strong>Created</strong><div class="muted">${t.createdAt ? (new Date(t.createdAt.seconds ? t.createdAt.seconds*1000 : t.createdAt)).toLocaleString() : '—'}</div></div>
       <div style="grid-column:1 / -1"><strong>Classes</strong><div class="muted">${escape(classesText)}</div></div>
@@ -399,6 +432,8 @@ async function openViewTeacherModal(e){
     <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
       <button class="btn btn-ghost" id="viewTeacherClose">Close</button>
       <button class="btn btn-ghost" id="viewTeacherEdit">Edit</button>
+      <button class="btn btn-ghost" id="viewTeacherSendReset">Send reset email</button>
+      <button class="btn btn-ghost" id="viewTeacherAdminReset">Admin reset (server)</button>
       <button class="btn btn-danger" id="viewTeacherDel">Delete</button>
     </div>
   `;
@@ -414,7 +449,39 @@ async function openViewTeacherModal(e){
     await deleteTeacher({ target:{ dataset:{ id: t.id || t.teacherId } }});
     closeModal();
   };
+
+  modalBody.querySelector('#viewTeacherSendReset').onclick = async () => {
+    const email = t.email;
+    if(!email) return toast('Teacher has no email set');
+    await sendResetEmailFor(email);
+  };
+  
+
+  modalBody.querySelector('#viewTeacherAdminReset').onclick = async () => {
+    const newPass = prompt('Enter new password for teacher (min 6 chars):');
+    if(!newPass || newPass.length < 6) return toast('Password must be at least 6 characters');
+    if(!t.authUid) return toast('Teacher has no linked auth account');
+
+    try {
+      const token = currentUser && currentUser.getIdToken ? await currentUser.getIdToken(true) : null;
+      const resp = await fetch('/admin/setTeacherPassword', {
+        method: 'POST',
+        headers: { 'Content-Type':'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ uid: t.authUid, password: newPass })
+      });
+      if (!resp.ok) {
+        const txt = await resp.text();
+        console.error('admin reset failed', resp.status, txt);
+        return toast('Admin reset failed (server). Try Send reset email instead.');
+      }
+      toast('Password updated via admin API');
+    } catch(err){
+      console.error(err);
+      toast('Admin reset API not available');
+    }
+  };
 }
+
 
 /* ---------- Ensure teachers subject/class filter is populated ---------- */
 function populateTeachersSubjectFilter(){
@@ -443,6 +510,8 @@ function openAddTeacherModal(){
       <div style="grid-column:1 / -1"><label>Full name</label><input id="teacherName" /></div>
       <div><label>Phone</label><input id="teacherPhone" /></div>
       <div><label>Parent phone</label><input id="teacherParentPhone" /></div>
+      <div><label>Email (optional)</label><input id="teacherEmail" type="email" /></div>
+      <div><label>Password (optional)</label><input id="teacherPassword" type="password" placeholder="min 6 characters" /></div>
       <div style="grid-column:1 / -1"><label>Assign classes (select multiple)</label><select id="teacherClasses" multiple size="6" style="width:100%">${classOptions}</select></div>
       <div style="grid-column:1 / -1"><label>Assign subjects (select multiple)</label><select id="teacherSubjects" multiple size="6" style="width:100%">${subjectOptions}</select></div>
     </div>
@@ -453,6 +522,7 @@ function openAddTeacherModal(){
   `);
 
   modalBody.querySelector('#cancelTeacher').onclick = closeModal;
+
   modalBody.querySelector('#saveTeacher').onclick = async () => {
     let id = modalBody.querySelector('#teacherId').value.trim();
     const name = (modalBody.querySelector('#teacherName').value || '').trim();
@@ -460,20 +530,51 @@ function openAddTeacherModal(){
     const parentPhone = (modalBody.querySelector('#teacherParentPhone').value || '').trim();
     const salaryVal = modalBody.querySelector('#teacherSalary').value;
     const salary = salaryVal ? Number(salaryVal) : null;
+    const emailRaw = (modalBody.querySelector('#teacherEmail').value || '').trim();
+    const email = emailRaw ? emailRaw.toLowerCase() : '';
+    const password = modalBody.querySelector('#teacherPassword').value || '';
     const classesSelected = Array.from(modalBody.querySelectorAll('#teacherClasses option:checked')).map(o => o.value);
     const subjectsSelected = Array.from(modalBody.querySelectorAll('#teacherSubjects option:checked')).map(o => o.value);
 
     if(!name) return toast('Teacher name is required');
 
-    if(!id) id = await generateDefaultId('teachers','TEC',5); // TEC00001 style (5 digits)
+    // duplicate email check (client-side)
+    if(email && isTeacherEmailDuplicate(email)) {
+      return toast('Email already used by another teacher');
+    }
+
+    // password length check if provided
+    if(password && String(password).length < 6) return toast('Password must be at least 6 characters');
+
+    if(!id) id = await generateDefaultId('teachers','TEC',5);
+
     const payload = {
       id, teacherId: id, fullName: name, phone: phone || '', parentPhone: parentPhone || '',
       salary: salary, classes: classesSelected, subjects: subjectsSelected,
       createdAt: Timestamp.now(), createdBy: currentUser ? currentUser.uid : null
     };
 
+    if(email) payload.email = email;
+
     try {
-      // use setDoc so teacher doc id matches the generated teacher ID
+      // If email + password provided: create auth user then set authUid on teacher doc
+      if(email && password){
+        try {
+          const userCred = await createUserWithEmailAndPassword(auth, email, password);
+          payload.authUid = userCred.user.uid;
+        } catch(err){
+          // createUserWithEmailAndPassword may fail when the email is already used in Firebase Auth.
+          console.warn('createUserWithEmailAndPassword failed', err);
+          // show better message
+          if(err && err.code === 'auth/email-already-in-use') {
+            return toast('Email already exists in Auth. Use a different email or remove existing account.');
+          }
+          // If other error, continue but inform user
+          toast('Failed to create auth user (teacher will be created without login).');
+        }
+      }
+
+      // save teacher doc
       await setDoc(doc(db,'teachers', id), payload);
       toast('Teacher created');
       closeModal();
@@ -484,6 +585,33 @@ function openAddTeacherModal(){
     }
   };
 }
+
+
+async function sendResetEmailFor(email) {
+  try {
+    console.log('sendPasswordResetEmail -> requesting reset for', email);
+    await sendPasswordResetEmail(auth, email);
+    console.log('sendPasswordResetEmail -> accepted by Firebase (no network error)');
+    toast('Password reset email sent. Ask teacher to check spam/junk and Promotions tabs.');
+    return { ok: true };
+  } catch (err) {
+    console.error('sendPasswordResetEmail error', err);
+    if (err.code === 'auth/user-not-found') {
+      toast('No Auth user found with that email. Create an Auth account first (Firebase Console).');
+    } else if (err.code === 'auth/invalid-email') {
+      toast('Invalid email address.');
+    } else if (err.code === 'auth/operation-not-allowed') {
+      toast('Email/password sign-in is disabled in Firebase Console (enable it).');
+    } else if (err.code === 'auth/network-request-failed') {
+      toast('Network error. Check your connection.');
+    } else {
+      toast(err.message || 'Failed to send reset email (see console for details)');
+    }
+    return { ok: false, err };
+  }
+}
+
+
 
 /* Edit teacher (id may be teacher doc id) */
 async function openEditTeacherModal(e){
@@ -508,33 +636,144 @@ async function openEditTeacherModal(e){
       <div style="grid-column:1 / -1"><label>Full name</label><input id="teacherName" value="${escape(t.fullName||'')}" /></div>
       <div><label>Phone</label><input id="teacherPhone" value="${escape(t.phone||'')}" /></div>
       <div><label>Parent phone</label><input id="teacherParentPhone" value="${escape(t.parentPhone||'')}" /></div>
+      <div><label>Email</label><input id="teacherEmail" type="email" value="${escape(t.email||'')}" /></div>
+      <div><label>New password (optional)</label><input id="teacherNewPassword" type="password" placeholder="Leave blank to keep current password" /></div>
       <div style="grid-column:1 / -1"><label>Assign classes (select multiple)</label><select id="teacherClasses" multiple size="6" style="width:100%">${classOptions}</select></div>
       <div style="grid-column:1 / -1"><label>Assign subjects (select multiple)</label><select id="teacherSubjects" multiple size="6" style="width:100%">${subjectOptions}</select></div>
     </div>
+
     <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
       <button id="cancelTeacher" class="btn btn-ghost">Cancel</button>
+      <button id="sendReset" class="btn btn-ghost">Send password reset email</button>
+      <button id="adminReset" class="btn btn-ghost">Admin reset password</button>
       <button id="updateTeacher" class="btn btn-primary">Save</button>
     </div>
   `);
 
   modalBody.querySelector('#cancelTeacher').onclick = closeModal;
+
+  modalBody.querySelector('#sendReset').onclick = async () => {
+    const email = (modalBody.querySelector('#teacherEmail').value || '').trim().toLowerCase();
+    if(!email) return toast('Teacher has no email set');
+    await sendResetEmailFor(email);
+  };
+  
+
+  // Admin reset via server endpoint using Firebase Admin SDK (server must implement)
+  modalBody.querySelector('#adminReset').onclick = async () => {
+    const newPass = (modalBody.querySelector('#teacherNewPassword').value || '').trim();
+    if(!newPass || newPass.length < 6) return toast('Enter a new password of at least 6 characters to admin-reset');
+    // t.authUid should exist if we created auth account earlier; if not, we may need to create one.
+    if(!t.authUid) return toast('Teacher has no linked auth account. Create an auth account first (set email+password).');
+
+    // get ID token to authorize the admin API call (optional; server may accept other auth)
+    let idToken = null;
+    try {
+      if (currentUser && typeof currentUser.getIdToken === 'function') idToken = await currentUser.getIdToken(true);
+    } catch(e){ console.warn('getIdToken failed', e); }
+
+    // call server endpoint (you must implement on your server / cloud function)
+    try {
+      const resp = await fetch('/admin/setTeacherPassword', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(idToken ? { Authorization: `Bearer ${idToken}` } : {})
+        },
+        body: JSON.stringify({ uid: t.authUid, password: newPass })
+      });
+      if (!resp.ok) {
+        const txt = await resp.text();
+        console.error('adminReset failed', resp.status, txt);
+        return toast('Admin reset failed (server error). Falling back to reset email.');
+      }
+      toast('Password updated via admin API');
+    } catch(err){
+      console.error('adminReset call failed', err);
+      toast('Admin reset API not available — sending reset email instead');
+      // fallback to reset email
+      try {
+        const email = (modalBody.querySelector('#teacherEmail').value || '').trim().toLowerCase();
+        if(email) { await sendPasswordResetEmail(auth, email); toast('Password reset email sent (fallback)'); }
+      } catch(e2){ console.error(e2); toast('Fallback reset email failed'); }
+    }
+  };
+
   modalBody.querySelector('#updateTeacher').onclick = async () => {
     const name = (modalBody.querySelector('#teacherName').value || '').trim();
     const phone = (modalBody.querySelector('#teacherPhone').value || '').trim();
     const parentPhone = (modalBody.querySelector('#teacherParentPhone').value || '').trim();
     const salaryVal = modalBody.querySelector('#teacherSalary').value;
     const salary = salaryVal ? Number(salaryVal) : null;
+    const emailRaw = (modalBody.querySelector('#teacherEmail').value || '').trim();
+    const email = emailRaw ? emailRaw.toLowerCase() : '';
+    const newPass = (modalBody.querySelector('#teacherNewPassword').value || '').trim();
     const classesSelected = Array.from(modalBody.querySelectorAll('#teacherClasses option:checked')).map(o => o.value);
     const subjectsSelected = Array.from(modalBody.querySelectorAll('#teacherSubjects option:checked')).map(o => o.value);
 
     if(!name) return toast('Teacher name is required');
+
+    // duplicate email check excluding current teacher
+    if(email && isTeacherEmailDuplicate(email, t.id)) {
+      return toast('Email already used by another teacher');
+    }
+
+    // if admin provided a new password in update flow, prefer adminReset endpoint or fallback to sendReset
+    if(newPass && newPass.length < 6) return toast('New password must be at least 6 characters');
+
     try {
-      // update by doc id (t.id)
+      // If email provided and teacher has no authUid and admin provided a password, attempt to create auth user
+      if(email && !t.authUid && newPass){
+        try {
+          const uc = await createUserWithEmailAndPassword(auth, email, newPass);
+          // if success, attach authUid
+          t.authUid = uc.user.uid;
+        } catch(err){
+          console.warn('createUserDuringUpdate failed', err);
+          // if email exists in Auth, we cannot take it; inform admin and continue
+          if(err && err.code === 'auth/email-already-in-use') {
+            toast('Email already in use in Auth; teacher saved without linking auth.');
+          } else {
+            toast('Failed to create auth user; teacher saved without auth link.');
+          }
+        }
+      }
+
+      // update teacher document
       await updateDoc(doc(db,'teachers', t.id), {
         fullName: name, phone: phone || '', parentPhone: parentPhone || '', salary: salary,
-        classes: classesSelected, subjects: subjectsSelected, updatedAt: Timestamp.now(), updatedBy: currentUser ? currentUser.uid : null
+        classes: classesSelected, subjects: subjectsSelected, email: email || '', updatedAt: Timestamp.now(), updatedBy: currentUser ? currentUser.uid : null,
+        ...(t.authUid ? { authUid: t.authUid } : {})
       });
-      toast('Teacher updated');
+
+      // if admin provided a newPass and teacher has authUid, attempt admin reset call (best-effort)
+      if(newPass && t.authUid){
+        try {
+          // attempt admin-reset via server endpoint (optional)
+          const token = currentUser && currentUser.getIdToken ? await currentUser.getIdToken(true) : null;
+          const resp = await fetch('/admin/setTeacherPassword', {
+            method: 'POST',
+            headers: { 'Content-Type':'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+            body: JSON.stringify({ uid: t.authUid, password: newPass })
+          });
+          if (!resp.ok) {
+            // fallback to sendPasswordResetEmail
+            const em = email || t.email;
+            if(em) { await sendPasswordResetEmail(auth, em); toast('Saved. Admin reset not available — reset email sent.'); }
+            else toast('Saved. Admin reset not available (no email)'); 
+          } else {
+            toast('Saved and password updated via admin API');
+          }
+        } catch(err){
+          console.warn('admin reset failed in update flow', err);
+          const em = email || t.email;
+          if(em) { await sendPasswordResetEmail(auth, em); toast('Saved. Admin reset failed — reset email sent.'); }
+          else toast('Saved. Admin reset failed (no email).');
+        }
+      } else {
+        toast('Teacher updated');
+      }
+
       closeModal();
       await loadTeachers(); renderTeachers();
     } catch(err){
@@ -543,6 +782,8 @@ async function openEditTeacherModal(e){
     }
   };
 }
+
+
 
 /* Delete teacher (keeps same behavior) */
 async function deleteTeacher(e){
@@ -590,7 +831,7 @@ function renderClasses(){
           <div style="min-width:28px;text-align:center;font-weight:700">${idx+1}</div>
           <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${name}</div>
         </div>
-        <div><button class="btn btn-ghost btn-sm mobile-class-view" data-id="${escape(c.id||c.name||'')}">View</button></div>
+        <div><button class="btn btn-ghost btn-sm mobile-class-view" data-id="${escape(c.id||c.name||'')}">⋮</button></div>
       </div>`;
     });
     html += `</div>`;
@@ -769,7 +1010,7 @@ function renderSubjects(){
           <div style="min-width:28px;text-align:center;font-weight:700">${idx+1}</div>
           <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escape(s.name||'')}</div>
         </div>
-        <div><button class="btn btn-ghost btn-sm mobile-sub-view" data-id="${escape(s.id||s.name||'')}">View</button></div>
+        <div><button class="btn btn-ghost btn-sm mobile-sub-view" data-id="${escape(s.id||s.name||'')}">⋮</button></div>
       </div>`;
     });
     html += `</div>`;
@@ -967,7 +1208,7 @@ async function renderStudents(){
           <div style="min-width:90px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${sid}</div>
           <div style="min-width:120px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${name}</div>
         </div>
-        <div><button class="btn btn-ghost btn-sm mobile-more" data-id="${escape(s.studentId||s.id||'')}">More</button></div>
+        <div><button class="btn btn-ghost btn-sm mobile-more" data-id="${escape(s.studentId||s.id||'')}">⋮</button></div>
       </div>`;
     });
     html += `</div>`;
@@ -1261,7 +1502,7 @@ async function deleteOrUnblockStudent(e){
             <div style="text-align:right;flex-shrink:0"><small class="muted">${escape(statusLabel)}</small></div>
           </div>
           <div style="display:flex;justify-content:flex-end">
-            <button class="btn btn-ghost btn-sm mobile-exam-more" data-id="${escape(e.id)}">More</button>
+            <button class="btn btn-ghost btn-sm mobile-exam-more" data-id="${escape(e.id)}">⋮</button>
           </div>
         </div>`;
       });
@@ -6496,155 +6737,1042 @@ leaderboardListRoot.innerHTML = isMobileViewport()
   showPage && showPage('dashboard');
  }
 
-/* ------------------------
-  Attendance
--------------------------*/
+// database.js — admin attendance render + export
+// Use your existing imports at top; this snippet implements admin-side attendance features.
+// Ensure you have these imports available: collection, doc, getDocs, setDoc, query, where, Timestamp, getDoc, deleteDoc
 
+/* ===========================
+  Admin attendance — updated (replace previous admin attendance functions)
+  Dependencies assumed present in your file:
+    db, getDocs, getDoc, collection, query, where, doc, setDoc, deleteDoc, Timestamp
+    classesCache, subjectsCache, studentsCache, currentUser, toast, showModal, closeModal
+  The code contains safe fallbacks when some globals/constants are missing.
+  ===========================*/
+
+/* safe constants (fallback if not defined earlier) */
+const ATT_RECORDS_COLL = 'attendance_records';
+const LEGACY_ATT_COLL = 'attendance';
+
+
+/* small helpers */
+function escapeHtmlLocal(s){ if(!s && s!==0) return ''; return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function computePercentFromFlags(flags){ if(!Array.isArray(flags)||flags.length===0) return 0; const present = flags.reduce((s,f)=>s + (f?1:0),0); return Math.round((present/flags.length)*100); }
+function nowLocalISODate(){ return (new Date()).toISOString().slice(0,10); }
+
+
+
+/* undo state */
+let lastAdminSave = null;
+
+/* RENDER ATTENDANCE PAGE */
 async function renderAttendance(){
   let page = document.getElementById('pageAttendance');
   if(!page){
     page = document.createElement('section');
     page.id = 'pageAttendance';
     page.className = 'page';
-    const main = document.querySelector('main');
-    main && main.appendChild(page);
+    const main = document.querySelector('main') || document.body;
+    main.appendChild(page);
   }
 
   page.innerHTML = `
-    <div class="page-header" style="display:flex;align-items:center;gap:8px">
-      <select id="attClass" style="min-width:160px"><option value="">Select class</option></select>
-      <select id="attSubject" style="min-width:160px"><option value="">Subject (optional)</option></select>
-      <input id="attDate" type="date" />
+    <style>
+      /* tiny local styles for export menus and responsive cards */
+      .export-dropdown { position: relative; display:inline-block; }
+      .export-dropdown .export-menu { position:absolute; right:0; top:34px; z-index:150; background:#fff; border:1px solid #eef2f7; padding:6px; border-radius:8px; box-shadow:0 8px 22px rgba(2,6,23,0.06); }
+      .export-dropdown .export-menu.hidden { display:none; }
+      .attendance-cards { display:flex; flex-wrap:wrap; gap:12px; }
+      .attendance-card { flex:1 1 320px; background:#fff; border-radius:10px; padding:14px; box-shadow:0 6px 18px rgba(2,6,23,0.03); border:1px solid rgba(2,6,23,0.03); display:flex; justify-content:space-between; align-items:center; }
+      @media(max-width:720px){
+        .attendance-card { flex:1 1 100%; }
+        .page .attendance-page-header { display:flex; flex-direction:column; gap:8px; }
+      }
+      .muted{ color:#6b7280; }
+    </style>
+
+    <div class="attendance-page-header" style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
+      <input id="attClassSearch" type="search" placeholder="Search class name or id..." style="padding:8px 10px;border-radius:8px;border:1px solid #eef2f7;min-width:220px" />
+      <select id="attClassSelect" style="padding:8px 10px;border-radius:8px;border:1px solid #eef2f7">
+        <option value="">All classes</option>
+      </select>
       <div style="margin-left:auto;display:flex;gap:8px">
-        <button id="attMark" class="btn btn-primary">Mark Attendance</button>
-        <button id="attImport" class="btn btn-ghost">Bulk Import</button>
-        <button id="attExport" class="btn btn-ghost">Export</button>
+        <button id="attRefreshBtn" class="btn btn-ghost">Refresh</button>
       </div>
     </div>
-    <div id="attendanceList"></div>
+
+    <div id="attendanceList" class="attendance-cards"></div>
+
+    <div id="attendanceClassView" class="hidden" style="margin-top:12px">
+      <div id="attendanceClassHeader"></div>
+      <div id="attendanceClassEditor" style="margin-top:12px"></div>
+    </div>
+
+    <!-- Undo snackbar -->
+    <div id="adminUndoSnk" style="position:fixed;right:18px;bottom:18px;display:none;z-index:1200">
+      <div style="background:#111;color:#fff;padding:10px 12px;border-radius:8px;display:flex;gap:8px;align-items:center">
+        <div id="adminUndoMsg" style="font-weight:800">Saved — <span id="adminUndoInfo"></span></div>
+        <button id="adminUndoBtn" class="btn" style="background:#fff;color:#111;padding:6px 8px;border-radius:8px">Undo</button>
+      </div>
+    </div>
   `;
-  function hideDesktopHeadersOnMobile() {
-  if (!isMobileViewport || !isMobileViewport()) return;
 
-  const outstandingCard = page.querySelector('#outstandingCard');
-  const leaderboardCard = page.querySelector('#leaderboardCard');
+  // populate class select
+  const sel = document.getElementById('attClassSelect');
+  sel.innerHTML = '<option value="">All classes</option>' + (classesCache||[]).map(c => `<option value="${escapeHtmlLocal(c.name||c.id)}">${escapeHtmlLocal(c.name||c.id)}</option>`).join('');
 
-  if (outstandingCard && outstandingCard.firstElementChild) {
-    outstandingCard.firstElementChild.style.display = 'none';
+  // wire search and select
+  const searchInput = document.getElementById('attClassSearch');
+  searchInput.oninput = renderAttendanceClassCards;
+  sel.onchange = renderAttendanceClassCards;
+  document.getElementById('attRefreshBtn').onclick = async () => {
+    // if you have a function that refreshes caches, call it here. Otherwise re-render.
+    renderAttendanceClassCards();
+    toast('Refreshed');
+  };
+
+  // initial render
+  renderAttendanceClassCards();
+}
+window.updateAllAdminPercentsInEditor = function(){
+  document.querySelectorAll('.att-row-admin').forEach(row => {
+    const sid = row.dataset.student;
+    const chks = row.querySelectorAll('.admin-att-chk');
+    const flags = Array.from(chks).map(c => c.checked);
+    const pct = computePercentFromFlags(flags);
+    const el = row.querySelector('.row-pct');
+    if(el) el.textContent = pct + '%';
+  });
+};
+
+window.updateEditorCheckAllLabel = function(){
+  const btn = document.getElementById('editorCheckAll');
+  if(!btn) return;
+  const chks = document.querySelectorAll('.admin-att-chk');
+  btn.textContent = Array.from(chks).every(c => c.checked) ? 'Uncheck all' : 'Check all';
+};
+
+
+/* render class cards (filters by search + select) */
+function renderAttendanceClassCards(){
+  const list = document.getElementById('attendanceList');
+  if(!list) return;
+  const q = (document.getElementById('attClassSearch').value || '').trim().toLowerCase();
+  const sel = (document.getElementById('attClassSelect').value || '').trim();
+  const classes = classesCache || [];
+
+  // filter
+  let filtered = classes.slice();
+  if(sel) filtered = filtered.filter(c => String(c.name||c.id) === sel);
+  if(q) filtered = filtered.filter(c => (String(c.name||'') + ' ' + String(c.id||'')).toLowerCase().includes(q));
+
+  if(filtered.length === 0){
+    list.innerHTML = `<div class="muted">No classes found.</div>`;
+    return;
   }
 
-  if (leaderboardCard && leaderboardCard.firstElementChild) {
-    leaderboardCard.firstElementChild.style.display = 'none';
+  list.innerHTML = filtered.map(c => {
+    const stdCount = (studentsCache||[]).filter(s => String(s.classId||s.class||s.className||'') === String(c.name||c.id)).length;
+    // const subjText = (Array.isArray(c.subjects) && c.subjects.length) ? c.subjects.slice(0,4).join(', ') : 'No subjects';
+    return `
+      <div class="attendance-card" data-class="${escapeHtmlLocal(c.name||c.id)}">
+        <div style="flex:1">
+          <div style="font-weight:800">${escapeHtmlLocal(c.name||c.id)}</div>
+          <div class="muted">ID: ${escapeHtmlLocal(c.id || c.name || '')} • Students: ${stdCount}</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          
+        <button class="btn btn-ghost open-class" data-class="${escapeHtmlLocal(c.name||c.id)}">Open</button>
+
+          <button class="btn btn-ghost more-btn" data-class="${escapeHtmlLocal(c.name||c.id)}">⋮</button>
+
+        </div>
+      </div>`;
+  }).join('');
+
+  // wire buttons (use event delegation safe handlers)
+  list.querySelectorAll('.open-class').forEach(b => b.onclick = (ev) => {
+    ev.stopPropagation();
+    const cname = ev.currentTarget.dataset.class;
+    openAdminPreviewClass(cname);
+  });
+  list.querySelectorAll('.subj-btn').forEach(b => b.onclick = (ev) => {
+    ev.stopPropagation();
+    const cname = ev.currentTarget.dataset.class;
+    showClassSubjectsModal(cname);
+  });
+  list.querySelectorAll('.card-export-btn').forEach(btn => {
+    btn.onclick = (ev) => {
+      ev.stopPropagation();
+      // toggle menu sibling
+      const menu = btn.parentElement.querySelector('.export-menu');
+      if(menu) menu.classList.toggle('hidden');
+    };
+  });
+  list.querySelectorAll('.card-export-pdf').forEach(b => {
+    b.onclick = async (ev) => {
+      ev.stopPropagation();
+      const cname = ev.currentTarget.dataset.class;
+      await exportAllSubjectsForClass(cname, 'pdf');
+    };
+  });
+  list.querySelectorAll('.card-export-csv').forEach(b => {
+    b.onclick = async (ev) => {
+      ev.stopPropagation();
+      const cname = ev.currentTarget.dataset.class;
+      await exportAllSubjectsForClass(cname, 'csv');
+    };
+  });
+  list.querySelectorAll('.history-btn').forEach(b => {
+    b.onclick = (ev) => {
+      ev.stopPropagation();
+      const cname = ev.currentTarget.dataset.class;
+      openAttendanceHistory(cname);
+    };
+  });
+
+  list.querySelectorAll('.more-btn').forEach(b => {
+    b.onclick = (ev) => {
+      ev.stopPropagation();
+      openClassMoreModal(ev.currentTarget.dataset.class);
+    };
+  });
+  
+  // close export menus when clicking outside
+ 
+}
+
+if (!window.__attExportOutsideClick) {
+  window.__attExportOutsideClick = true;
+  document.addEventListener('click', (e) => {
+    document.querySelectorAll('.export-menu').forEach(m => {
+      if (!m.contains(e.target) && !m.previousElementSibling?.contains(e.target)) {
+        m.classList.add('hidden');
+      }
+    });
+  });
+}
+
+const ICONS = {
+  open: `<svg width="18" height="18" viewBox="0 0 24 24" stroke="#fff" fill="none" stroke-width="2"><path d="M3 7h5l2 2h11v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>`,
+  subjects: `<svg width="18" height="18" viewBox="0 0 24 24" stroke="#fff" fill="none" stroke-width="2"><path d="M4 4h16v16H4z"/><path d="M8 4v16M16 4v16"/></svg>`,
+  attend: `<svg width="18" height="18" viewBox="0 0 24 24" stroke="#111" fill="none" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M2 12a10 10 0 1 0 20 0"/></svg>`,
+  history: `<svg width="18" height="18" viewBox="0 0 24 24" stroke="#fff" fill="none" stroke-width="2"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 3v6h6"/></svg>`,
+  export: `<svg width="18" height="18" viewBox="0 0 24 24" stroke="#fff" fill="none" stroke-width="2"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>`,
+  pdf: `<svg width="16" height="16" viewBox="0 0 24 24" stroke="#dc2626" fill="none" stroke-width="2"><path d="M6 2h9l5 5v15H6z"/></svg>`,
+  csv: `<svg width="16" height="16" viewBox="0 0 24 24" stroke="#16a34a" fill="none" stroke-width="2"><path d="M4 4h16v16H4z"/></svg>`
+};
+
+
+function openClassMoreModal(className){
+  const html = `
+    <div class="more-grid">
+
+      <button id="moreOpen" class="btn btn-open">
+        ${ICONS.open} Open Class
+      </button>
+
+      <button id="moreSubjects" class="btn btn-subj">
+        ${ICONS.subjects} Subjects
+      </button>
+
+      <button id="moreHistory" class="btn btn-hist">
+        ${ICONS.history} History
+      </button>
+
+      <button id="moreAttend" class="btn btn-att">
+        ${ICONS.attend} Attendance
+      </button>
+
+      <div class="full">
+        <div class="export-dropdown">
+          <button id="moreExportBtn" class="btn btn-export">
+            ${ICONS.export} Export
+          </button>
+          <div id="moreExportMenu" class="export-menu hidden">
+            <button id="moreExportPdf">
+              ${ICONS.pdf} Export PDF
+            </button>
+            <button id="moreExportCsv">
+              ${ICONS.csv} Export CSV
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="full">
+        <button id="moreClose" class="btn btn-ghost">Close</button>
+      </div>
+
+    </div>
+  `;
+
+  showModal(`Class • ${escapeHtmlLocal(className)}`, html);
+
+  const exportBtn  = modalBody.querySelector('#moreExportBtn');
+  const exportMenu = modalBody.querySelector('#moreExportMenu');
+
+  // 🔐 SAFE TOGGLE
+  exportBtn.onclick = (e) => {
+    e.stopPropagation();
+    exportMenu.classList.toggle('hidden');
+    console.log('[EXPORT] menu toggled');
+  };
+
+  // ❗ DO NOT auto-close on modalBody click
+  document.addEventListener('click', function closeOnce(ev){
+    if(!exportMenu.contains(ev.target) && !exportBtn.contains(ev.target)){
+      exportMenu.classList.add('hidden');
+      document.removeEventListener('click', closeOnce);
+    }
+  });
+
+  modalBody.querySelector('#moreExportPdf').onclick = async () => {
+    console.log('[EXPORT] PDF clicked', className);
+    try{
+      await exportAllSubjectsForClass(className, 'pdf');
+    }catch(err){
+      console.error('PDF export failed', err);
+      toast('PDF export failed – see console');
+    }
+    closeModal();
+  };
+
+  modalBody.querySelector('#moreExportCsv').onclick = async () => {
+    console.log('[EXPORT] CSV clicked', className);
+    try{
+      await exportAllSubjectsForClass(className, 'csv');
+    }catch(err){
+      console.error('CSV export failed', err);
+      toast('CSV export failed – see console');
+    }
+    closeModal();
+  };
+
+  modalBody.querySelector('#moreOpen').onclick = () => {
+    closeModal();
+    openAdminPreviewClass(className);
+  };
+
+  modalBody.querySelector('#moreSubjects').onclick = () => {
+    closeModal();
+    showClassSubjectsModal(className);
+  };
+
+  modalBody.querySelector('#moreAttend').onclick = () => {
+    closeModal();
+    openAdminPreviewClass(className);
+    setTimeout(() => document.getElementById('previewTakeBtn')?.click(), 200);
+  };
+
+  modalBody.querySelector('#moreHistory').onclick = () => {
+    closeModal();
+    openAttendanceHistory(className);
+  };
+
+  modalBody.querySelector('#moreClose').onclick = closeModal;
+}
+
+
+
+
+
+/* Subjects modal (detailed) */
+function showClassSubjectsModal(className){
+  const classDoc = (classesCache||[]).find(c => c.name === className || c.id === className) || { name: className, subjects: [] };
+  const classSubjects = Array.isArray(classDoc.subjects) ? classDoc.subjects : [];
+  const html = `
+    <div>
+      <div style="font-weight:900">Subjects — ${escapeHtmlLocal(classDoc.name)}</div>
+      <div style="margin-top:8px"><strong>Class:</strong> ${escapeHtmlLocal(classDoc.name)}</div>
+      <div style="margin-top:8px"><strong>Subjects assigned to the class:</strong></div>
+      <div class="muted" style="margin-top:6px">${classSubjects.length ? escapeHtmlLocal(classSubjects.join(', ')) : '<em>No subjects assigned</em>'}</div>
+      <div style="margin-top:12px;text-align:right"><button id="closeSub" class="btn btn-ghost">Close</button></div>
+    </div>
+  `;
+  showModal(`Subjects — ${escapeHtmlLocal(classDoc.name)}`, html);
+  modalBody.querySelector('#closeSub').onclick = closeModal;
+}
+
+/* OPEN PREVIEW — minimal header (no subject/date/periods) */
+async function openAdminPreviewClass(className){
+  try {
+    const classDoc = (classesCache||[]).find(c => c.name === className || c.id === className) || { name: className, subjects: [] };
+    let students = (studentsCache||[]).filter(s => String(s.classId||s.class||s.className||'') === String(classDoc.name));
+    if(!students.length){
+      const snaps = await getDocs(collection(db,'students'));
+      students = snaps.docs.map(d=>({ id:d.id, ...d.data() })).filter(s => String(s.classId||s.class||s.className||'') === String(classDoc.name));
+    }
+
+    // compute simple preview percent map (latest found)
+    const previewMap = {};
+    try {
+      const recsSnap = await getDocs(query(collection(db, ATT_RECORDS_COLL), where('class_id','==', classDoc.name)));
+      recsSnap.forEach(snap => {
+        const r = snap.data();
+        if(!Array.isArray(r.entries)) return;
+        r.entries.forEach(e => {
+          if(!previewMap[e.studentId]) previewMap[e.studentId] = e.percent || computePercentFromFlags(e.flags || []);
+        });
+      });
+    } catch(e){}
+
+    // render minimal header
+    document.getElementById('attendanceList').classList.add('hidden');
+    document.getElementById('attendanceClassView').classList.remove('hidden');
+
+    const headerHtml = `
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <button id="previewBackBtn" class="btn btn-ghost">← Back</button>
+        <div><strong>${escapeHtmlLocal(classDoc.name)}</strong><div class="muted small">ID: ${escapeHtmlLocal(classDoc.id||'')} • Students: ${students.length}</div></div>
+        <div style="margin-left:auto;display:flex;gap:8px">
+          <button id="previewTakeBtn" class="btn btn-primary">Take Attendance</button>
+          <div class="export-dropdown">
+            <button id="previewExportBtn" class="btn btn-ghost">Export ▾</button>
+            <div id="previewExportMenu" class="export-menu hidden">
+              <button id="previewExportPdf">Export PDF (view)</button>
+              <button id="previewExportCsv">Export CSV (view)</button>
+            </div>
+          </div>
+          <button id="previewHistoryBtn" class="btn btn-ghost">History</button>
+
+
+        </div>
+      </div>
+    `;
+    document.getElementById('attendanceClassHeader').innerHTML = headerHtml;
+
+    // rows preview
+    const rowsHtml = students.map((s, idx) => {
+      const sid = s.id || s.studentId || '';
+      const name = s.fullName || s.name || '';
+      const pct = previewMap[sid] !== undefined ? previewMap[sid] : 0;
+      return `<div class="att-row" data-student="${escapeHtmlLocal(sid)}" style="display:flex;gap:12px;padding:10px;border-bottom:1px solid #f4f6f9;align-items:center">
+        <div style="width:36px">${idx+1}</div>
+        <div style="min-width:120px">${escapeHtmlLocal(sid)}</div>
+        <div style="flex:1;font-weight:800">${escapeHtmlLocal(name)}</div>
+        <div style="width:64px;text-align:right"><small class="row-pct">${pct}%</small></div>
+      </div>`;
+    }).join('');
+    document.getElementById('attendanceClassEditor').innerHTML = rowsHtml;
+
+    // wires
+    document.getElementById('previewBackBtn').onclick = () => {
+      document.getElementById('attendanceClassView').classList.add('hidden');
+      document.getElementById('attendanceList').classList.remove('hidden');
+      document.getElementById('attendanceClassHeader').innerHTML = '';
+      document.getElementById('attendanceClassEditor').innerHTML = '';
+    };
+
+    document.getElementById('previewExportBtn').onclick = (e) => {
+      e.stopPropagation();
+      document.getElementById('previewExportMenu').classList.toggle('hidden');
+    };
+    document.getElementById('previewExportPdf').onclick = async () => {
+      document.getElementById('previewExportMenu').classList.add('hidden');
+      await exportAllSubjectsForClass(classDoc.name, 'pdf');
+    };
+    document.getElementById('previewExportCsv').onclick = async () => {
+      document.getElementById('previewExportMenu').classList.add('hidden');
+      await exportAllSubjectsForClass(classDoc.name, 'csv');
+    };
+
+    document.getElementById('previewTakeBtn').onclick = () => {
+      // when user clicks Take Attendance we show the editor UI with subject/date/period selection.
+      renderAdminEditorStarter(classDoc, students);
+    };
+
+    document.getElementById('previewHistoryBtn').onclick = () => openAttendanceHistory(classDoc.name);
+
+  } catch(err){
+    console.error('openAdminPreviewClass failed', err);
+    toast('Failed to open class preview.');
   }
 }
 
-// call once after render
-hideDesktopHeadersOnMobile();
-
-  const classSel = document.getElementById('attClass');
-  classSel.innerHTML = '<option value="">Select class</option>' + (classesCache||[]).map(c => `<option value="${escape(c.name)}">${escape(c.name)}</option>`).join('');
-  const subjSel = document.getElementById('attSubject');
-  subjSel.innerHTML = '<option value="">Subject (optional)</option>' + (subjectsCache||[]).map(s => `<option value="${escape(s.name)}">${escape(s.name)}</option>`).join('');
-  document.getElementById('attDate').value = new Date().toISOString().slice(0,10);
-
-  document.getElementById('attMark').onclick = openMarkAttendanceModal;
-  document.getElementById('attExport').onclick = async () => {
-    const classId = document.getElementById('attClass').value;
-    const dateISO = document.getElementById('attDate').value;
-    if(!classId || !dateISO) return toast('Select class and date');
-    await exportAttendanceCSV(classId, dateISO);
+/* Start editor: minimal overlay to choose subject/date/periods then open full editor */
+function renderAdminEditorStarter(classDoc, students){
+  // show small inline form then call renderAdminEditor with chosen options
+  const header = document.getElementById('attendanceClassHeader');
+  header.innerHTML = `
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <button id="editorStarterBack" class="btn btn-ghost">← Back</button>
+      <div><strong>${escapeHtmlLocal(classDoc.name)}</strong><div class="muted small">Students: ${students.length}</div></div>
+      <label>Subject
+        <select id="editorStarterSubject">${(classDoc.subjects && classDoc.subjects.length ? `<option value="">Select subject</option>` : `<option value="">No subjects</option>`) + (classDoc.subjects||[]).map(s=>`<option value="${escapeHtmlLocal(s)}">${escapeHtmlLocal(s)}</option>`).join('')}</select>
+      </label>
+      <label>Date <input id="editorStarterDate" type="date" value="${nowLocalISODate()}" /></label>
+      <label>Periods
+        <select id="editorStarterPeriods"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select>
+      </label>
+      <div style="margin-left:auto;display:flex;gap:8px">
+        <button id="editorStarterOpen" class="btn btn-primary">Open Editor</button>
+      </div>
+    </div>
+  `;
+  // wire
+  document.getElementById('editorStarterBack').onclick = () => {
+    openAdminPreviewClass(classDoc.name);
+  };
+  document.getElementById('editorStarterOpen').onclick = () => {
+    const subj = document.getElementById('editorStarterSubject').value;
+    const dateVal = document.getElementById('editorStarterDate').value || nowLocalISODate();
+    const periods = Number(document.getElementById('editorStarterPeriods').value || 2);
+    // open editor with values
+    renderAdminEditor(classDoc, students, subj || '', dateVal, periods);
   };
 }
 
-/* load attendance records for class+date */
-async function loadAttendanceForDate(classId, dateISO){
-  try{
-    const q = query(collection(db,'attendance'), where('class_id','==',classId), where('date','==',dateISO));
-    const snap = await getDocs(q);
-    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
-  }catch(err){
-    console.error('loadAttendanceForDate failed', err);
-    return [];
+/* Render admin editor (full) */
+async function renderAdminEditor(classDoc, students, subjectName, dateVal, periodsVal){
+  const classSubjects = Array.isArray(classDoc.subjects) ? classDoc.subjects : [];
+  // header for editor with controls
+  const headerHtml = `
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <button id="editorBackBtn" class="btn btn-ghost">← Back</button>
+      <div><strong>${escapeHtmlLocal(classDoc.name)}</strong><div class="muted small">Total students: ${students.length}</div></div>
+      <label>Subject
+        <select id="editorSubject">${(classSubjects.length ? `<option value="">Select subject</option>` : `<option value="">No subjects</option>`) + classSubjects.map(s=>`<option value="${escapeHtmlLocal(s)}">${escapeHtmlLocal(s)}</option>`).join('')}</select>
+      </label>
+      <label>Date <input id="editorDate" type="date" value="${escapeHtmlLocal(dateVal || nowLocalISODate())}" /></label>
+      <label>Periods
+        <select id="editorPeriods"><option value="1">1</option><option value="2" ${periodsVal===2?'selected':''}>2</option><option value="3" ${periodsVal===3?'selected':''}>3</option><option value="4" ${periodsVal===4?'selected':''}>4</option></select>
+      </label>
+      <div style="margin-left:auto;display:flex;gap:8px">
+        <button id="editorCheckAll" class="btn btn-ghost">Check all</button>
+        <button id="editorSave" class="btn btn-primary">Save Attendance</button>
+        <div class="export-dropdown">
+          <button id="editorExportBtn" class="btn btn-ghost">Export ▾</button>
+          <div id="editorExportMenu" class="export-menu hidden">
+            <button id="editorExportPdf">Export PDF</button>
+            <button id="editorExportCsv">Export CSV</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  document.getElementById('attendanceClassHeader').innerHTML = headerHtml;
+  const editor = document.getElementById('attendanceClassEditor');
+  editor.innerHTML = `<div class="muted">Loading attendance editor…</div>`;
+
+  // helper: load existing record if exists for admin (subject required)
+  const subj = subjectName || '';
+  const adminRecId = `${String(classDoc.name).replace(/\s+/g,'_')}__${String(subj||'ALL').replace(/\s+/g,'_')}__${dateVal}__admin`;
+
+  async function loadAndRender(periods){
+    let existingMap = {};
+    if(subj){
+      try {
+        const snap = await getDoc(doc(db, ATT_RECORDS_COLL, adminRecId));
+        if(snap && snap.exists()){
+          const rec = snap.data();
+          (rec.entries || []).forEach(e => existingMap[e.studentId] = e.flags || Array.from({length:rec.periods_count||periods}).map(()=>false));
+        }
+      } catch(e){ console.warn('load admin rec failed', e); }
+    }
+    // render rows
+    const rows = students.map((s, idx) => {
+      const sid = s.id || s.studentId || '';
+      const name = s.fullName || s.name || '';
+      const flags = (existingMap && existingMap[sid]) ? existingMap[sid].slice(0,periods).concat(Array.from({length:Math.max(0, periods - (existingMap[sid].length||0))}).map(()=>false)) : Array.from({length:periods}).map(()=>false);
+      const checkboxes = flags.map((f,i) => `<label style="margin-right:8px"><input class="admin-att-chk" data-student="${escapeHtmlLocal(sid)}" data-period="${i}" type="checkbox" ${f ? 'checked' : ''} />P${i+1}</label>`).join('');
+      const percent = computePercentFromFlags(flags);
+      return `<div class="att-row-admin att-row" data-student="${escapeHtmlLocal(sid)}" style="display:flex;gap:12px;padding:10px;border-bottom:1px solid #f4f6f9;align-items:center">
+        <div style="width:36px">${idx+1}</div>
+        <div style="min-width:120px">${escapeHtmlLocal(sid)}</div>
+        <div style="flex:1">${escapeHtmlLocal(name)}</div>
+        <div style="min-width:260px;display:flex;gap:8px">${checkboxes}</div>
+        <div style="width:64px;text-align:right"><small class="row-pct">${percent}%</small></div>
+      </div>`;
+    }).join('');
+    const headerControls = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <div class="muted">Mark presence per selected period</div>
+      <div><small class="muted">Admin can edit anytime — undo available after save</small></div>
+    </div>`;
+    editor.innerHTML = headerControls + rows;
+
+    // attach checkbox listeners
+    Array.from(editor.querySelectorAll('.admin-att-chk')).forEach(c => {
+      c.onchange = (ev) => {
+        const sid = ev.currentTarget.dataset.student;
+        updateAdminRowPercentInEditor(sid);
+        updateEditorCheckAllLabel();
+      };
+    });
+    updateAllAdminPercentsInEditor(periods);
+    updateEditorCheckAllLabel();
   }
-}
 
-/* mark attendance modal */
-async function openMarkAttendanceModal(){
-  const classId = document.getElementById('attClass').value;
-  const dateISO = document.getElementById('attDate').value;
-  if(!classId) return toast('Choose class');
-  if(!dateISO) return toast('Choose date');
-  await loadStudents();
-  const students = (studentsCache||[]).filter(s => (s.classId || '') === classId);
-  const existing = await loadAttendanceForDate(classId, dateISO);
+  function updateAdminRowPercentInEditor(sid){
+    const chks = Array.from(document.querySelectorAll(`.admin-att-chk[data-student="${sid}"]`)).sort((a,b)=>Number(a.dataset.period)-Number(b.dataset.period));
+    const flags = chks.map(c => c.checked);
+    const pct = computePercentFromFlags(flags);
+    const row = editor.querySelector(`.att-row-admin[data-student="${sid}"]`);
+    if(row){ const el = row.querySelector('.row-pct'); if(el) el.textContent = `${pct}%`; }
+  }
+  function updateAllAdminPercentsInEditor(periodsCount){
+    const uniq = [...new Set(Array.from(editor.querySelectorAll('.admin-att-chk')).map(c=>c.dataset.student))];
+    uniq.forEach(updateAdminRowPercentInEditor);
+  }
+  function toggleEditorCheckAll(periodsCount){
+    const allChks = Array.from(editor.querySelectorAll('.admin-att-chk'));
+    if(allChks.length === 0) return;
+    const anyUnchecked = allChks.some(c => !c.checked);
+    allChks.forEach(c => c.checked = anyUnchecked ? true : false);
+    updateAllAdminPercentsInEditor(periodsCount);
+  }
+  function updateEditorCheckAllLabel(){
+    const btn = document.getElementById('editorCheckAll');
+    if(!btn) return;
+    const allChks = Array.from(editor.querySelectorAll('.admin-att-chk'));
+    if(allChks.length === 0){ btn.textContent = 'Check all'; return; }
+    const allChecked = allChks.every(c => c.checked);
+    btn.textContent = allChecked ? 'Uncheck all' : 'Check all';
+  }
 
-  let html = `<div><strong>Class: ${escape(classId)}</strong> <div class="muted">Date: ${dateISO}</div></div>`;
-  html += `<div style="overflow:auto;margin-top:8px"><table style="width:100%;border-collapse:collapse"><thead><tr><th>No</th><th>ID</th><th>Name</th><th>Phone</th><th>Status</th><th>Note</th></tr></thead><tbody>`;
-  students.forEach((s, idx) => {
-    const rec = existing.find(r => r.student_id === (s.studentId || s.id));
-    const status = rec ? rec.status : 'absent';
-    const note = rec ? (rec.note || '') : '';
-    html += `<tr style="border-bottom:1px solid #f1f5f9">
-      <td style="padding:8px">${idx+1}</td>
-      <td style="padding:8px">${escape(s.studentId||s.id||'')}</td>
-      <td style="padding:8px">${escape(s.fullName||'')}</td>
-      <td style="padding:8px">${escape(s.parentPhone||s.phone||'')}</td>
-      <td style="padding:8px">
-        <select class="att-status" data-id="${escape(s.studentId||s.id)}">
-          <option value="present" ${status==='present'?'selected':''}>Present</option>
-          <option value="absent" ${status==='absent'?'selected':''}>Absent</option>
-          <option value="late" ${status==='late'?'selected':''}>Late</option>
-          <option value="excused" ${status==='excused'?'selected':''}>Excused</option>
-        </select>
-      </td>
-      <td style="padding:8px"><input class="att-note" data-id="${escape(s.studentId||s.id)}" value="${escape(note)}" /></td>
-    </tr>`;
-  });
-  html += `</tbody></table></div><div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end"><button id="attCancel" class="btn btn-ghost">Cancel</button><button id="attSave" class="btn btn-primary">Save</button></div>`;
-  showModal('Mark Attendance', html);
+  // wire header controls
+  document.getElementById('editorBackBtn').onclick = () => openAdminPreviewClass(classDoc.name);
 
-  modalBody.querySelector('#attCancel').onclick = closeModal;
-  modalBody.querySelector('#attSave').onclick = async () => {
-    try{
-      const statuses = Array.from(modalBody.querySelectorAll('.att-status')).map(s => ({ student_id: s.dataset.id, status: s.value }));
-      const notes = Array.from(modalBody.querySelectorAll('.att-note')).map(n => ({ student_id: n.dataset.id, note: n.value }));
-      for(const s of statuses){
-        const noteObj = notes.find(n => n.student_id === s.student_id);
-        const recId = `${classId}::${dateISO}::${s.student_id}`; // deterministic id avoids duplicates
-        const payload = {
-          class_id: classId,
-          date: dateISO,
-          subject_id: (document.getElementById('attSubject') && document.getElementById('attSubject').value) || null,
-          student_id: s.student_id,
-          status: s.status,
-          marked_by: currentUser ? currentUser.uid : null,
-          timestamp: Timestamp.now(),
-          note: noteObj ? noteObj.note : ''
-        };
-        await setDoc(doc(db,'attendance', recId), payload);
-      }
-      toast('Attendance saved');
-      closeModal();
-    }catch(err){
-      console.error('save attendance failed', err);
-      toast('Failed to save attendance');
+  document.getElementById('editorPeriods').onchange = () => {
+    const p = Number(document.getElementById('editorPeriods').value || 2);
+    // reload editor with new period count (preserving subject/date)
+    const subj = document.getElementById('editorSubject').value || '';
+    const date = document.getElementById('editorDate').value || nowLocalISODate();
+    renderAdminEditor(classDoc, students, subj, date, p);
+  };
+
+  document.getElementById('editorCheckAll').onclick = () => {
+    const p = Number(document.getElementById('editorPeriods').value || 2);
+    toggleEditorCheckAll(p);
+    updateEditorCheckAllLabel();
+  };
+
+  document.getElementById('editorExportBtn').onclick = (e) => {
+    e.stopPropagation();
+    document.getElementById('editorExportMenu').classList.toggle('hidden');
+  };
+  document.getElementById('editorExportPdf').onclick = async () => {
+    document.getElementById('editorExportMenu').classList.add('hidden');
+    const subj = document.getElementById('editorSubject').value || '';
+    const date = document.getElementById('editorDate').value || nowLocalISODate();
+    await exportAttendanceCSVorPDF(classDoc.name, date, subj, 'pdf');
+  };
+  document.getElementById('editorExportCsv').onclick = async () => {
+    document.getElementById('editorExportMenu').classList.add('hidden');
+    const subj = document.getElementById('editorSubject').value || '';
+    const date = document.getElementById('editorDate').value || nowLocalISODate();
+    await exportAttendanceCSVorPDF(classDoc.name, date, subj, 'csv');
+  };
+
+  document.getElementById('editorSave').onclick = async () => {
+    const subj = document.getElementById('editorSubject').value || '';
+    const date = document.getElementById('editorDate').value || nowLocalISODate();
+    const periods = Number(document.getElementById('editorPeriods').value || 2);
+    if(!subj) return toast('Select a subject before saving.');
+    if(!classSubjects.includes(subj)) return toast('Cannot save: subject is not assigned to this class.');
+
+    // gather entries
+    const rows = Array.from(document.querySelectorAll('.att-row-admin'));
+    if(rows.length === 0) return toast('No students loaded.');
+    const entries = rows.map(r => {
+      const sid = r.dataset.student;
+      const chks = Array.from(r.querySelectorAll('.admin-att-chk')).filter(c => c.dataset.student === sid).sort((a,b)=>Number(a.dataset.period)-Number(b.dataset.period));
+      const flags = chks.map(c => !!c.checked);
+      return { studentId: sid, flags, present_count: flags.reduce((s,f)=> s + (f?1:0), 0), percent: computePercentFromFlags(flags) };
+    });
+
+    const adminRecId = `${String(classDoc.name).replace(/\s+/g,'_')}__${String(subj).replace(/\s+/g,'_')}__${date}__admin`;
+    try {
+      const data = {
+        class_id: classDoc.name,
+        subject_id: subj,
+        date,
+        periods_count: periods,
+        entries,
+        saved_at: Timestamp.now(),
+        last_edited_by: (typeof currentUser !== 'undefined' && currentUser && currentUser.uid) ? currentUser.uid : (currentUser && currentUser.id) || 'admin',
+        last_edited_at: Timestamp.now(),
+        editor_role: 'admin'
+      };
+      await setDoc(doc(db, ATT_RECORDS_COLL, adminRecId), data, { merge: true });
+      toast('Attendance saved (admin).');
+
+      // undo logic
+      if(lastAdminSave && lastAdminSave.timeoutId) { clearTimeout(lastAdminSave.timeoutId); lastAdminSave = null; }
+      lastAdminSave = {
+        id: adminRecId,
+        timeoutId: setTimeout(() => { lastAdminSave = null; hideUndo(); }, 8000)
+      };
+      showUndo(`Saved ${classDoc.name} • ${subj} • ${date}`, async () => {
+        // delete doc if deleteDoc is available
+        try {
+          if(typeof deleteDoc === 'function'){
+            await deleteDoc(doc(db, ATT_RECORDS_COLL, adminRecId));
+            toast('Undo successful — attendance removed.');
+            openAdminPreviewClass(classDoc.name);
+          } else {
+            toast('Undo not available (deleteDoc missing).');
+          }
+        } catch(err){
+          console.error('undo delete failed', err);
+          toast('Undo failed. See console.');
+        } finally {
+          if(lastAdminSave && lastAdminSave.timeoutId) { clearTimeout(lastAdminSave.timeoutId); lastAdminSave = null; }
+          hideUndo();
+        }
+      });
+
+    } catch(err){
+      console.error('admin save attendance failed', err);
+      toast('Failed to save (see console).');
     }
   };
+
+  // initial selection
+  if(subjectName) document.getElementById('editorSubject').value = subjectName;
+  await loadAndRender(Number(periodsVal || 2));
 }
 
-/* export attendance CSV for class/date */
-async function exportAttendanceCSV(classId, dateISO){
-  const recs = await loadAttendanceForDate(classId, dateISO);
-  const rows = [['StudentID','Name','Date','Class','Status','Note']];
-  for(const r of recs){
-    const stu = (studentsCache||[]).find(s => s.studentId === r.student_id || s.id === r.student_id);
-    rows.push([r.student_id, stu ? stu.fullName : '', r.date, r.class_id, r.status, r.note || '']);
-  }
-  const csv = rows.map(r => r.map(c => '"' + String(c||'').replace(/"/g,'""') + '"').join(',')).join('\n');
-  const blob = new Blob([csv], { type: 'text/csv' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a'); a.href = url; a.download = `attendance-${classId}-${dateISO}.csv`; a.click(); URL.revokeObjectURL(url);
+/* show undo snackbar */
+function showUndo(infoText, undoFn){
+  const snk = document.getElementById('adminUndoSnk');
+  const infoEl = document.getElementById('adminUndoInfo');
+  const btn = document.getElementById('adminUndoBtn');
+  if(!snk || !infoEl || !btn) return;
+  infoEl.textContent = infoText;
+  snk.style.display = 'block';
+  btn.onclick = () => { undoFn && undoFn(); snk.style.display = 'none'; };
 }
+function hideUndo(){ const snk = document.getElementById('adminUndoSnk'); if(snk) snk.style.display = 'none'; }
+
+/* Attendance history view — lists saved structured records for class with filters and edit */
+async function openAttendanceHistory(className){
+  const classDoc =
+  (classesCache || []).find(c => c.name === className || c.id === className)
+  || { name: className, subjects: [] };
+
+const students =
+  (studentsCache || []).filter(
+    s => String(s.classId || s.class || s.className || '') === String(classDoc.name)
+  );
+
+  try {
+    // header
+    document.getElementById('attendanceList').classList.add('hidden');
+    document.getElementById('attendanceClassView').classList.remove('hidden');
+
+    document.getElementById('attendanceClassHeader').innerHTML = `
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <button id="histBackBtn" class="btn btn-ghost">← Back</button>
+        <div><strong>History • ${escapeHtmlLocal(className)}</strong></div>
+        <input id="histSearch" placeholder="Search teacher id/name or date (YYYY-MM-DD)..." style="margin-left:8px;padding:6px 8px;border-radius:8px;border:1px solid #eef2f7;min-width:240px" />
+        <div style="margin-left:auto;display:flex;gap:8px">
+          <button id="histRefresh" class="btn btn-ghost">Refresh</button>
+        </div>
+      </div>
+    `;
+    const editor = document.getElementById('attendanceClassEditor');
+    editor.innerHTML = `<div class="muted">Loading history…</div>`;
+
+    document.getElementById('histBackBtn').onclick = () => {
+      document.getElementById('attendanceClassView').classList.add('hidden');
+      document.getElementById('attendanceList').classList.remove('hidden');
+      document.getElementById('attendanceClassHeader').innerHTML = '';
+      document.getElementById('attendanceClassEditor').innerHTML = '';
+    };
+
+    async function loadHistory(){
+      const recsSnap = await getDocs(query(collection(db, ATT_RECORDS_COLL), where('class_id','==', className)));
+      const recs = recsSnap.docs.map(d => ({ id:d.id, ...d.data() }));
+      // sort desc by date or saved_at
+      recs.sort((a,b) => ((b.date||b.saved_at||'') + '').localeCompare((a.date||a.saved_at||'')));
+
+      // build rows
+      const rows = recs.map(r => {
+        const editorLabel = r.editor_role || '';
+        const by = r.last_edited_by || r.created_by || '';
+        const when = r.saved_at ? (r.saved_at.seconds ? new Date(r.saved_at.seconds*1000).toISOString().slice(0,19).replace('T',' ') : String(r.saved_at)) : (r.date||'');
+        const totalStudents = (r.entries || []).length;
+        const teacherId = r.teacher_id || r.created_by || '';
+        return `<div class="history-row" data-id="${escapeHtmlLocal(r.id)}" style="display:flex;gap:8px;align-items:center;padding:10px;border-bottom:1px solid #eef2f9">
+          <div style="min-width:40px">${escapeHtmlLocal(r.date||'')}</div>
+          <div style="flex:1">
+            <div style="font-weight:800">${escapeHtmlLocal(r.subject_id||r.subject||'')}</div>
+            <div class="muted">By: ${escapeHtmlLocal(by || teacherId)} ${editorLabel ? '('+escapeHtmlLocal(editorLabel)+')' : ''} • Saved: ${escapeHtmlLocal(when)}</div>
+          </div>
+          <div style="min-width:120px;text-align:right" class="muted">Students: ${totalStudents}</div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-ghost viewRec" data-id="${escapeHtmlLocal(r.id)}">View</button>
+            <button class="btn btn-ghost editRec" data-id="${escapeHtmlLocal(r.id)}">Edit</button>
+          </div>
+        </div>`;
+      }).join('');
+      editor.innerHTML = rows || '<div class="muted">No history found.</div>';
+
+      // wire view/edit
+      editor.querySelectorAll('.viewRec').forEach(b => b.onclick = async (ev) => {
+        const id = ev.currentTarget.dataset.id;
+        const snap = await getDoc(doc(db, ATT_RECORDS_COLL, id));
+        if(!snap.exists()) return toast('Record not found.');
+        const rec = snap.data();
+        // show modal with details
+        const details = (rec.entries||[]).map(e => {
+          return `<div style="padding:6px;border-bottom:1px solid #f3f4f6"><strong>${escapeHtmlLocal(e.studentId)}</strong> — ${escapeHtmlLocal(String(e.percent || computePercentFromFlags(e.flags||[])))}% • Present: ${e.present_count || 0} / ${rec.periods_count || 0}</div>`;
+        }).join('');
+        showModal(`Record • ${escapeHtmlLocal(rec.subject_id||rec.subject||'')}`, `<div>Date: ${escapeHtmlLocal(rec.date||'')}</div><div style="margin-top:8px">${details}</div><div style="text-align:right;margin-top:8px"><button id="closeRec" class="btn btn-ghost">Close</button></div>`);
+        modalBody.querySelector('#closeRec').onclick = closeModal;
+      });
+
+      editor.querySelectorAll('.editRec').forEach(b => b.onclick = async (ev) => {
+        const id = ev.currentTarget.dataset.id;
+        const snap = await getDoc(doc(db, ATT_RECORDS_COLL, id));
+        if(!snap.exists()) return toast('Record not found.');
+        const rec = { id: snap.id, ...snap.data() };
+        // To edit, we open the editor with the record content:
+        // Build students list from class (we already have students param), and prefill flags map
+        const flagsMap = {};
+        (rec.entries || []).forEach(e => { flagsMap[e.studentId] = e.flags || []; });
+        // render editor with prefilled map (we'll provide a helper that accepts existing map)
+        renderAdminEditorWithMap(classDoc, students, rec.subject_id || rec.subject || '', rec.date || nowLocalISODate(), rec.periods_count || 2, rec.id, flagsMap);
+      });
+    }
+
+    document.getElementById('histRefresh').onclick = loadHistory;
+    document.getElementById('histSearch').oninput = () => {
+      // a tiny client-side filter by teacher id/name or date (we simply reload and filter)
+      loadHistory().then(() => {
+        const q = (document.getElementById('histSearch').value||'').trim().toLowerCase();
+        if(!q) return;
+        const editor = document.getElementById('attendanceClassEditor');
+        Array.from(editor.querySelectorAll('.history-row')).forEach(row => {
+          const text = (row.textContent || '').toLowerCase();
+          row.style.display = text.includes(q) ? '' : 'none';
+        });
+      });
+    };
+
+    // initial load
+    await (async ()=> {
+      await new Promise(r => setTimeout(r,50)); // tiny wait for UI
+      await (async () => {
+        const recsSnap = await getDocs(query(collection(db, ATT_RECORDS_COLL), where('class_id','==', className)));
+        // then call loadHistory via same function
+        await document.getElementById('histRefresh').onclick();
+      })();
+    })();
+
+  } catch(err){
+    console.error('openAttendanceHistory failed', err);
+    toast('Failed to load history.');
+  }
+}
+
+/* Helper: edit a specific record (prefill map) */
+async function renderAdminEditorWithMap(classDoc, students, subjectName, dateVal, periodsVal, recordId, flagsMap){
+  // very similar to renderAdminEditor, but we prefill flagsMap and use recordId when saving to update instead of new admin id
+  // For brevity reuse renderAdminEditor but after it loads override checkboxes based on flagsMap
+  await renderAdminEditor(classDoc, students, subjectName, dateVal, periodsVal);
+  // now apply flagsMap to checkboxes
+  try {
+    const editor = document.getElementById('attendanceClassEditor');
+    Array.from(editor.querySelectorAll('.admin-att-chk')).forEach(chk => {
+      const sid = chk.dataset.student;
+      const p = Number(chk.dataset.period || 0);
+      if(flagsMap && flagsMap[sid] && typeof flagsMap[sid][p] !== 'undefined'){
+        chk.checked = !!flagsMap[sid][p];
+      }
+    });
+    updateAllAdminPercentsInEditor(periodsVal);
+    updateEditorCheckAllLabel();
+    // override save handler to update this record id (instead of adminRecId)
+    const saveBtn = document.getElementById('editorSave');
+    if(saveBtn){
+      saveBtn.onclick = async () => {
+        const subj = document.getElementById('editorSubject').value || '';
+        const date = document.getElementById('editorDate').value || nowLocalISODate();
+        const periods = Number(document.getElementById('editorPeriods').value || 2);
+        if(!subj) return toast('Select a subject before saving.');
+        // gather entries
+        const rows = Array.from(document.querySelectorAll('.att-row-admin'));
+        if(rows.length === 0) return toast('No students loaded.');
+        const entries = rows.map(r => {
+          const sid = r.dataset.student;
+          const chks = Array.from(r.querySelectorAll('.admin-att-chk')).filter(c => c.dataset.student === sid).sort((a,b)=>Number(a.dataset.period)-Number(b.dataset.period));
+          const flags = chks.map(c => !!c.checked);
+          return { studentId: sid, flags, present_count: flags.reduce((s,f)=> s + (f?1:0), 0), percent: computePercentFromFlags(flags) };
+        });
+        try {
+          const data = {
+            class_id: classDoc.name,
+            subject_id: subj,
+            date,
+            periods_count: periods,
+            entries,
+            saved_at: Timestamp.now(),
+            last_edited_by: (typeof currentUser !== 'undefined' && currentUser && currentUser.uid) ? currentUser.uid : (currentUser && currentUser.id) || 'admin',
+            last_edited_at: Timestamp.now(),
+            editor_role: 'admin'
+          };
+          await setDoc(doc(db, ATT_RECORDS_COLL, recordId), data, { merge: true });
+          toast('Attendance updated (admin).');
+          openAdminPreviewClass(classDoc.name);
+        } catch(err){
+          console.error('update record failed', err);
+          toast('Update failed. See console.');
+        }
+      };
+    }
+  } catch(e){ console.warn('renderAdminEditorWithMap: fallback', e); }
+}
+
+/* EXPORT attendance helper (class + date + subject) */
+async function exportAttendanceCSVorPDF(className, dateISO, subjectName = '', format = 'csv'){
+  try {
+    const recsSnap = await getDocs(query(collection(db, ATT_RECORDS_COLL), where('class_id','==', className), where('date','==', dateISO)));
+    let recs = recsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    if(subjectName) recs = recs.filter(r => String(r.subject_id || r.subject || '') === String(subjectName));
+
+    if(recs.length === 0){
+      // fallback to legacy
+      const oldSnap = await getDocs(query(collection(db, LEGACY_ATT_COLL), where('class_id','==', className), where('date','==', dateISO)));
+      const rowsOld = oldSnap.docs.map(d => ({ id:d.id, ...d.data() }));
+      if(format === 'pdf'){
+        try {
+          const { jsPDF } = window.jspdf;
+          const doc = new jsPDF({ unit:'pt', format:'a4' });
+          await addPdfHeader(doc, `Attendance — ${className} — ${dateISO}`);
+          const body = rowsOld.map(r => [ r.date||dateISO, r.class_id||r.class||'', r.subject||r.subject_id||'', r.studentId||r.student_id||'', r.status||'', r.note||'' ]);
+          doc.autoTable({ startY: 110, head: [['Date','Class','Subject','StudentId','Status','Note']], body, margin:{left:40, right:40}, styles:{fontSize:9} });
+          doc.save(`attendance_${className}_${dateISO}.pdf`);
+        } catch(e){
+          const csv = ['date,class,subject,studentId,status,note'].join(',') + '\n' + rowsOld.map(r => `${dateISO},${className},${r.subject||''},${r.studentId||''},${r.status||''},"${(r.note||'').replace(/"/g,'""')}"`).join('\n');
+          const blob = new Blob([csv], { type: 'text/csv' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href=url; a.download=`attendance_${className}_${dateISO}.csv`; a.click(); URL.revokeObjectURL(url);
+        }
+      } else {
+        const csv = ['date,class,subject,studentId,status,note'].join(',') + '\n' + rowsOld.map(r => `${dateISO},${className},${r.subject||''},${r.studentId||''},${r.status||''},"${(r.note||'').replace(/"/g,'""')}"`).join('\n');
+        const blob = new Blob([csv], { type: 'text/csv' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href=url; a.download=`attendance_${className}_${dateISO}.csv`; a.click(); URL.revokeObjectURL(url);
+      }
+      toast('Export complete (legacy data).');
+      return;
+    }
+
+    // combine rows
+    const rows = [];
+    recs.forEach(r => {
+      (r.entries || []).forEach(e => {
+        rows.push({ date: r.date || dateISO, class: r.class_id, subject: r.subject_id || r.subject || '', studentId: e.studentId, present_count: e.present_count || 0, periods: r.periods_count || '', percent: e.percent || 0 });
+      });
+    });
+
+    if(format === 'csv'){
+      const lines = ['date,class,subject,studentId,present_count,periods,percent'];
+      rows.forEach(rr => lines.push(`${rr.date},${rr.class},${rr.subject},${rr.studentId},${rr.present_count},${rr.periods},${rr.percent}`));
+      const blob = new Blob([lines.join('\n')], { type: 'text/csv' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href=url; a.download=`attendance_${className}_${dateISO}.csv`; a.click(); URL.revokeObjectURL(url);
+      toast('CSV exported.');
+    } else {
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF({ unit:'pt', format:'a4' });
+      await addPdfHeader(doc, `Attendance — ${className} — ${dateISO}`);
+      const body = rows.map(r => [ r.date || '', r.class || '', r.subject || '', r.studentId || '', String(r.present_count||0), String(r.periods || ''), String(r.percent||0) ]);
+      doc.autoTable({ startY: 110, head: [['Date','Class','Subject','StudentId','Present','Periods','%']], body, margin:{left:40, right:40}, styles:{fontSize:9} });
+      doc.save(`attendance_${className}_${dateISO}.pdf`);
+      toast('PDF exported.');
+    }
+
+  } catch(err){
+    console.error('exportAttendanceCSVorPDF failed', err);
+    toast('Export failed. See console.');
+  }
+}
+
+/* Export aggregated per-class all-subjects report (student x subject percent) */
+async function exportAllSubjectsForClass(className, format='pdf'){
+  try {
+    const recsSnap = await getDocs(query(collection(db, ATT_RECORDS_COLL), where('class_id','==', className)));
+    const recs = recsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const perStudent = {};
+    const students = (studentsCache||[]).filter(s => String(s.classId||s.class||s.className||'') === String(className));
+    const studentMap = {}; students.forEach(s => studentMap[s.id || s.studentId] = s);
+
+    recs.forEach(r => {
+      const subj = r.subject_id || r.subject || '';
+      (r.entries || []).forEach(e => {
+        if(!perStudent[e.studentId]) perStudent[e.studentId] = { studentName: (studentMap[e.studentId] ? (studentMap[e.studentId].fullName || studentMap[e.studentId].name) : ''), subjects: {} };
+        const existing = perStudent[e.studentId].subjects[subj];
+        if(!existing || (e.percent || 0) > (existing.percent || 0)) {
+          perStudent[e.studentId].subjects[subj] = { percent: e.percent || computePercentFromFlags(e.flags||[]), savedAt: r.saved_at || r.date || '' };
+        }
+      });
+    });
+
+    const rows = [];
+    for(const sid in perStudent){
+      const p = perStudent[sid];
+      for(const subj in p.subjects){
+        rows.push({ studentId: sid, studentName: p.studentName || '', subject: subj, percent: p.subjects[subj].percent || 0 });
+      }
+    }
+    if(rows.length === 0) return toast('No structured attendance records found for this class.');
+
+    if(format === 'csv'){
+      const lines = ['studentId,studentName,subject,percent'];
+      rows.forEach(r => lines.push(`${r.studentId},"${(r.studentName||'').replace(/"/g,'""')}",${r.subject},${r.percent}`));
+      const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = `attendance_${className}_subjects.csv`; a.click(); URL.revokeObjectURL(url);
+      toast('CSV exported.');
+      return;
+    } else {
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF({ unit:'pt', format:'a4' });
+      await addPdfHeader(doc, `Class Attendance — ${className}`);
+      const body = rows.map(r => [ r.studentId || '', r.studentName || '', r.subject || '', String(r.percent || 0) + '%' ]);
+      doc.autoTable({ startY: 110, head: [['StudentId','StudentName','Subject','% Present']], body, margin:{left:40, right:40}, styles:{fontSize:9} });
+      doc.save(`attendance_${className}_subjects.pdf`);
+      toast('PDF exported.');
+    }
+
+  } catch(err){
+    console.error('exportAllSubjectsForClass failed', err);
+    toast('Export failed. See console.');
+  }
+}
+
+/* PDF header helper (logo optional) */
+async function addPdfHeader(doc, titleText){
+  try {
+    const logoUrl = 'assets/logo.png';
+    const img = new Image();
+    const p = new Promise((resolve) => {
+      img.onload = () => {
+        const w = img.width, h = img.height;
+        const maxW = 80, maxH = 80;
+        let dw = w, dh = h;
+        if(dw > maxW){ dh = dh * (maxW/dw); dw = maxW; }
+        if(dh > maxH){ dw = dw * (maxH/dh); dh = maxH; }
+        const canvas = document.createElement('canvas');
+        canvas.width = dw; canvas.height = dh;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, dw, dh);
+        const dURL = canvas.toDataURL('image/png');
+        try { doc.addImage(dURL, 'PNG', 40, 28, dw, dh); } catch(e){}
+        resolve();
+      };
+      img.onerror = () => resolve();
+    });
+    img.src = logoUrl;
+    await p;
+  } catch(e){ /* ignore */ }
+
+  doc.setFontSize(16);
+  doc.setFont(undefined, 'bold');
+  doc.text(titleText, 140, 56);
+  doc.setFontSize(10);
+  doc.setFont(undefined, 'normal');
+  doc.text('AL-FATXI School — Attendance Report', 140, 74);
+}
+
+/* END admin attendance code */
+
 
 /* ------------------------
   Users (admin) CRUD
