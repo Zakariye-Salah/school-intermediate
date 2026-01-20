@@ -314,6 +314,8 @@
 .att-editor{ margin-top:10px; background:#fff; border-radius:10px; padding:10px; border:1px solid #eef2f7; min-height:220px }
 
 /* row styles */
+
+
 .att-row{ display:flex; gap:12px; padding:10px; border-bottom:1px solid #f4f6f9; align-items:center }
 .att-row .name{ flex:1; font-weight:800 }
 .att-row .row-pct{ color:#6b7280; font-weight:800 }
@@ -375,6 +377,139 @@
   gap:8px;
 }
 
+
+/* ==== EXPORT DROPDOWN FIX ==== */
+
+.export-dropdown{
+  position: relative;
+  overflow: visible !important;
+}
+
+.export-menu{
+  position: absolute;
+  top: 110%;
+  right: 0;
+  z-index: 99999 !important;
+  background: #ffffff;
+  border-radius: 10px;
+  padding: 6px;
+  min-width: 160px;
+  box-shadow: 0 12px 30px rgba(0,0,0,0.18);
+  border: 1px solid #e5e7eb;
+}
+
+/* .export-menu.hidden{
+  display: none !important;
+} */
+
+.export-menu button{
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #f9fafb;
+  border: none;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.export-menu button:hover{
+  background: #eef2ff;
+}
+
+
+.modal-body,
+.modal-content{
+  overflow: visible !important;
+}
+
+
+/* ===== MOBILE ONLY: attendance student preview ===== */
+@media (max-width: 768px) {
+
+.att-row{
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+
+.att-row > div:first-child{
+  display:none; /* hide number column on mobile */
+}
+
+.att-row .name{
+  font-weight: 900;
+  font-size: 0.95rem;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* student id under name */
+.att-row .student-id-mobile{
+  font-family: monospace;
+  font-size: 0.78rem;
+  color: #6b7280;
+  font-weight: 700;
+  max-width: 120px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* percentage on the right */
+.att-row .row-pct{
+  align-self: flex-end;
+  font-weight: 900;
+  font-size: 0.85rem;
+  color: #0f172a;
+}
+}
+
+
+.export-dropdown{
+  position: relative;
+  overflow: visible !important;
+}
+
+.export-menu{
+  position: absolute;
+  top: 110%;
+  right: 0;
+  z-index: 99999;
+  background: #fff;
+  border-radius: 10px;
+  padding: 6px;
+  min-width: 160px;
+  box-shadow: 0 12px 30px rgba(0,0,0,0.18);
+  border: 1px solid #e5e7eb;
+  display: block;
+}
+
+.export-menu.hidden{
+  display: none !important;
+}
+
+.export-menu button{
+  width:100%;
+  padding:10px 12px;
+  border-radius:8px;
+  border:none;
+  background:#f9fafb;
+  font-weight:800;
+  cursor:pointer;
+  display:flex;
+  align-items:center;
+  gap:8px;
+}
+
+.export-menu button:hover{
+  background:#eef2ff;
+}
 
 </style>
 
