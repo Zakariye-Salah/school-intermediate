@@ -299,6 +299,83 @@
 }
 
 
+/* Admin attendance styles (paste into your admin styles) */
+.attendance-page-header{ display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px }
+.attendance-page-header select, .attendance-page-header input[type="date"]{ padding:8px 10px;border-radius:8px;border:1px solid #e6eef8 }
+.attendance-controls { margin-left:auto; display:flex; gap:8px; align-items:center; position:relative; }
+
+.attendance-cards { display:grid; grid-template-columns:1fr; gap:10px; margin-top:12px }
+.attendance-card{ padding:12px; border-radius:10px; background:#fff; border:1px solid #eef2f7; display:flex; justify-content:space-between; align-items:center; cursor:pointer }
+.attendance-card .meta{ color:#6b7280; font-weight:700; }
+.attendance-card .subjects{ font-size:0.88rem; color:#0f1724; margin-top:6px; }
+
+/* Single page class view (header + editor) */
+.att-class-header{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding:8px 0 }
+.att-editor{ margin-top:10px; background:#fff; border-radius:10px; padding:10px; border:1px solid #eef2f7; min-height:220px }
+
+/* row styles */
+.att-row{ display:flex; gap:12px; padding:10px; border-bottom:1px solid #f4f6f9; align-items:center }
+.att-row .name{ flex:1; font-weight:800 }
+.att-row .row-pct{ color:#6b7280; font-weight:800 }
+
+/* admin checkboxes */
+.admin-att-chk{ margin-right:6px }
+
+/* export dropdown */
+.export-menu{ position:absolute; right:0; top:38px; background:#fff; border:1px solid #eef2f7; padding:8px; border-radius:8px; box-shadow:0 8px 30px rgba(2,6,23,0.06); z-index:120; display:none }
+.export-menu button{ display:block; width:100%; text-align:left; padding:8px 10px; border-radius:6px; background:transparent; border:none; cursor:pointer }
+
+/* small helpers */
+.hidden{ display:none }
+.muted{ color:#6b7280 }
+
+/* responsive: two-column cards on wide screens */
+@media(min-width:900px){ .attendance-cards{ grid-template-columns:1fr 1fr } }
+
+
+#attendanceClassView {
+  position: relative;
+  z-index: 20;
+}
+
+#attendanceList.hidden {
+  display: none !important;
+}
+
+.more-grid{
+  display:grid;
+  grid-template-columns: 1fr 1fr;
+  gap:10px;
+}
+
+.more-grid .full{
+  grid-column: 1 / -1;
+  display:flex;
+  justify-content:center;
+}
+
+.btn-open{ background:#2563eb; color:#fff; }
+.btn-subj{ background:#059669; color:#fff; }
+.btn-att{ background:#f59e0b; color:#111; }
+.btn-hist{ background:#7c3aed; color:#fff; }
+.btn-export{ background:#111827; color:#fff; }
+
+.btn svg{
+  margin-right:6px;
+}
+
+.export-menu{
+  min-width:140px;
+}
+
+.export-menu button{
+  width:100%;
+  display:flex;
+  align-items:center;
+  gap:8px;
+}
+
+
 </style>
 
 </head>
