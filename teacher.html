@@ -1,0 +1,78 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Teacher Portal</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="teacher.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      Teacher Portal
+      <div id="currentTeacherName" class="teacher-name muted small" aria-live="polite"></div>
+    </div>
+    <div class="right">
+      <button id="btnTeacherLogout" class="btn btn-ghost">Logout</button>
+    </div>
+  </header>
+
+  <nav class="nav">
+    <button id="tabProfile" class="tab active">Profile</button>
+    <button id="tabAttendance" class="tab">Attendance</button>
+  </nav>
+
+  <main class="container">
+    <section id="pageTeacherProfile" class="page" style="display:block"></section>
+
+    <section id="pageTeacherAttendance" class="page" style="display:none">
+      <div id="attendanceArea" class="attendance-area">
+        <!-- CLASSES area (cards) -->
+        <div id="classesArea" class="panel-area">
+          <div class="panel">
+            <div class="panel-header">
+              <strong>Your classes</strong>
+              <div class="muted small">Click a card to open</div>
+            </div>
+
+            <div style="margin-top:8px;display:flex;gap:8px;align-items:center">
+              <select id="classFilter" class="select">
+                <option value="__all">All assigned classes</option>
+              </select>
+              <input id="classSearch" placeholder="Search class..." class="input-mini" />
+            </div>
+
+            <div id="classesGrid" class="cards-grid" aria-live="polite" style="margin-top:12px">
+              Loading classes…
+            </div>
+          </div>
+        </div>
+
+        <!-- CLASS VIEW area (hidden until a class opens) -->
+        <div id="classView" class="panel-area hidden">
+          <div id="attendanceHeader" class="panel">
+            <div id="attendanceHeaderInner"><!-- replaced dynamically --></div>
+          </div>
+
+          <div id="attendanceEditor" class="panel" style="min-height:200px">
+            <div class="muted">Choose a class from the list.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Modal -->
+  <div id="modalBackdrop" class="modal-backdrop" style="display:none">
+    <div id="modal" class="modal">
+      <button id="modalClose" class="modal-close">✕</button>
+      <h3 id="modalTitle"></h3>
+      <div id="modalBody"></div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" style="display:none"></div>
+
+  <script type="module" src="teacher.js"></script>
+</body>
+</html>

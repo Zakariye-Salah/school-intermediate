@@ -1,0 +1,70 @@
+/* teacher.css - single-pane attendance flow */
+:root{
+  --bg:#ffffff;
+  --muted:#6b7280;
+  --primary:#2563eb;
+  --surface:#f8fafc;
+  --radius:8px;
+  --gap:12px;
+}
+
+*{box-sizing:border-box;font-family:Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;}
+body{margin:0;background:#fbfdff;color:#0f1724;}
+.topbar{display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid #eef2f7;background:#fff}
+.brand{font-weight:800;display:flex;flex-direction:column}
+.teacher-name{font-weight:600;margin-top:4px;color:var(--muted);}
+.right .btn{margin-left:8px}
+
+.nav{display:flex;gap:8px;padding:12px;border-bottom:1px solid #f1f5f9;background:#fff}
+.tab{background:#fff;border:1px solid #e6eef8;padding:6px 10px;border-radius:6px;cursor:pointer}
+.tab.active{background:var(--primary);color:#fff;border-color:var(--primary)}
+
+.container{padding:16px;max-width:1100px;margin:0 auto}
+.attendance-area{display:flex;flex-direction:column;gap:16px}
+
+/* two main area boxes - classesArea and classView */
+.panel-area{display:block}
+.panel-area.hidden{display:none}
+
+.panel{background:#ffffff;border:1px solid #eef2f7;padding:12px;border-radius:10px;box-shadow:0 1px 2px rgba(12,18,35,0.03)}
+.panel-header{display:flex;flex-direction:column}
+
+.small{font-size:0.85rem}
+.muted{color:var(--muted)}
+.select{padding:6px 8px;border-radius:6px;border:1px solid #e6eef8}
+.input-mini{padding:6px 8px;border-radius:6px;border:1px solid #e6eef8;width:100%}
+
+/* card list (single column or responsive grid on small screens) */
+.cards-grid{display:grid;grid-template-columns:1fr;gap:8px}
+.card{padding:12px;border-radius:8px;border:1px solid #eef2f7;display:flex;justify-content:space-between;align-items:center;background:#fff;cursor:pointer}
+.card:hover{box-shadow:0 6px 20px rgba(2,6,23,0.06)}
+.card .meta{font-size:0.9rem;color:var(--muted)}
+.card .subjects{font-size:0.85rem;color:#0f1724;margin-top:6px}
+
+/* attendance editor rows */
+.att-row{display:flex;gap:12px;padding:8px;border-bottom:1px solid #f4f6f9;align-items:center}
+.att-row:last-child{border-bottom:none}
+.att-row .name{flex:1}
+.att-row small{color:var(--muted)}
+
+.btn{padding:8px 12px;border-radius:8px;border:1px solid transparent;background:transparent;cursor:pointer}
+.btn-ghost{background:#fff;border:1px solid #e6eef8}
+.btn-primary{background:var(--primary);color:#fff;border:1px solid var(--primary)}
+.btn-danger{background:#ef4444;color:#fff;border:1px solid #ef4444}
+
+.controls-sticky{position:sticky;top:12px;background:transparent;padding:6px 0;z-index:1}
+
+/* modal & toast */
+.modal-backdrop{position:fixed;inset:0;background:rgba(11,22,43,0.4);display:flex;align-items:center;justify-content:center;padding:12px}
+.modal{background:#fff;padding:16px;border-radius:10px;max-width:760px;width:100%;position:relative}
+.modal-close{position:absolute;right:10px;top:10px;border:none;background:transparent;font-size:18px;cursor:pointer}
+
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:18px;background:#111;color:#fff;padding:8px 12px;border-radius:8px;box-shadow:0 6px 18px rgba(2,6,23,0.25)}
+
+@media (max-width:900px){
+  .container{padding:12px}
+  .cards-grid{grid-template-columns:1fr 1fr}
+}
+@media (max-width:520px){
+  .cards-grid{grid-template-columns:1fr}
+}
