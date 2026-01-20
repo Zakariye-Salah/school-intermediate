@@ -7145,22 +7145,28 @@ async function openAdminPreviewClass(className){
    const shortId = String(sid).slice(-4);
 
    return `
-   <div class="att-row">
-     
-     <div class="name">
-       ${escapeHtmlLocal(name)}
+   <div class="att-row att-row-preview" data-student="${escapeHtmlLocal(sid)}">
+ 
+     <!-- LINE 1 -->
+     <div class="att-line att-line-1">
+       <div class="att-left">
+         <span class="att-no">${idx + 1}</span>
+         <span class="att-name">${escapeHtmlLocal(name)}</span>
+       </div>
+       <div class="row-pct">${pct}%</div>
      </div>
  
-     <div class="student-id-mobile">
-       ID • ${escapeHtmlLocal(shortId)}
-     </div>
- 
-     <div class="row-pct">
-       ${pct}%
+     <!-- LINE 2 -->
+     <div class="att-line att-line-2">
+       <label class="att-edit">
+         <input type="checkbox" class="preview-edit-chk" data-student="${escapeHtmlLocal(sid)}">
+         <span class="student-id">ID • ${escapeHtmlLocal(shortId)}</span>
+       </label>
      </div>
  
    </div>
  `;
+ 
  
     }).join('');
     document.getElementById('attendanceClassEditor').innerHTML = rowsHtml;
