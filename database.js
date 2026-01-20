@@ -7072,10 +7072,6 @@ function openClassMoreModal(className){
   modalBody.querySelector('#moreClose').onclick = closeModal;
 }
 
-
-
-
-
 /* Subjects modal (detailed) */
 function showClassSubjectsModal(className){
   const classDoc = (classesCache||[]).find(c => c.name === className || c.id === className) || { name: className, subjects: [] };
@@ -7146,12 +7142,26 @@ async function openAdminPreviewClass(className){
       const sid = s.id || s.studentId || '';
       const name = s.fullName || s.name || '';
       const pct = previewMap[sid] !== undefined ? previewMap[sid] : 0;
-      return `<div class="att-row" data-student="${escapeHtmlLocal(sid)}" style="display:flex;gap:12px;padding:10px;border-bottom:1px solid #f4f6f9;align-items:center">
-        <div style="width:36px">${idx+1}</div>
-        <div style="min-width:120px">${escapeHtmlLocal(sid)}</div>
-        <div style="flex:1;font-weight:800">${escapeHtmlLocal(name)}</div>
-        <div style="width:64px;text-align:right"><small class="row-pct">${pct}%</small></div>
-      </div>`;
+   const shortId = String(sid).slice(-4);
+
+   return `
+   <div class="att-row">
+     
+     <div class="name">
+       ${escapeHtmlLocal(name)}
+     </div>
+ 
+     <div class="student-id-mobile">
+       ID • ${escapeHtmlLocal(shortId)}
+     </div>
+ 
+     <div class="row-pct">
+       ${pct}%
+     </div>
+ 
+   </div>
+ `;
+ 
     }).join('');
     document.getElementById('attendanceClassEditor').innerHTML = rowsHtml;
 
