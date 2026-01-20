@@ -1203,187 +1203,395 @@ async function renderStudentTransactionsModal(studentId){
 // -------------------------------
 // Student-facing: attendance view (inline, not modal)
 // -------------------------------
+// main.js - improved renderStudentAttendanceModal
+// Assumes you have getDoc, doc, collection, query, where, getDocs available.
+
+// Replace your existing renderStudentAttendanceModal with this improved version.
+// It expects Firestore functions: getDoc, getDocs, collection, query, where, doc
+// and a global `db`. It will render into `resultArea` if present, otherwise open a modal.
+
+// Replace your existing renderStudentAttendanceModal with this function.
 async function renderStudentAttendanceModal(studentId){
-  try{
-    // fetch student info (best-effort)
+  // small helpers
+  function escapeHtml(s){ if(!s && s!==0) return ''; return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function computePercentFromFlags(flags){ if(!Array.isArray(flags)||flags.length===0) return 0; const present = flags.reduce((s,f)=>s + (f?1:0),0); return Math.round((present/flags.length)*100); }
+  function attendanceMessageForPercent(pct, name){
+    if(pct >= 100) return `<div style="padding:10px;border-radius:8px;background:#ecfdf5;color:#065f46">Congratulations, ${escapeHtml(name)}! Perfect attendance (${pct}%).</div>`;
+    if(pct >= 90) return `<div style="padding:10px;border-radius:8px;background:#ecfeff;color:#036666">Great job — excellent attendance (${pct}%).</div>`;
+    if(pct >= 80) return `<div style="padding:10px;border-radius:8px;background:#fff7ed;color:#92400e">Good — aim for 90%+ (${pct}%).</div>`;
+    if(pct >= 50) return `<div style="padding:10px;border-radius:8px;background:#fff1f2;color:#9f1239">Warning — your attendance is low (${pct}%). Please contact the school office.</div>`;
+    return `<div style="padding:10px;border-radius:8px;background:#fee2e2;color:#7f1d1d">Danger — very low attendance (${pct}%). Contact administration immediately.</div>`;
+  }
+
+  // canvas pie generator (returns dataURL)
+  function createPieDataUrl(presentPct, size = 180){
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    const W = size * dpr;
+    const H = size * dpr;
+    const cx = W/2, cy = H/2, r = Math.min(W,H)/2 - 6*dpr;
+    const c = document.createElement('canvas');
+    c.width = W; c.height = H;
+    const g = c.getContext('2d');
+    g.scale(dpr, dpr);
+
+    // base ring (light grey)
+    g.beginPath();
+    g.arc(size/2, size/2, r/dpr, 0, Math.PI*2);
+    g.fillStyle = '#f3f4f6';
+    g.fill();
+
+    if(!Number.isFinite(presentPct) || presentPct <= 0){
+      // no data -> black circle center to show 0%
+      g.beginPath();
+      g.arc(size/2, size/2, (r/dpr)*0.88, 0, Math.PI*2);
+      g.fillStyle = '#111'; // black inner
+      g.fill();
+    } else if(presentPct >= 100){
+      // full present -> full blue circle
+      g.beginPath();
+      g.arc(size/2, size/2, (r/dpr)*0.88, 0, Math.PI*2);
+      g.fillStyle = '#0ea5e9'; // blue
+      g.fill();
+    } else {
+      // draw absent (red) full inner, then draw present arc (blue) on top
+      // draw full inner as red (absent) proportion
+      g.beginPath();
+      g.arc(size/2, size/2, (r/dpr)*0.88, 0, Math.PI*2);
+      g.fillStyle = '#ef4444'; // red for absent base
+      g.fill();
+
+      const start = -Math.PI/2; // top
+      const sweep = (presentPct/100) * Math.PI * 2;
+      const end = start + sweep;
+
+      // draw present arc (blue)
+      g.beginPath();
+      g.moveTo(size/2, size/2);
+      g.arc(size/2, size/2, (r/dpr)*0.88, start, end, false);
+      g.closePath();
+      g.fillStyle = '#0ea5e9';
+      g.fill();
+    }
+
+    // draw inner donut to make ring look nicer (white center)
+    g.beginPath();
+    g.arc(size/2, size/2, (r/dpr)*0.6, 0, Math.PI*2);
+    g.fillStyle = 'rgba(255,255,255,0.98)';
+    g.fill();
+
+    // text percent
+    g.font = `${14 * (dpr)}px sans-serif`;
+    g.fillStyle = '#0f1724';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillText(`${Math.round(presentPct||0)}%`, size/2, size/2);
+
+    return c.toDataURL('image/png');
+  }
+
+  // render helpers
+  function showHtml(html){
+    if(typeof resultArea !== 'undefined' && resultArea){
+      resultArea.style.display = 'block';
+      resultArea.innerHTML = html;
+      try{ resultArea.scrollIntoView({ behavior:'smooth' }); }catch(e){}
+    } else {
+      showModal(`Attendance • ${escapeHtml(studentNameForHdr)}`, html);
+    }
+  }
+
+  // loaders if present
+  try { if(typeof showLoader === 'function') showLoader(); } catch(e){}
+
+  try {
+    // 1) load student
     let student = null;
     try {
       const sSnap = await getDoc(doc(db,'students', studentId));
-      if(sSnap.exists()) student = sSnap.data();
+      if(sSnap && sSnap.exists()) student = { id: sSnap.id, ...sSnap.data() };
     } catch(e){ console.warn('student lookup failed', e); }
+    const studentNameForHdr = (student && (student.fullName || student.name)) ? (student.fullName || student.name) : studentId;
+    const studentClassName = student ? (student.classId || student.class || student.className || '') : '';
 
-    // load attendance records
-    const q = query(collection(db,'attendance'), where('student_id','==', studentId));
-    const snap = await getDocs(q);
-    const recs = snap.docs.map(d=> ({ id:d.id, ...d.data() })).sort((a,b)=> {
-      // try ISO date first, fallback to createdAt
-      const da = a.date || (a.createdAt ? new Date(a.createdAt.seconds*1000).toISOString() : '');
-      const db_ = b.date || (b.createdAt ? new Date(b.createdAt.seconds*1000).toISOString() : '');
-      return db_ < da ? -1 : (db_ > da ? 1 : 0);
+    // 2) class doc subjects
+    let classSubjectsList = [];
+    try {
+      if(studentClassName){
+        const classesSnap = await getDocs(collection(db,'classes'));
+        classesSnap.forEach(snap => {
+          const d = snap.data();
+          if(String(d.name) === String(studentClassName) || snap.id === String(studentClassName)) {
+            if(Array.isArray(d.subjects)) classSubjectsList = d.subjects.slice();
+          }
+        });
+      }
+    } catch(e){ console.warn('class read failed', e); }
+
+    // 3) subjects map
+    const subjectsMap = {};
+    try {
+      const subsSnap = await getDocs(collection(db,'subjects'));
+      subsSnap.forEach(snap => {
+        const d = snap.data();
+        subjectsMap[snap.id] = d.name || d.title || snap.id;
+        if(d.name) subjectsMap[d.name] = d.name;
+      });
+    } catch(e){ /* ignore */ }
+
+    // 4) structured records
+    const structuredEntries = [];
+    try {
+      const recSnap = await getDocs(collection(db,'attendance_records'));
+      recSnap.forEach(snap => {
+        const r = snap.data();
+        if(studentClassName && r.class_id && String(r.class_id) !== String(studentClassName)) return;
+        if(!Array.isArray(r.entries)) return;
+        r.entries.forEach(e => {
+          if(String(e.studentId) === String(studentId)){
+            const percent = (typeof e.percent !== 'undefined') ? e.percent : computePercentFromFlags(e.flags || []);
+            structuredEntries.push({
+              source:'record',
+              recordId:snap.id,
+              date: r.date || '',
+              class: r.class_id || '',
+              subject: r.subject_id || r.subject || '',
+              periods: r.periods_count || r.periods || (e.flags ? e.flags.length : 0),
+              flags: e.flags || [],
+              present_count: (typeof e.present_count !== 'undefined') ? e.present_count : (e.flags ? e.flags.reduce((s,f)=>s + (f?1:0),0) : 0),
+              percent
+            });
+          }
+        });
+      });
+    } catch(e){ console.warn('attendance_records read failed', e); }
+
+    // 5) legacy attendance
+    const legacyRecs = [];
+    try {
+      const q1 = query(collection(db,'attendance'), where('studentId','==', studentId));
+      const snap1 = await getDocs(q1);
+      snap1.forEach(d => legacyRecs.push({ id:d.id, ...d.data() }));
+    } catch(e){ /* ignore */ }
+    try {
+      const q2 = query(collection(db,'attendance'), where('student_id','==', studentId));
+      const snap2 = await getDocs(q2);
+      snap2.forEach(d => legacyRecs.push({ id:d.id, ...d.data() }));
+    } catch(e){ /* ignore */ }
+
+    const normalizedLegacy = legacyRecs.map(r => {
+      const st = (r.status || r.attendance || '').toString().toLowerCase();
+      const present = (st === 'present' || st === 'p' || st === '1' || st === 'true');
+      return {
+        source:'legacy',
+        id: r.id,
+        date: r.date || (r.createdAt ? (r.createdAt.seconds ? new Date(r.createdAt.seconds*1000).toISOString().slice(0,10) : new Date(r.createdAt).toISOString().slice(0,10)) : ''),
+        class: r.class_id || r.class || '',
+        subject: r.subject || r.subject_id || '',
+        status: present ? 'present' : (st ? st : 'absent'),
+        note: r.note || ''
+      };
     });
 
-    const name = (student && (student.fullName || student.name || student.studentName)) ? escapeHtml(student.fullName || student.name || student.studentName) : escapeHtml(studentId);
-    const className = student ? escapeHtml(student.className || student.classId || '') : '';
+    // combine and sort by date (desc)
+    const combined = [...structuredEntries, ...normalizedLegacy];
+    combined.sort((a,b) => (b.date||'').localeCompare(a.date||''));
 
-    let html = `<div class="card"><div style="display:flex;justify-content:space-between;align-items:center">
-      <div>
-        <div style="font-weight:900">${name}</div>
-        <div class="muted">ID: ${escapeHtml(studentId)} ${className ? ' • Class: ' + className : ''}</div>
-      </div>
-      <div style="text-align:right"><div style="font-weight:700">Records: ${recs.length}</div></div>
-    </div></div>`;
+    // build subject set
+    const subjSet = new Set();
+    if(Array.isArray(classSubjectsList) && classSubjectsList.length) classSubjectsList.forEach(s=> subjSet.add(String(s)));
+    combined.forEach(r => { if(r.subject) subjSet.add(String(r.subject)); });
+    const availableSubjects = Array.from(subjSet).map(s => ({ id: s, label: subjectsMap[s] || s }));
 
-    html += `<div class="card" style="margin-top:10px;overflow:auto"><table style="width:100%;border-collapse:collapse">
-      <thead><tr style="text-align:left"><th>Date</th><th>Class</th><th>Subject</th><th>Status</th><th>Note</th></tr></thead><tbody>`;
+    // compute totals by subject filter
+    function computeTotals(filterSubject){
+      let totalPeriods = 0, totalPresent = 0;
+      normalizedLegacy.forEach(r => {
+        if(filterSubject && String(r.subject) !== String(filterSubject)) return;
+        totalPeriods += 1;
+        const st = (r.status||'').toString().toLowerCase();
+        if(st === 'present' || st === 'p') totalPresent += 1;
+      });
+      structuredEntries.forEach(r => {
+        if(filterSubject && String(r.subject) !== String(filterSubject)) return;
+        totalPeriods += (r.periods || 0);
+        totalPresent += (r.present_count || 0);
+      });
+      const totalAbsent = Math.max(0, totalPeriods - totalPresent);
+      const pct = totalPeriods ? Math.round((totalPresent/totalPeriods)*100) : 0;
+      return { totalPeriods, totalPresent, totalAbsent, percent: pct };
+    }
 
-    recs.forEach(r => {
-      const date = r.date || (r.createdAt ? new Date(r.createdAt.seconds*1000).toLocaleDateString() : '');
-      html += `<tr style="border-bottom:1px solid #f1f5f9">
-        <td style="padding:8px;white-space:nowrap">${escapeHtml(date)}</td>
-        <td style="padding:8px">${escapeHtml(r.class_id || r.class || '')}</td>
-        <td style="padding:8px">${escapeHtml(r.subject_id || r.subject || '')}</td>
-        <td style="padding:8px">${escapeHtml(r.status || '')}</td>
-        <td style="padding:8px">${escapeHtml(r.note || '')}</td>
-      </tr>`;
-    });
+    // initial selected subject
+    let selectedSubject = '';
 
-    html += `</tbody></table></div>`;
+    // function to render UI and attach handlers
+    function renderUI(){
+      const totals = computeTotals(selectedSubject);
+      const pieDataUrl = createPieDataUrl(totals.percent, 180);
+      const subjOptionsHtml = `<option value="">All subjects</option>` + availableSubjects.map(s => `<option value="${escapeHtml(s.id)}"${s.id === selectedSubject ? ' selected' : ''}>${escapeHtml(s.label)}</option>`).join('');
 
-    resultArea.style.display = 'block';
-    resultArea.innerHTML = html;
-    hideLoader();
-    try { resultArea.scrollIntoView({ behavior: 'smooth' }); } catch(e){}
+      const rowsHtml = combined.filter(r => {
+        if(selectedSubject && String(r.subject) !== String(selectedSubject)) return false;
+        return true;
+      }).map(r => {
+        const subjLabel = subjectsMap[r.subject] || r.subject || '';
+        const details = r.source === 'legacy' ? `${escapeHtml(r.status || '')}${r.note ? ' • ' + escapeHtml(r.note) : ''}` : `Present ${r.present_count}/${r.periods || 0} • ${r.percent || 0}%`;
+        return `<tr style="border-bottom:1px solid #f1f5f9">
+          <td style="padding:8px;white-space:nowrap">${escapeHtml(r.date||'')}</td>
+          <td style="padding:8px">${escapeHtml(r.class||'')}</td>
+          <td style="padding:8px">${escapeHtml(subjLabel)}</td>
+          <td style="padding:8px">${details}</td>
+        </tr>`;
+      }).join('');
+
+      let tableSection = '';
+      if(rowsHtml.length === 0) {
+        tableSection = `<div class="card"><div class="muted">No attendance records for this filter.</div></div>`;
+      } else {
+        tableSection = `<div class="card" style="overflow:auto">
+          <table style="width:100%;border-collapse:collapse">
+            <thead><tr style="text-align:left"><th style="padding:8px">Date</th><th style="padding:8px">Class</th><th style="padding:8px">Subject</th><th style="padding:8px">Details</th></tr></thead>
+            <tbody>${rowsHtml}</tbody>
+          </table>
+        </div>`;
+      }
+
+      const html = `
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+            <div>
+              <div style="font-weight:900;font-size:1.05rem">${escapeHtml(studentNameForHdr)}</div>
+              <div class="muted">ID: ${escapeHtml(studentId)} ${studentClassName ? ' • Class: ' + escapeHtml(studentClassName) : ''}</div>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <select id="studentSubjFilter" style="padding:8px;border-radius:8px;border:1px solid #e6eef8">${subjOptionsHtml}</select>
+              <button id="exportPdfBtn" class="btn btn-ghost">Export PDF</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="display:flex;gap:16px;align-items:center">
+          <div style="min-width:160px;text-align:center">
+            <img id="pieImg" src="${pieDataUrl}" alt="attendance pie" width="160" height="160" style="border-radius:8px;display:block;margin:0 auto"/>
+            <div style="font-weight:800;margin-top:6px">${totals.percent}% Present</div>
+          </div>
+          <div style="flex:1">
+            <div style="display:flex;gap:16px;align-items:center">
+              <div><strong>Total periods</strong><div class="muted">${totals.totalPeriods}</div></div>
+              <div><strong>Present</strong><div class="muted">${totals.totalPresent}</div></div>
+              <div><strong>Absent</strong><div class="muted">${totals.totalAbsent}</div></div>
+            </div>
+            <div style="margin-top:8px">${attendanceMessageForPercent(totals.percent, studentNameForHdr)}</div>
+          </div>
+        </div>
+
+        ${tableSection}
+      `;
+      showHtml(html);
+
+      // attach events AFTER DOM injection
+      const subjSelect = (typeof resultArea !== 'undefined' && resultArea) ? resultArea.querySelector('#studentSubjFilter') : modalBody.querySelector('#studentSubjFilter');
+      const exportBtn = (typeof resultArea !== 'undefined' && resultArea) ? resultArea.querySelector('#exportPdfBtn') : modalBody.querySelector('#exportPdfBtn');
+
+      if(subjSelect){
+        subjSelect.onchange = () => {
+          selectedSubject = subjSelect.value || '';
+          renderUI(); // re-render entirely (safe and simple)
+        };
+      }
+
+      if(exportBtn){
+        exportBtn.onclick = async () => {
+          // prepare rows for PDF (filtered)
+          const rows = combined.filter(r => {
+            if(selectedSubject && String(r.subject) !== String(selectedSubject)) return false;
+            return true;
+          }).map(r => {
+            const subjLabel = subjectsMap[r.subject] || r.subject || '';
+            const details = r.source === 'legacy' ? `${r.status}${r.note ? ' • ' + r.note : ''}` : `Present ${r.present_count}/${r.periods || 0} • ${r.percent || 0}%`;
+            return [ r.date || '', r.class || '', subjLabel, details ];
+          });
+
+          // create PDF
+          try {
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF({ unit:'pt', format:'a4' });
+
+            // header
+            doc.setFontSize(14);
+            doc.text('Attendance Report', 40, 48);
+            doc.setFontSize(10);
+            doc.text(`Student: ${studentNameForHdr}`, 40, 64);
+            doc.text(`ID: ${studentId}`, 40, 78);
+            doc.text(`Class: ${studentClassName || '—'}`, 40, 92);
+            doc.text(`Subject (filter): ${selectedSubject ? (subjectsMap[selectedSubject] || selectedSubject) : 'All'}`, 40, 106);
+
+            // add pie image (recreate to ensure high quality)
+            const totals = computeTotals(selectedSubject);
+            const pieData = createPieDataUrl(totals.percent, 240); // bigger for PDF
+            const imgProps = doc.getImageProperties(pieData);
+            const imgW = 120;
+            const imgH = (imgProps.height / imgProps.width) * imgW;
+            doc.addImage(pieData, 'PNG', doc.internal.pageSize.getWidth() - imgW - 40, 40, imgW, imgH);
+
+            // add table (autoTable)
+            if(rows.length){
+              doc.autoTable({
+                startY: 140,
+                head: [['Date','Class','Subject','Details']],
+                body: rows,
+                styles: { fontSize: 9 },
+                headStyles: { fillColor: [240,240,240], textColor: 20, fontStyle:'bold' },
+                theme: 'grid',
+                margin: { left: 40, right: 40 }
+              });
+            } else {
+              doc.text('No attendance rows for selected filter.', 40, 160);
+            }
+
+            // footer: totals
+            const footerY = doc.internal.pageSize.getHeight() - 60;
+            doc.setFontSize(10);
+            doc.text(`Total periods: ${totals.totalPeriods}   Present: ${totals.totalPresent}   Absent: ${totals.totalAbsent}   (${totals.percent}% present)`, 40, footerY);
+
+            doc.save(`attendance_${studentId}_${selectedSubject || 'all'}.pdf`);
+          } catch(err){
+            console.error('PDF export failed', err);
+            if(typeof toast === 'function') toast('Export failed. See console.');
+          }
+        };
+      }
+    } // end renderUI
+
+    // initial render
+    renderUI();
+
+    try { if(typeof hideLoader === 'function') hideLoader(); } catch(e){}
+    return combined;
   } catch(err){
     console.error('renderStudentAttendanceModal failed', err);
-    hideLoader();
-    message.textContent = 'Ma la soo bixi karo macluumaadka joogitaanka. Fadlan isku day mar kale.';
-    toast && toast('Failed to load attendance');
+    try { if(typeof hideLoader === 'function') hideLoader(); } catch(e){}
+    if(typeof toast === 'function') toast('Failed to load attendance');
+    const fallback = `<div class="card"><div class="muted">Ma la soo bixi karo macluumaadka joogitaanka. Fadlan isku day mar kale.</div></div>`;
+    if(typeof resultArea !== 'undefined' && resultArea) resultArea.innerHTML = fallback;
+    else showModal('Attendance', fallback);
     throw err;
   }
 }
 
 
+// helper for attendance message
+function attendanceMessageForPercent(pct, name){
+  if(pct >= 100) return `<div style="padding:8px;border-radius:6px;background:#ecfdf5;color:#065f46">Congratulations, ${escapeHtml(name)}! Perfect attendance (${pct}%).</div>`;
+  if(pct >= 90) return `<div style="padding:8px;border-radius:6px;background:#ecfeff;color:#036666">Great job, ${escapeHtml(name)} — excellent attendance (${pct}%).</div>`;
+  if(pct >= 80) return `<div style="padding:8px;border-radius:6px;background:#fff7ed;color:#92400e">Good — aim for 90%+. (${pct}%)</div>`;
+  if(pct >= 50) return `<div style="padding:8px;border-radius:6px;background:#fff1f2;color:#991b1b">Warning — your attendance is low (${pct}%). Please see the school office.</div>`;
+  return `<div style="padding:8px;border-radius:6px;background:#fee2e2;color:#7f1d1d">Danger — very low attendance (${pct}%). Contact administration immediately.</div>`;
+}
 
-// searchBtn.onclick = async () => {
-//   tryUnlockAudio().catch(()=>{});
 
-//   // ✅ DECLARE FIRST
-//   const studentId = studentIdInput.value.trim();
 
-//   const resultModeSelect = document.getElementById('resultModeSelect');
-//   const mode = resultModeSelect ? resultModeSelect.value : 'exam';
 
-//   // validate early
-//   if(!studentId){
-//     message.textContent = 'Fadlan geli ID sax ah.';
-//     return;
-//   }
-
-//   // ✅ TEST MODE (leaderboard / quiz)
-//   if(mode === 'test'){
-//     sessionStorage.setItem('visitorStudentId', studentId);
-//     window.location.href = 'leaderboard.html';
-//     return;
-//   }
-
-//   // STUDENT-FACING: Payments (read-only)
-//   if(mode === 'payments'){
-//     message.textContent = '';
-//     resultArea.style.display = 'none';
-//     resultArea.innerHTML = '';
-//     showLoader();
-//     try {
-//       await renderStudentTransactionsModal(studentId);
-//     } catch(err){
-//       console.error('Failed to load payments view', err);
-//       message.textContent = 'Ma la soo bixi karo macluumaadka lacagaha. Fadlan isku day mar kale.';
-//     } finally {
-//       hideLoader();
-//     }
-//     return;
-//   }
-
-//   // STUDENT-FACING: Attendance (read-only)
-//   if(mode === 'attendance'){
-//     message.textContent = '';
-//     resultArea.style.display = 'none';
-//     resultArea.innerHTML = '';
-//     showLoader();
-//     try {
-//       await renderStudentAttendanceModal(studentId);
-//     } catch(err){
-//       console.error('Failed to load attendance view', err);
-//       message.textContent = 'Ma la soo bixi karo macluumaadka joogitaanka. Fadlan isku day mar kale.';
-//     } finally {
-//       hideLoader();
-//     }
-//     return;
-//   }
-
-//   // ---------------- NORMAL EXAM FLOW ----------------
-//   message.textContent = '';
-//   resultArea.style.display = 'none';
-//   resultArea.innerHTML = '';
-//   showLoader();
-
-//   try {
-//     const latestSnap = await getDoc(doc(db,'studentsLatest', studentId));
-//     let latest = latestSnap.exists() ? latestSnap.data() : null;
-
-//     if(latest && !latest.motherName){
-//       try{
-//         const sSnap = await getDoc(doc(db,'students', studentId));
-//         if(sSnap.exists()){
-//           const sData = sSnap.data();
-//           if(sData?.motherName) latest.motherName = sData.motherName;
-//         }
-//       }catch(e){ console.warn(e); }
-//     }
-
-//     if(!latest){
-//       const alt = await fallbackFindLatestExamTotal(studentId);
-//       if(!alt){
-//         message.textContent = 'Natiijo la heli waayey. Fadlan hubi ID-ga.';
-//         hideLoader();
-//         return;
-//       }
-//       await renderResult(alt, { source: 'examTotals' });
-//       hideLoader();
-//       return;
-//     }
-
-//     if(latest.blocked){
-//       resultArea.style.display='block';
-//       resultArea.innerHTML = `
-//         <div class="card">
-//           <h2>Access blocked</h2>
-//           <p>${escapeHtml(latest.blockMessage || 'You are not allowed to view results.')}</p>
-//         </div>`;
-//       hideLoader();
-//       return;
-//     }
-
-//     const alt = await fallbackFindLatestExamTotal(studentId);
-//     if(alt && alt.publishedAt && latest.publishedAt){
-//       const altSeconds = alt.publishedAt.seconds || Date.parse(alt.publishedAt)/1000;
-//       const latestSeconds = latest.publishedAt.seconds || Date.parse(latest.publishedAt)/1000;
-//       if(altSeconds > latestSeconds){
-//         await renderResult(alt, { source: 'examTotals' });
-//         hideLoader();
-//         return;
-//       }
-//     }
-
-//     await renderResult(latest, { source: 'AL-Fatxi School' });
-//     setHeaderStudentNameById(studentId);
-//     hideLoader();
-
-//   } catch(err){
-//     console.error(err);
-//     message.textContent = 'Khalad ayaa dhacay. Fadlan isku day mar kale.';
-//     hideLoader();
-//   }
-// };
 
 // ------------------ Cards + Remember logic ------------------
 // global selected mode (defaults to exam)
