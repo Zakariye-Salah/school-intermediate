@@ -7142,32 +7142,12 @@ async function openAdminPreviewClass(className){
       const sid = s.id || s.studentId || '';
       const name = s.fullName || s.name || '';
       const pct = previewMap[sid] !== undefined ? previewMap[sid] : 0;
-   const shortId = String(sid).slice(-4);
-
-   return `
-   <div class="att-row att-row-preview" data-student="${escapeHtmlLocal(sid)}">
- 
-     <!-- LINE 1 -->
-     <div class="att-line att-line-1">
-       <div class="att-left">
-         <span class="att-no">${idx + 1}</span>
-         <span class="att-name">${escapeHtmlLocal(name)}</span>
-       </div>
-       <div class="row-pct">${pct}%</div>
-     </div>
- 
-     <!-- LINE 2 -->
-     <div class="att-line att-line-2">
-       <label class="att-edit">
-         <input type="checkbox" class="preview-edit-chk" data-student="${escapeHtmlLocal(sid)}">
-         <span class="student-id">ID • ${escapeHtmlLocal(shortId)}</span>
-       </label>
-     </div>
- 
-   </div>
- `;
- 
- 
+      return `<div class="att-row" data-student="${escapeHtmlLocal(sid)}" style="display:flex;gap:12px;padding:10px;border-bottom:1px solid #f4f6f9;align-items:center">
+        <div style="width:36px">${idx+1}</div>
+        <div style="min-width:120px">${escapeHtmlLocal(sid)}</div>
+        <div style="flex:1;font-weight:800">${escapeHtmlLocal(name)}</div>
+        <div style="width:64px;text-align:right"><small class="row-pct">${pct}%</small></div>
+      </div>`;
     }).join('');
     document.getElementById('attendanceClassEditor').innerHTML = rowsHtml;
 
