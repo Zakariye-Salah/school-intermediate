@@ -20,7 +20,14 @@
   <nav class="nav">
     <button id="tabProfile" class="tab active">Profile</button>
     <button id="tabAttendance" class="tab">Attendance</button>
+  
+    <!-- 🔔 Announcements tab -->
+    <button id="tabTeacherAnnouncements" class="tab" style="position:relative">
+      Announcements
+      <span id="teacherAnnouncementsCounter" class="ann-badge">0</span>
+    </button>
   </nav>
+  
 
   <main class="container">
     <section id="pageTeacherProfile" class="page" style="display:block"></section>
@@ -60,6 +67,21 @@
         </div>
       </div>
     </section>
+
+    <!-- TEACHER ANNOUNCEMENTS PAGE -->
+<section id="pageTeacherAnnouncements" class="page" style="display:none">
+  <div class="panel">
+    <div class="panel-header">
+      <strong>Announcements</strong>
+      <div class="muted small">School & class notices</div>
+    </div>
+
+    <div id="teacherAnnouncementsList" style="margin-top:12px">
+      <div class="muted">Loading announcements…</div>
+    </div>
+  </div>
+</section>
+
   </main>
 
   <!-- Modal -->
