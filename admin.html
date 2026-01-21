@@ -516,59 +516,6 @@
   background:#eef2ff;
 }
 
-/* preview rows */
-.att-row-preview{
-  border-bottom:1px solid #f1f5f9;
-  padding:10px 6px;
-}
-
-.att-line{
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-}
-
-.att-line-1{
-  font-weight:700;
-}
-
-.att-left{
-  display:flex;
-  gap:8px;
-  align-items:center;
-}
-
-.att-no{
-  width:22px;
-  color:#64748b;
-}
-
-.att-name{
-  font-weight:800;
-}
-
-.att-line-2{
-  margin-top:4px;
-}
-
-.att-edit{
-  display:flex;
-  align-items:center;
-  gap:8px;
-  font-size:0.9rem;
-  color:#6b7280;
-}
-
-.student-id{
-  letter-spacing:0.3px;
-}
-
-/* desktop: keep compact */
-@media(min-width:721px){
-  .att-line-2{
-    display:none;
-  }
-}
 
 
 </style>
@@ -589,7 +536,13 @@
     <button id="tabExams" class="tab">Exams</button>
     <button id="tabTeachers" class="tab">Teachers</button>
     <!-- somewhere in header or nav buttons -->
-<button id="gotoLeaderboardBtn" class="btn">Leaderboard</button>
+    <button id="gotoLeaderboardBtn" class="btn">Leaderboard</button>
+
+      <!-- NEW: Announcements -->
+    <button id="tabAnnouncements" class="tab">Announcements</button>
+
+
+
 
   </nav>
 
@@ -638,6 +591,21 @@
       </div>
       <div id="teachersList"></div>
     </section>
+
+      <!-- NEW: Announcements page -->
+  <section id="pageAnnouncements" class="page" style="display:none; padding:12px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <h2 style="margin:0">Announcements</h2>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button id="openComposeAnnouncement" class="btn btn-primary">+ New Announcement</button>
+        <button id="refreshAnnouncements" class="btn">Refresh</button>
+      </div>
+    </div>
+    <div id="announcementsList">
+      <!-- populated by database.js -> renderAnnouncements -->
+      Loading announcements...
+    </div>
+  </section>
   </main>
 
   <!-- Modal (shared) -->
