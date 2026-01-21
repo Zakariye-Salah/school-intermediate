@@ -518,6 +518,46 @@
 
 
 
+
+/* Announcements specific */
+.ann-controls .header-new { display:inline-flex; align-items:center; gap:6px; }
+.ann-controls .header-new .icon-new { display:inline-block; }
+.ann-controls .header-refresh { display:inline-flex; align-items:center; justify-content:center; padding:8px; border-radius:8px; }
+.ann-controls .header-settings { display:inline-flex; align-items:center; justify-content:center; padding:8px; border-radius:8px; }
+
+.icon-new { stroke: #0ea5e9; }         /* blue-ish for New (keeps contrast with white text) */
+.header-new { background: #06b6d4; color: #fff; border-color: #06b6d4; }
+.header-new:hover { filter:brightness(.95); transform:translateY(-1px); transition:all .12s ease; }
+
+.icon-refresh { stroke: #374151; }      /* neutral dark for refresh */
+.icon-gear, .icon-gear path { stroke: #374151; }
+
+.ann-row .btn-edit svg { stroke:#0f1724; }
+.ann-row .btn-delete svg { stroke:#ef4444; }
+
+/* cards list responsiveness */
+#announcementsList { display:flex; flex-direction:column; gap:10px; }
+#announcementsList .card { transition: transform .12s ease, box-shadow .12s ease; border-radius:10px; }
+#announcementsList .card:hover { transform: translateY(-4px); box-shadow:0 10px 24px rgba(2,6,23,0.06); }
+
+/* modal body top10 responsive */
+.modal .top10-row { display:flex; justify-content:space-between; gap:12px; padding:8px; border-bottom:1px solid #f3f4f6; }
+.modal .top10-row .left { min-width:0; }
+.modal .top10-row .right { min-width:80px; text-align:right; }
+
+/* mobile adjustments */
+@media (max-width:720px){
+  .ann-controls { flex-wrap:wrap; gap:6px; }
+  .ann-controls .header-new span { display:none; } /* compact on small screens */
+  #announcementsList .card { padding:10px; }
+  .modal .top10-row { flex-direction:column; align-items:flex-start; gap:6px; }
+  .modal .top10-row .right { text-align:left; }
+}
+
+@media (max-width:720px){
+  .ann-controls .header-new span { display:none; } /* compact on small screens */
+}
+
 </style>
 
 </head>
@@ -592,20 +632,20 @@
       <div id="teachersList"></div>
     </section>
 
-      <!-- NEW: Announcements page -->
-  <section id="pageAnnouncements" class="page" style="display:none; padding:12px;">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-      <h2 style="margin:0">Announcements</h2>
-      <div style="display:flex;gap:8px;align-items:center">
-        <button id="openComposeAnnouncement" class="btn btn-primary">+ New Announcement</button>
-        <button id="refreshAnnouncements" class="btn">Refresh</button>
+    <section id="pageAnnouncements" class="page" style="display:none; padding:12px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <h2 style="margin:0">Announcements</h2>
+        <div id="ann-header-placeholder" style="display:flex;gap:8px;align-items:center">
+          <!-- JS will render the New / Refresh / Settings controls here -->
+        </div>
       </div>
-    </div>
-    <div id="announcementsList">
-      <!-- populated by database.js -> renderAnnouncements -->
-      Loading announcements...
-    </div>
-  </section>
+    
+      <div id="announcementsList" style="display:flex;flex-direction:column;gap:10px;">
+        Loading announcements...
+      </div>
+    </section>
+    
+
   </main>
 
   <!-- Modal (shared) -->
