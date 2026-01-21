@@ -1,379 +1,1619 @@
-// import { auth, db } from './firebase-config.js';
-// import { onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/9.22.2/firebase-auth.js';
-// import {
-//   collection, doc, getDoc, getDocs, addDoc, setDoc, updateDoc, deleteDoc,
-//   query, where, Timestamp
-// } from 'https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore.js';
+// main.js (updated)
+// Keep your firebase imports etc.
+import { db } from './firebase-config.js';
+// import { doc, getDoc, getDocs, collection, query, where } from 'https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore.js';
 
-
-import { auth, db } from './firebase-config.js';
-import { onAuthStateChanged, signOut, createUserWithEmailAndPassword, sendPasswordResetEmail } 
-from 'https://www.gstatic.com/firebasejs/9.22.2/firebase-auth.js';
-// import {
-//   collection, doc, getDoc, getDocs, addDoc, setDoc, updateDoc, deleteDoc,
-//   query, where, Timestamp
-// } from 'https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore.js';
 // add orderBy and limit to your firebase/firestore imports
-import { 
-  collection, doc, getDocs, getDoc, query, where, orderBy, limit, addDoc, updateDoc, deleteDoc, setDoc, Timestamp } from 'https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore.js';
+import { collection, doc, getDocs, getDoc, query, where, orderBy, limit, addDoc, updateDoc, deleteDoc, setDoc, Timestamp } from 'https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore.js';
 // or your project's firebase import style — just ensure orderBy & limit are present
 
+/* ---------- DOM refs ---------- */
+const searchBtn = document.getElementById('searchBtn');
+const studentIdInput = document.getElementById('studentId');
+const resultArea = document.getElementById('resultArea');
+const message = document.getElementById('message');
+const loaderOverlay = document.getElementById('loaderOverlay');
+const loaderMessageEl = document.getElementById('loaderMessage');
+const toggleIdInputBtn = document.getElementById('toggleIdInputBtn');
 
-/* UI refs (same as before + teachers) */
-const tabStudents = document.getElementById('tabStudents');
-const tabClasses = document.getElementById('tabClasses');
-const tabSubjects = document.getElementById('tabSubjects');
-const tabExams = document.getElementById('tabExams');
-const tabTeachers = document.getElementById('tabTeachers'); // NEW: should exist in HTML
+const audioToggleBtn = document.getElementById('audioToggleBtn');
+let audioEnabled = false;
 
-const pageStudents = document.getElementById('pageStudents');
-const pageClasses = document.getElementById('pageClasses');
-const pageSubjects = document.getElementById('pageSubjects');
-const pageExams = document.getElementById('pageExams');
-const pageTeachers = document.getElementById('pageTeachers'); // NEW page for teachers
+const celebrationOverlay = document.getElementById('celebrationOverlay');
+const celebrationModal = document.getElementById('celebrationModal');
+const celebrationClose = document.getElementById('celebrationClose');
+const celebrationCloseBtn = document.getElementById('celebrationCloseBtn');
+const celebrationFall = document.getElementById('celebrationFall');
 
-const btnLogout = document.getElementById('btnLogout');
+const toggleEmojisBtn = document.getElementById('toggleEmojisBtn');
+const toggleEmojisIcon = document.getElementById('toggleEmojisIcon');
+const clapAudioEl = document.getElementById('clapAudio'); // preloaded audio element
 
-const studentsSearch = document.getElementById('studentsSearch');
-const studentsClassFilter = document.getElementById('studentsClassFilter');
-const studentsList = document.getElementById('studentsList');
-const openAddStudent = document.getElementById('openAddStudent');
-const studentsExamForTotals = document.getElementById('studentsExamForTotals');
+let emojisVisible = true;
+let lastEmojiType = 'celebrate';
 
-const openAddClass = document.getElementById('openAddClass');
-const classesList = document.getElementById('classesList');
-const classSearch = document.getElementById('classSearch');
+/* ---------- loader helpers ---------- */
+let loaderInterval = null;
+const loaderMessages = ['Fadlan sug...','Waxaan hubineynaa xogta...','Waxaa la soo rarayaa natiijooyinka...'];
+function showLoader(){
+  if(!loaderOverlay) return;
+  loaderOverlay.style.display='flex';
+  let i=0;
+  loaderMessageEl.textContent = loaderMessages[0];
+  if(loaderInterval) clearInterval(loaderInterval);
+  loaderInterval = setInterval(()=>{ i=(i+1)%loaderMessages.length; loaderMessageEl.textContent = loaderMessages[i]; },2200);
+}
+function hideLoader(){
+  if(!loaderOverlay) return;
+  loaderOverlay.style.display='none';
+  if(loaderInterval){ clearInterval(loaderInterval); loaderInterval=null; }
+  loaderMessageEl.textContent='';
+}
 
-const openAddSubject = document.getElementById('openAddSubject');
-const subjectsList = document.getElementById('subjectsList');
-const subjectSearch = document.getElementById('subjectSearch');
-
-const openAddExam = document.getElementById('openAddExam');
-const examsList = document.getElementById('examsList');
-const examSearch = document.getElementById('examSearch');
-const examClassFilter = document.getElementById('examClassFilter');
-
-
-const gotoLeaderboardBtn = document.getElementById('gotoLeaderboardBtn');
-if(gotoLeaderboardBtn) gotoLeaderboardBtn.onclick = () => { window.location.href = 'leaderboard.html'; };
-
-// exam sort controls (created programmatically if not present)
-let examSortMode = 'date'; // default: date
-
-// Teachers UI
-const teachersSearch = document.getElementById('teachersSearch'); // optional in HTML
-const teachersSubjectFilter = document.getElementById('teachersSubjectFilter');
-const teachersList = document.getElementById('teachersList');
-const openAddTeacher = document.getElementById('openAddTeacher');
-
-const modalBackdrop = document.getElementById('modalBackdrop');
-const modal = document.getElementById('modal');
-const modalTitle = document.getElementById('modalTitle');
-const modalBody = document.getElementById('modalBody');
-const modalClose = document.getElementById('modalClose');
-const toastEl = document.getElementById('toast');
-
-let currentUser = null;
-let studentsCache = [];
-let classesCache = [];
-let subjectsCache = [];
-let examsCache = [];
-let teachersCache = []; // NEW
-let examTotalsCache = {}; // examId -> { studentId: payload }
-/* UI helpers */
+/* ---------- small utilities (escape etc.) ---------- */
+function escapeHtml(s){ if(s==null) return ''; return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;"}[c])); }
 
 
-function showPage(id) {
-  // Remove active from all tabs
-  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+/* ---------- currency + tiny toast helper (paste after escapeHtml) ---------- */
 
-  // Hide all pages (any element that uses the .page class)
-  document.querySelectorAll('.page').forEach(p => {
-    p.style.display = 'none';
-  });
+/** cents -> display string with 2 decimals (e.g. 3500 -> "35.00") */
+function c2p(cents){
+  // handle strings/numbers/undefined
+  const n = Number(cents || 0);
+  if (Number.isNaN(n)) return '0.00';
+  return (n / 100).toFixed(2);
+}
 
-  // Helper to find and show the first existing candidate id
-  function showFirstExisting(candidates) {
-    for (const cid of candidates) {
-      const el = document.getElementById(cid);
-      if (el) {
-        el.style.display = 'block';
+/** small toast: shows a temporary message bottom-right */
+function toast(msg, opts = {}) {
+  try {
+    const timeout = typeof opts === 'object' && opts.timeout ? opts.timeout : 3500;
+    // create container once
+    let container = document.getElementById('app-toast-container');
+    if(!container){
+      container = document.createElement('div');
+      container.id = 'app-toast-container';
+      Object.assign(container.style, {
+        position: 'fixed',
+        right: '18px',
+        bottom: '18px',
+        zIndex: 999999,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '8px',
+        alignItems: 'flex-end',
+        pointerEvents: 'none'
+      });
+      document.body.appendChild(container);
+    }
+    const el = document.createElement('div');
+    el.textContent = String(msg || '');
+    Object.assign(el.style, {
+      background: 'rgba(17,24,39,0.95)',
+      color: '#fff',
+      padding: '8px 12px',
+      borderRadius: '8px',
+      boxShadow: '0 6px 18px rgba(0,0,0,0.22)',
+      fontSize: '13px',
+      pointerEvents: 'auto',
+      opacity: '1',
+      transition: 'opacity 300ms ease, transform 300ms ease'
+    });
+    container.appendChild(el);
+    // auto-hide
+    setTimeout(()=> {
+      el.style.opacity = '0';
+      el.style.transform = 'translateY(6px)';
+      setTimeout(()=> { try{ el.remove(); }catch(e){} }, 320);
+    }, timeout);
+    return el;
+  } catch (e) {
+    // fallback: console + alert (non-blocking)
+    console.warn('toast error', e);
+    try { console.log(msg); } catch(e2){}
+  }
+}
+
+/* ---------- Audio / unlock logic ---------- */
+/*
+  Notes:
+  - Browsers require a user gesture to allow .play() for audio. We attempt to 'unlock' by quickly playing+pausing the preloaded element
+    when the user clicks the audio toggle.
+  - We try clapAudioEl first; if it fails we try candidate paths; if all fail we use the synthesized fallback (playClap).
+*/
+
+let audioFallbackCtx = null;
+function ensureAudioCtx(){ if(!audioFallbackCtx) audioFallbackCtx = new (window.AudioContext || window.webkitAudioContext)(); }
+
+async function tryUnlockAudio() {
+  try {
+    // Resume audio context if exists
+    if (audioFallbackCtx && audioFallbackCtx.state === 'suspended') {
+      await audioFallbackCtx.resume();
+    }
+    if (clapAudioEl) {
+      // Attempt quick play/pause to unlock playback
+      clapAudioEl.muted = true; // silent attempt
+      clapAudioEl.currentTime = 0;
+      try {
+        await clapAudioEl.play();
+        clapAudioEl.pause();
+        clapAudioEl.currentTime = 0;
+        clapAudioEl.muted = false;
+        console.info('Audio element unlocked by user gesture (silent play succeeded).');
         return true;
+      } catch (err) {
+        clapAudioEl.muted = false;
+        console.warn('Silent unlock via clapAudioEl failed:', err);
       }
     }
     return false;
-  }
-
-  // Map logical page id -> DOM id candidates (tries in order)
-  const pageMap = {
-    dashboard: ['pageDashboard', 'dashboardCard', 'pageDashboardCard'],
-    payments: ['pagePayments'],
-    attendance: ['pageAttendance'],
-    users: ['pageUsers'],
-    students: ['pageStudents'],
-    classes: ['pageClasses'],
-    subjects: ['pageSubjects'],
-    exams: ['pageExams'],
-    teachers: ['pageTeachers'],
-    announcements: ['pageAnnouncements'], 
-
-    // add other pages here if needed
-  };
-
-  // Show the desired page (try mapped ids, then fallback to page-{id})
-  const candidates = pageMap[id] || [`page${id[0].toUpperCase()}${id.slice(1)}`, `page-${id}`];
-  const shown = showFirstExisting(candidates);
-
-  // Activate matching tab button if present (tabId = 'tab' + Capitalized(id))
-  const tabId = 'tab' + (id[0] ? id[0].toUpperCase() + id.slice(1) : id);
-  const tabEl = document.getElementById(tabId);
-  if (tabEl) tabEl.classList.add('active');
-
-  // If nothing was shown, optionally show first pageStudents as safe default
-  if (!shown) {
-    const fallback = document.getElementById('pageStudents') || document.getElementById('dashboardCard');
-    if (fallback) fallback.style.display = 'block';
-    // Also try to set Students tab active
-    const t = document.getElementById('tabStudents');
-    if (t) t.classList.add('active');
+  } catch (e) {
+    console.warn('tryUnlockAudio error', e);
+    return false;
   }
 }
 
-
-function showModal(title, html) {
-  modalTitle.textContent = title; modalBody.innerHTML = html; modalBackdrop.style.display = 'flex';
+function playClap(count = 10, speed = 0.07, volume = 0.95){
+  try{
+    ensureAudioCtx();
+    const ctx = audioFallbackCtx;
+    const now = ctx.currentTime;
+    for(let i=0;i<count;i++){
+      const t = now + i * speed;
+      const bufferSize = Math.floor(ctx.sampleRate * 0.09);
+      const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for(let j=0;j<bufferSize;j++){
+        data[j] = (Math.random() * 2 - 1) * Math.exp(-j / (bufferSize * 0.85)) * (1 - i*0.09);
+      }
+      const src = ctx.createBufferSource();
+      src.buffer = buffer;
+      const band = ctx.createBiquadFilter();
+      band.type = 'bandpass';
+      band.frequency.value = 1400 - (i * 70);
+      band.Q.value = 0.6 + (i * 0.14);
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(volume * (1 - i*0.09), t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.14);
+      src.connect(band);
+      band.connect(gain);
+      gain.connect(ctx.destination);
+      src.start(t);
+      src.stop(t + 0.22);
+    }
+  }catch(e){ console.warn('Audio fallback failed', e); }
 }
-function closeModal() { modalBackdrop.style.display = 'none'; modalBody.innerHTML = ''; }
-modalClose.onclick = closeModal;
-modalBackdrop.onclick = (e) => { if(e.target === modalBackdrop) closeModal(); };
-function toast(msg, t=2200){ if(!toastEl) return; toastEl.textContent = msg; toastEl.style.display = 'block'; setTimeout(()=>toastEl.style.display='none',t); }
 
-/** helper: pad number */
-function pad(n, width){ n = String(n||''); return n.length >= width ? n : '0'.repeat(width - n.length) + n; }
-/* id generator */
-async function generateDefaultId(collectionName, prefix, digits){
-  const t = Date.now() % (10**(digits));
-  return `${prefix}${String(t).padStart(digits,'0')}`;
+async function tryPlayCandidates(candidates){
+  for(const url of candidates){
+    try{
+      const a = new Audio(url);
+      a.preload = 'auto';
+      a.muted = false;
+      // Some browsers will still block .play(); catch errors
+      await a.play();
+      // let it play a short time (or end quickly)
+      return true;
+    }catch(err){
+      // try next candidate
+      console.warn('candidate play failed for', url, err);
+    }
+  }
+  return false;
 }
 
-function escapeHtml(s){ if(!s && s!==0) return ''; return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+async function playAudioFileIfEnabled(path, fallbackFn){
+  
+  if(!audioEnabled) {
+    console.info('Audio disabled by user — skipping playback.');
+    return;
+  }
 
-// returns true if another teacher uses this email (case-insensitive). excludeId optional to ignore same teacher on edit.
-function isTeacherEmailDuplicate(email, excludeId) {
-  if (!email) return false;
-  const e = String(email).trim().toLowerCase();
-  const list = teachersCache || [];
-  return list.some(t => {
-    if (!t.email) return false;
-    if (excludeId && (t.id === excludeId || t.teacherId === excludeId)) return false;
-    return String(t.email).trim().toLowerCase() === e;
+  // 1) try preloaded audio element first
+  if (clapAudioEl) {
+    try {
+      clapAudioEl.pause();
+      clapAudioEl.currentTime = 0;
+      clapAudioEl.muted = false;
+      // set a reasonably loud volume but not max
+      try { clapAudioEl.volume = 0.95; } catch(e) {}
+      await clapAudioEl.play();
+      console.info('Played preloaded clapAudio element.');
+      return;
+    } catch(err) {
+      console.warn('Preloaded clapAudio element play failed:', err);
+      // fall through to try other options
+    }
+  }
+
+  // 2) try path candidates (if path provided)
+  if (path) {
+    const cleaned = String(path).replace(/^\.\//, '').replace(/^\/+/, '');
+    const candidates = [cleaned, '/' + cleaned, './' + cleaned];
+    try{
+      const ok = await tryPlayCandidates(candidates);
+      if(ok){
+        console.info('Played clap via Audio() candidate path.');
+        return;
+      }
+    }catch(e){
+      console.warn('tryPlayCandidates error', e);
+    }
+  }
+
+  // 3) fallback to synthesized clap
+  console.info('Falling back to synth clap.');
+  fallbackFn && fallbackFn();
+
+}
+
+/* ---------- Input toggle (unchanged) ---------- */
+(function wireInputToggleNow(){
+  if(!toggleIdInputBtn || !studentIdInput) return;
+
+  // ensure the toggle button uses primary color (keeps icon colored)
+  try {
+    toggleIdInputBtn.style.color = 'var(--primary)';
+  } catch (e){ /* ignore if CSS var not present */ }
+
+  // find icons inside the button
+  const openIcon = toggleIdInputBtn.querySelector('#toggleOpen');
+  const closedIcon = toggleIdInputBtn.querySelector('#toggleClosed');
+
+  // initial state: visible (not hidden) -> show open icon, input type text
+  let hidden = false;
+  studentIdInput.type = 'text';
+  if(openIcon) openIcon.style.display = 'inline-block';
+  if(closedIcon) closedIcon.style.display = 'none';
+
+  // click handler toggles mask and icon (and keeps button color)
+  toggleIdInputBtn.addEventListener('click', () => {
+    hidden = !hidden;
+    studentIdInput.type = hidden ? 'password' : 'text';
+
+    if(openIcon && closedIcon){
+      openIcon.style.display = hidden ? 'none' : 'inline-block';
+      closedIcon.style.display = hidden ? 'inline-block' : 'none';
+    }
+
+    // keep primary color no matter what (prevents icon going white)
+    try { toggleIdInputBtn.style.color = 'var(--primary)'; } catch(e){}
+    toggleIdInputBtn.setAttribute('aria-pressed', String(hidden));
+  });
+})();
+
+
+function gradeForPercent(p){
+  if(p>=97) return 'A+'; if(p>=93) return 'A'; if(p>=90) return 'A-';
+  if(p>=87) return 'B+'; if(p>=83) return 'B'; if(p>=80) return 'B-';
+  if(p>=77) return 'C+'; if(p>=73) return 'C'; if(p>=70) return 'C-';
+  if(p>=67) return 'D+'; if(p>=63) return 'D'; if(p>=60) return 'D-';
+  if(p>=50) return 'E+'; if(p>=40) return 'E'; return 'F';
+}
+function percentColor(p){
+  if(p>=95) return '#0b8a3e'; if(p>=90) return '#26a64b'; if(p>=85) return '#8cc63f';
+  if(p>=80) return '#f1c40f'; if(p>=75) return '#f39c12'; if(p>=70) return '#e67e22';
+  if(p>=60) return '#e74c3c'; return '#c0392b';
+}
+function gradeColor(g){
+  if(g==='A+') return '#0b8a3e'; if(g==='A') return '#26a64b'; if(g==='A-') return '#66d17a';
+  if(g.startsWith('B')) return '#3b82f6'; if(g.startsWith('C')) return '#f59e0b'; return '#b91c1c';
+}
+/* ---------- audio toggle wiring ---------- */
+(function wireAudioToggle(){
+  if(!audioToggleBtn) return;
+
+  function render(){
+    audioToggleBtn.innerHTML = audioEnabled ? '🔊 Audio: ON' : '🔈 Audio: OFF';
+    audioToggleBtn.setAttribute('aria-pressed', String(audioEnabled));
+  }
+
+  audioToggleBtn.addEventListener('click', async () => {
+    audioEnabled = !audioEnabled;
+    render();
+    if(audioEnabled){
+      // try to unlock with a user gesture (important for autoplay policies)
+      const unlocked = await tryUnlockAudio();
+      console.info('Audio unlocked?', unlocked);
+    }
+  });
+  render();
+})();
+
+function twoLineHeaderHTML(label){
+  if(!label) return '';
+  const parts = String(label).trim().split(/\s+/);
+  if(parts.length <= 1) return escapeHtml(label);
+  const first = escapeHtml(parts[0]);
+  const rest = escapeHtml(parts.slice(1).join(' '));
+  return `${first}<br><span class="small">${rest}</span>`;
+}
+/* ---------- Emoji rain logic (unchanged, but lastEmojiType is set in showCelebration) ---------- */
+let emojiIntervalId = null;
+function createEmojiBurst(type='celebrate', count=32){
+  if(!celebrationFall) return;
+  const celebrateSet = ['🎉','⭐','🌟','❤️','🌙','✨','💫','🎊','💥'];
+  const sadSet = ['😢','😞','💔','😔','☁️','😓'];
+  const set = (type === 'sad') ? sadSet : celebrateSet;
+  for(let i=0;i<count;i++){
+    const el = document.createElement('span');
+    el.className = 'fall-emoji';
+    el.textContent = set[Math.floor(Math.random()*set.length)];
+    const size = 14 + Math.floor(Math.random()*44);
+    el.style.fontSize = `${size}px`;
+    el.style.left = (Math.random()*120) + '%';
+    el.style.setProperty('--tx', (Math.random()*120 - 60) + 'vw');
+    el.style.setProperty('--rot', (Math.random()*1080 - 540) + 'deg');
+    const duration = 2400 + Math.random()*5600;
+    const delay = Math.random()*900;
+    el.style.animationDuration = `${duration}ms`;
+    el.style.animationDelay = `${delay}ms`;
+    el.style.opacity = `${0.8 + Math.random()*0.2}`;
+    celebrationFall.appendChild(el);
+    setTimeout(()=>{ try{ el.remove(); }catch(e){} }, duration + delay + 200);
+  }
+}
+function startEmojiRain(type='celebrate'){ stopEmojiRain(); createEmojiBurst(type,48); emojiIntervalId = setInterval(()=> createEmojiBurst(type,36), 700); }
+function stopEmojiRain(){ if(emojiIntervalId){ clearInterval(emojiIntervalId); emojiIntervalId=null; } if(celebrationFall) celebrationFall.innerHTML = ''; }
+
+if(toggleEmojisBtn){
+  toggleEmojisBtn.addEventListener('click', (e) => {
+    emojisVisible = !emojisVisible;
+    toggleEmojisBtn.setAttribute('aria-pressed', String(emojisVisible));
+    if(emojisVisible){
+      startEmojiRain(lastEmojiType || 'celebrate');
+      if(toggleEmojisIcon) toggleEmojisIcon.textContent = '🎊';
+    } else {
+      stopEmojiRain();
+      if(toggleEmojisIcon) toggleEmojisIcon.textContent = '🚫';
+    }
   });
 }
 
-/* init/auth */
-onAuthStateChanged(auth, async user => {
-  if(!user) { window.location.href = 'login.html'; return; }
-  currentUser = user;
-  await loadAll();
-  try { await ensureMonthlyAnnouncementIfNeeded(); } catch(e){ console.warn(e); }
+/* ---------- showCelebration (improved audio + emoji logic) ---------- */
+function ordinalSuffixSomali(n){ return `${n}aad`; }
 
-});
-btnLogout.onclick = async ()=>{ await signOut(auth); window.location.href='login.html'; };
+function showCelebration({ rankType = 'class', rank = null, total = null, studentName='', className='', totalMarks='', averageStr='', soundPath = 'assets/clap.mp3', percent = null, examLabel = '' } = {}) {
+  if(!celebrationOverlay || !celebrationModal) return;
+  const rankNum = Number(rank);
+  const isFail = (typeof percent === 'number') ? (percent < 50) : false;
 
-/* data loading */
-async function loadAll(){
-  // fetch everything fresh
+  console.info('Attempting to play celebration audio — audioEnabled=', audioEnabled, 'rank=', rankNum);
+
+  // badge color...
+  const colors = { 1:'#FFD700', 2:'#C0C0C0', 3:'#CD7F32' };
+  const palette = ['#3b82f6','#8b5cf6','#06b6d4','#f97316','#10b981','#ef4444','#f59e0b'];
+  const badgeColor = colors[rankNum] || (rankNum >=4 && rankNum <= 10 ? palette[(rankNum-4) % palette.length] : '#6b7280');
+
+  // compute totals/avg...
+  const totalParts = String(totalMarks || (total!=null? `${total}/${''}` : '')).split('/');
+  const totalGot = totalParts[0] || (total != null ? String(total) : '');
+  const totalMax = totalParts[1] || '';
+  const avgRaw = averageStr || (typeof percent === 'number' ? `${Number(percent).toFixed(2)}%` : '');
+
+  let gradeText = '';
+  try { gradeText = (typeof percent === 'number') ? gradeForPercent(percent) : ''; } catch(e){ gradeText = ''; }
+  const passfail = (typeof percent === 'number') ? (percent >= 50 ? 'Gudbay' : 'Dhacay') : '';
+
+  // DOM nodes (structured fields)
+  const modalBadgeEl = document.getElementById('modalBadge');
+  const modalTitleEl = document.getElementById('modalTitle');
+  const modalMsgEl = document.getElementById('modalMsg');
+  const modalStudentName = document.getElementById('modalStudentName');
+  const modalClassName = document.getElementById('modalClassName');
+
+  const modalTotalGot = document.getElementById('modalTotalGot');
+  const modalTotalMax = document.getElementById('modalTotalMax');
+  const modalAverage = document.getElementById('modalAverage');
+  const modalGrade = document.getElementById('modalGrade');
+  const modalStatus = document.getElementById('modalStatus');
+
+  if(modalBadgeEl){ modalBadgeEl.textContent = Number.isFinite(rankNum) ? String(rankNum) : ''; modalBadgeEl.style.background = badgeColor; modalBadgeEl.classList.add('glow'); }
+
+  if(modalTitleEl){
+    if(isFail) modalTitleEl.textContent = `Waan ka xunahay, ${studentName || ''}`;
+    else if(Number.isFinite(rankNum) && rankNum >= 1) modalTitleEl.textContent = `Hambalyo! Kaalinta ${ordinalSuffixSomali(rankNum)}`;
+    else modalTitleEl.textContent = examLabel ? `Natiijooyinka — ${examLabel}` : 'Natiijooyinka';
+  }
+
+  if(modalMsgEl){
+    const examPart = examLabel ? ` — Imtixaanka: ${examLabel}` : '';
+    modalMsgEl.textContent = isFail
+      ? `${studentName || 'Arday'} — Ha quusan — nala soo xiriir si aan kuu caawinno haddii aad qabto dood.${examPart}`
+      : `${studentName || 'Arday'} — Soo Dhawoow Arday — waan kuu hambalyeynaynaa!${examPart}`;
+    modalMsgEl.style.color = '#2563eb';
+  }
+
+  if(modalStudentName) modalStudentName.textContent = studentName || '';
+  if(modalClassName) modalClassName.textContent = className || '';
+
+  if(modalTotalGot) { modalTotalGot.textContent = totalGot || ''; modalTotalGot.className = 'total-blue'; }
+  if(modalTotalMax) { modalTotalMax.textContent = totalMax || ''; modalTotalMax.className = 'total-green'; }
+  if(modalAverage) { modalAverage.textContent = avgRaw; modalAverage.className = (typeof percent === 'number' && percent < 50) ? 'avg-red' : 'avg-green'; }
+  if(modalGrade){ modalGrade.textContent = gradeText || ''; modalGrade.className = 'grade-badge'; try { modalGrade.style.background = gradeColor(gradeText) || '#3b82f6'; } catch(e){ modalGrade.style.background = '#3b82f6'; } }
+  if(modalStatus){ modalStatus.textContent = passfail || ''; modalStatus.className = (typeof percent === 'number' && percent < 50) ? 'status-fail' : 'status-pass'; }
+
+  // show modal
+  celebrationOverlay.classList.add('active');
+  celebrationModal.style.display = 'block';
+  celebrationModal.classList.remove('pop'); void celebrationModal.offsetWidth; celebrationModal.classList.add('pop');
+  celebrationOverlay.setAttribute('aria-hidden','false');
+
+  // emoji rain
+  lastEmojiType = isFail ? 'sad' : 'celebrate';
+  if(emojisVisible) startEmojiRain(lastEmojiType);
+
+  // Try to unlock audio (best-effort). Then play if audio is enabled and not a fail.
+  (async () => {
+    try {
+      // Try to unlock using earlier user gesture (if any)
+      await tryUnlockAudio();
+    } catch(e) { /* ignore */ }
+
+    if (!isFail) {
+      // Play using preloaded file (or fallback synth) when audioEnabled is true
+      playAudioFileIfEnabled(soundPath, () => playClap(6, 0.06, 0.85));
+    }
+  })();
+
+
+  // close handlers
+  function closeSrv(){
+    celebrationOverlay.classList.remove('active');
+    celebrationModal.style.display = 'none';
+    celebrationModal.classList.remove('pop');
+    celebrationOverlay.setAttribute('aria-hidden','true');
+    stopEmojiRain();
+    celebrationOverlay.removeEventListener('click', clickOutside);
+    celebrationClose.removeEventListener('click', closeSrv);
+    celebrationCloseBtn.removeEventListener('click', closeSrv);
+    if(modalBadgeEl) setTimeout(()=> modalBadgeEl.classList.remove('glow'), 300);
+  }
+  function clickOutside(e){
+    if(e.target === celebrationOverlay || e.target.classList.contains('celebration-backdrop')) closeSrv();
+  }
+  celebrationClose.addEventListener('click', closeSrv);
+  celebrationCloseBtn.addEventListener('click', closeSrv);
+  celebrationOverlay.addEventListener('click', clickOutside);
+}
+
+/* ---------- renderResult (keeps your logic) with visual tweaks */
+async function renderResult(doc, opts = {}) {
+  resultArea.style.display = 'block';
+  resultArea.innerHTML = '';
+
+  const published = doc.publishedAt ? new Date(doc.publishedAt.seconds ? doc.publishedAt.seconds * 1000 : doc.publishedAt).toLocaleString() : '';
+  const examName = doc.examName || doc.examId || '';
+
+  let compsEnabled = doc.components || null;
+  if(!compsEnabled){
+    compsEnabled = { assignment:false, quiz:false, monthly:false, cw1:false, cw2:false, exam:false };
+    if(Array.isArray(doc.subjects)) for(const s of doc.subjects){
+      const c = s.components||{};
+      if(c.assignment) compsEnabled.assignment = true;
+      if(c.quiz) compsEnabled.quiz = true;
+      if(c.monthly) compsEnabled.monthly = true;
+      if(c.cw1) compsEnabled.cw1 = true;
+      if(c.cw2) compsEnabled.cw2 = true;
+      if(c.exam) compsEnabled.exam = true;
+    }
+  }
   
-  await Promise.all([loadClasses(), loadSubjects(), loadStudents(), loadExams(), loadTeachers()]);
-  populateClassFilters(); populateStudentsExamDropdown(); populateTeachersSubjectFilter();
-  renderStudents(); renderClasses(); renderSubjects(); renderExams(); renderTeachers();
-}
-async function loadClasses(){
-  const snap = await getDocs(collection(db,'classes'));
-  classesCache = snap.docs.map(d=>({ id:d.id, ...d.data() }));
-}
-// async function loadSubjects(){
-//   const snap = await getDocs(collection(db,'subjects'));
-//   // subject docs now only keep id + name (we removed max field from admin side)
-//   subjectsCache = snap.docs.map(d=>({ id:d.id, ...d.data() }));
-// }
-// REPLACE your existing loadSubjects() with this block
-async function loadSubjects(){
-  try {
-    const snap = await getDocs(collection(db,'subjects'));
-    const arr = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    // keep both names to avoid mismatched usage in other parts of code
-    subjectsCache = arr;
-    window.subjectsCache = arr;
-  } catch (err) {
-    console.error('loadSubjects failed', err);
-    subjectsCache = [];
-    window.subjectsCache = [];
+  const hasLinked = Boolean(doc.linkedExamName) || Boolean(doc.linkedExamId) || (Array.isArray(doc.subjects) && doc.subjects.some(s => s.components && s.components.linked));
+  let tableHtml = `<div class="card"><div style="overflow:auto"><table><thead><tr><th>Subject</th>`;
+  if(hasLinked) tableHtml += `<th>${twoLineHeaderHTML(doc.linkedExamName || 'Prev')}</th>`;
+  if(compsEnabled.assignment) tableHtml += `<th>Assignment</th>`;
+  if(compsEnabled.quiz) tableHtml += `<th>Quiz</th>`;
+  if(compsEnabled.monthly) tableHtml += `<th>Monthly</th>`;
+  if(compsEnabled.cw1) tableHtml += `<th>CW1</th>`;
+  if(compsEnabled.cw2) tableHtml += `<th>CW2</th>`;
+  if(compsEnabled.exam) tableHtml += `<th>${twoLineHeaderHTML(examName || 'Exam')}</th>`;
+  
+  tableHtml += `<th>Total</th><th>Max</th></tr></thead><tbody>`;
+
+  let totGot = 0, totMax = 0;
+  if(doc.subjects && Array.isArray(doc.subjects)){
+    for(const s of doc.subjects){
+      const comps = s.components || {};
+      const combinedMark = typeof s.mark !== 'undefined' ? Number(s.mark) : Number(s.total || 0);
+      let componentSum = 0;
+      if(typeof s.mark === 'undefined'){
+        if(comps.assignment != null) componentSum += Number(comps.assignment); else if(s.assignment != null) componentSum += Number(s.assignment);
+        if(comps.quiz != null) componentSum += Number(comps.quiz); else if(s.quiz != null) componentSum += Number(s.quiz);
+        if(comps.monthly != null) componentSum += Number(comps.monthly); else if(s.monthly != null) componentSum += Number(s.monthly);
+        if(comps.cw1 != null) componentSum += Number(comps.cw1); else if(s.cw1 != null) componentSum += Number(s.cw1);
+        if(comps.cw2 != null) componentSum += Number(comps.cw2); else if(s.cw2 != null) componentSum += Number(s.cw2);
+        if(comps.exam != null) componentSum += Number(comps.exam); else if(s.exam != null) componentSum += Number(s.exam);
+        
+      }
+      const rowTotal = (typeof s.mark !== 'undefined') ? combinedMark : componentSum;
+      const rowMax = Number(s.max || 0);
+
+      tableHtml += `<tr><td>${escapeHtml(s.name)}</td>`;
+      if(hasLinked){
+        const prevVal = (s.components && s.components.linked && (typeof s.components.linked.total !== 'undefined')) ? s.components.linked.total : (s.components && typeof s.components.linked === 'number' ? s.components.linked : '-');
+        tableHtml += `<td style="text-align:center">${escapeHtml(String(prevVal!=null?prevVal:'-'))}</td>`;
+      }
+      if(compsEnabled.assignment) tableHtml += `<td style="text-align:center">${escapeHtml(String((comps.assignment!=null)?comps.assignment:(s.assignment!=null? s.assignment: '-')))}</td>`;
+if(compsEnabled.quiz) tableHtml += `<td style="text-align:center">${escapeHtml(String((comps.quiz!=null)?comps.quiz:(s.quiz!=null? s.quiz: '-')))}</td>`;
+if(compsEnabled.monthly) tableHtml += `<td style="text-align:center">${escapeHtml(String((comps.monthly!=null)?comps.monthly:(s.monthly!=null? s.monthly: '-')))}</td>`;
+if(compsEnabled.cw1) tableHtml += `<td style="text-align:center">${escapeHtml(String((comps.cw1!=null)?comps.cw1:(s.cw1!=null? s.cw1: '-')))}</td>`;
+if(compsEnabled.cw2) tableHtml += `<td style="text-align:center">${escapeHtml(String((comps.cw2!=null)?comps.cw2:(s.cw2!=null? s.cw2: '-')))}</td>`;
+if(compsEnabled.exam) tableHtml += `<td style="text-align:center">${escapeHtml(String((comps.exam!=null)?comps.exam:(s.exam!=null? s.exam: '-')))}</td>`;
+
+      tableHtml += `<td style="text-align:center">${escapeHtml(String(rowTotal))}</td><td style="text-align:center">${escapeHtml(String(rowMax||''))}</td></tr>`;
+
+      totGot += Number(rowTotal||0); totMax += Number(rowMax||0);
+    }
   }
-}
+  tableHtml += `</tbody></table></div></div>`;
 
-async function loadStudents(){
-  const snap = await getDocs(collection(db,'students'));
-  studentsCache = snap.docs.map(d=>({ id:d.id, ...d.data() }));
-}
-// async function loadExams(){
-//   const snap = await getDocs(collection(db,'exams'));
-//   examsCache = snap.docs.map(d=>({ id:d.id, ...d.data() }));
-// }
+  const total = typeof doc.total !== 'undefined' ? Number(doc.total) : totGot;
+  const averageRaw = typeof doc.average !== 'undefined' ? Number(doc.average) : ((doc.subjects && doc.subjects.length) ? (total / doc.subjects.length) : 0);
+  const sumMax = totMax;
+  const percent = sumMax ? (total / sumMax * 100) : 0;
+  const grade = gradeForPercent(percent);
+  const passfail = percent >= 50 ? 'Gudbay' : 'Dhacay';
+  const percentCol = percentColor(percent);
+  const gradeBg = gradeColor(grade);
 
-async function loadExams(){
-  try {
-    const snap = await getDocs(collection(db,'exams'));
-    const arr = snap.docs.map(d=>({ id:d.id, ...d.data() }));
-    examsCache = arr;
-    // expose globally for any code that used window.examsCache
-    window.examsCache = arr;
-  } catch(err){
-    console.warn('loadExams failed', err);
-    examsCache = [];
-    window.examsCache = [];
+  const schoolName = 'AL-FATXI PRIMARY AND SECONDARY SCHOOL';
+  const studentName = escapeHtml(doc.studentName || 'Magac aan la garanayn');
+  const studentIdRaw = escapeHtml(doc.studentId || '');
+  const className = escapeHtml(doc.className || doc.classId || '');
+  const examLabel = escapeHtml(examName || '');
+  const mother = doc.motherName ? escapeHtml(doc.motherName) : '';
+
+  const nameColor = (percent < 50) ? '#0b74ff' : '#0f172a';      // blue when failed per your request
+  const averageColor = (percent < 50) ? '#c0392b' : '#0b8a3e';  // red when failed else green
+  const totalColor = '#246bff'; // blue for total number
+  const maxColor = '#10b981';   // green for max
+
+  const headerHtml = `
+    <div class="card">
+      <div class="result-school" style="font-weight:900;color:${nameColor}">${schoolName}</div>
+      <div class="result-header">
+        <div class="student-line">Magaca ardayga: 
+          <span class="student-name" style="font-weight:900;color:${nameColor};">${studentName}</span>
+        </div>
+
+        <div class="id-class-line">
+          ID: <strong id="studentIdText">${studentIdRaw}</strong>
+          <button id="maskIdBtn" class="btn" title="Toggle displayed ID" style="padding:6px 8px;margin-left:8px;color:var(--primary);background:transparent;border:1px solid rgba(11,116,255,0.08)">
+            <svg id="eyeOpen" class="icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:none;stroke:currentColor">
+              <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z" stroke="currentColor" stroke-width="1.2" fill="none"/>
+              <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.2" fill="none"/>
+            </svg>
+            <svg id="eyeClosed" class="icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:inline-block;stroke:currentColor">
+              <path d="M3 3l18 18" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z" stroke="currentColor" stroke-width="1.2" fill="none"/>
+            </svg>
+          </button>
+
+          &nbsp;&nbsp; Class: <strong style="font-weight:900;color:${nameColor}">${className}</strong>
+        </div>
+
+        <div class="exam-line">Imtixaanka: <strong style="font-weight:900">${examLabel}</strong></div>
+        ${mother ? `<div class="mother-line"><strong>Ina Hooyo:</strong> ${mother}</div>` : ''}
+        <div class="published-line">Published: ${escapeHtml(published)}</div>
+        <div class="source-line">Source: AL-Fatxi School</div>
+      </div>
+    </div>`;
+
+  const totalsHtml = `
+    <div class="totals-card card">
+      <div class="totals-block">
+        <div class="tot-line">
+          <div>Total: <strong style="color:${totalColor};font-weight:900">${total}</strong> / <span style="color:${maxColor};font-weight:900">${sumMax}</span></div>
+          <div>Percent: <strong style="color:${percentCol};font-weight:900">${percent.toFixed(2)}%</strong></div>
+          <div>Average: <strong style="color:${averageColor};font-weight:900">${Number(averageRaw).toFixed(2)}</strong></div>
+          <div>Grade: <span class="grade-badge" style="background:${gradeBg}">${grade}</span></div>
+          <div>Status: <strong id="statusBadge" style="color:#fff;padding:6px 8px;border-radius:8px;font-weight:900;background:${percent>=50? '#0b8a3e':'#c0392b'}">${passfail}</strong></div>
+          <div>School rank: <strong id="schoolRankCell">${escapeHtml(String(doc.schoolRank || '/—'))}</strong></div>
+          <div>Class rank: <strong id="classRankCell">${escapeHtml(String(doc.classRank || '/—'))}</strong></div>
+        </div>
+      </div>
+
+      <div class="actions-group" id="actionsGroup">
+        <button id="printBtn" class="btn btn-primary" title="Download PDF" style="min-width:170px;font-size:15px">
+          <svg class="icon" viewBox="0 0 24 24"><path d="M6 9h12V4H6v5zM6 13h12v-1H6v1zM6 15h12v5H6v-5z" fill="#fff"/></svg> Daabac (PDF)
+        </button>
+
+        <button id="moreExamsBtn" class="btn btn-ghost" title="More published exams">More published exams</button>
+
+        <button id="screenshotBtn" class="btn" title="Screenshot (download image)">
+          <svg class="icon" viewBox="0 0 24 24"><path d="M4 7h4l1-3h6l1 3h4v11H4z" stroke="currentColor" stroke-width="1.2" fill="none"/></svg> Screenshot
+        </button>
+      </div>
+    </div>`;
+
+  resultArea.innerHTML = headerHtml + tableHtml + totalsHtml;
+  hideLoader();
+
+  /* mask ID (display) - unchanged */
+  const maskBtn = document.getElementById('maskIdBtn');
+  const studentIdText = document.getElementById('studentIdText');
+  const eyeOpen = document.getElementById('eyeOpen');
+  const eyeClosed = document.getElementById('eyeClosed');
+  let masked = true;
+  const originalId = studentIdText ? studentIdText.textContent : '';
+
+  function applyMask(){
+    if(!studentIdText) return;
+    if(masked){
+      const s = originalId || '';
+      studentIdText.textContent = s.length>3 ? '*'.repeat(Math.max(0,s.length-3)) + s.slice(-3) : '*'.repeat(s.length);
+      if(eyeOpen) eyeOpen.style.display='none';
+      if(eyeClosed) eyeClosed.style.display='inline-block';
+      if(maskBtn) maskBtn.style.color = 'var(--primary)';
+    } else {
+      studentIdText.textContent = originalId;
+      if(eyeOpen) eyeOpen.style.display='inline-block';
+      if(eyeClosed) eyeClosed.style.display='none';
+      if(maskBtn) maskBtn.style.color = 'var(--primary)';
+    }
   }
-}
 
+  if(maskBtn){
+    maskBtn.addEventListener('click', ()=>{
+      masked = !masked;
+      applyMask();
+    });
+    maskBtn.setAttribute('aria-label','Toggle student ID visibility');
+  } else {
+    if(studentIdText){
+      const fb = document.createElement('button');
+      fb.className = 'btn';
+      fb.style.padding = '6px 8px';
+      fb.style.marginLeft = '8px';
+      fb.style.color = 'var(--primary)';
+      fb.title = 'Toggle displayed ID';
+      fb.innerHTML = '<svg class="icon" viewBox="0 0 24 24"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z" stroke="currentColor" stroke-width="1.2" fill="none"/><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.2" fill="none"/></svg>';
+      studentIdText.parentNode.appendChild(fb);
+      fb.addEventListener('click', ()=>{ masked = !masked; applyMask(); });
+    }
+  }
+  applyMask();
 
-async function loadTeachers(){
+  /* screenshot / pdf / published list logic are unchanged (kept from your original) */
+  const screenshotBtn = document.getElementById('screenshotBtn');
+  const actionsGroup = document.getElementById('actionsGroup');
+  if(screenshotBtn){
+    screenshotBtn.onclick = async () => {
+      try {
+        if(actionsGroup) actionsGroup.style.visibility = 'hidden';
+        const el = resultArea;
+        const canvas = await html2canvas(el, { scale: 2, useCORS: true, backgroundColor: '#ffffff' });
+        const dataUrl = canvas.toDataURL('image/png');
+        const a = document.createElement('a');
+        a.href = dataUrl;
+        const name = (doc.studentName || doc.studentId || 'result').replace(/\s+/g,'_');
+        a.download = `${name}_result.png`; document.body.appendChild(a); a.click(); a.remove();
+      } catch (e) {
+        console.error('Screenshot failed', e); alert('Screenshot failed — isku day mar kale.');
+      } finally {
+        if(actionsGroup) actionsGroup.style.visibility = 'visible';
+      }
+    };
+  }
+
+  const printBtn = document.getElementById('printBtn');
+  if(printBtn){
+    printBtn.onclick = async () => {
+      try {
+        if(!(window.jspdf && window.jspdf.jsPDF)) throw new Error('jsPDF not available');
+        const { jsPDF } = window.jspdf;
+        const docPdf = new jsPDF({ orientation: 'p', unit: 'pt', format: 'a4' });
+        const margin = 20; let y = margin;
+        docPdf.setFontSize(18); docPdf.text(schoolName, margin, y); y += 24;
+        docPdf.setFontSize(15); docPdf.text(`${doc.studentName || ''}    ID: ${doc.studentId || ''}`, margin, y); y += 20;
+        if(mother) { docPdf.setFontSize(13); docPdf.text(`Ina Hooyo: ${mother}`, margin, y); y += 18; }
+        docPdf.setFontSize(13); docPdf.text(`Class: ${className}    Exam: ${examLabel}`, margin, y); y += 20;
+        docPdf.setFontSize(12); docPdf.text(`Published: ${published}    Source: AL-Fatxi School`, margin, y); y += 20;
+
+        const cols = [];
+        cols.push({ header: 'Subject', dataKey: 'subject' });
+        if(hasLinked) cols.push({ header: (doc.linkedExamName || 'Prev'), dataKey: 'linked' });
+        if(compsEnabled.assignment) cols.push({ header: 'Assignment', dataKey: 'assignment' });
+        if(compsEnabled.quiz) cols.push({ header: 'Quiz', dataKey: 'quiz' });
+        if(compsEnabled.monthly) cols.push({ header: 'Monthly', dataKey: 'monthly' });
+        if(compsEnabled.exam) cols.push({ header: examName, dataKey: 'exam' });
+        cols.push({ header: 'Total', dataKey: 'total' }); cols.push({ header: 'Max', dataKey: 'max' });
+
+        const tableData = (doc.subjects||[]).map(s=>{
+          const comps = s.components||{};
+          const r = { subject: s.name };
+          if(hasLinked) r.linked = (s.components && s.components.linked && typeof s.components.linked.total !== 'undefined') ? String(s.components.linked.total) : ((typeof s.components?.linked === 'number')? String(s.components.linked): '-');
+          if(compsEnabled.assignment) r.assignment = (comps.assignment!=null)? String(comps.assignment) : (s.assignment!=null? String(s.assignment): '-');
+          if(compsEnabled.quiz) r.quiz = (comps.quiz!=null)? String(comps.quiz) : (s.quiz!=null? String(s.quiz): '-');
+          if(compsEnabled.monthly) r.monthly = (comps.monthly!=null)? String(comps.monthly) : (s.monthly!=null? String(s.monthly): '-');
+          if(compsEnabled.exam) r.exam = (comps.exam!=null)? String(comps.exam) : (s.exam!=null? String(s.exam): '-');
+          r.total = (typeof s.mark !== 'undefined') ? String(s.mark) : String(s.total != null ? s.total : ((comps.assignment||0)+(comps.quiz||0)+(comps.monthly||0)+(comps.exam||0)));
+          r.max = String(s.max || '');
+          return r;
+        });
+
+        docPdf.autoTable({
+          startY: y,
+          head: [cols.map(c=>c.header)],
+          body: tableData.map(r => cols.map(c => r[c.dataKey] || '')),
+          styles: { fontSize: 12, cellPadding: 6 },
+          headStyles: { fillColor: [240,240,240], textColor: [20,20,20], fontStyle: 'bold' },
+          margin: { left: margin, right: margin }
+        });
+
+        const finalY = docPdf.lastAutoTable ? docPdf.lastAutoTable.finalY + 18 : docPdf.internal.pageSize.getHeight() - 80;
+        docPdf.setFontSize(13);
+        docPdf.text(`Total: ${total} / ${sumMax}    Percent: ${percent.toFixed(2)}%`, margin, finalY);
+        docPdf.text(`Average: ${Number(averageRaw).toFixed(2)}    Grade: ${grade}`, margin, finalY + 18);
+        docPdf.text(`Status: ${passfail}`, margin, finalY + 36);
+        docPdf.text(`School rank: ${doc.schoolRank || '/—'}    Class rank: ${doc.classRank || '/—'}`, margin, finalY + 54);
+
+        const fname = `${(doc.studentName || doc.studentId || 'result').replace(/\s+/g,'_')}_result.pdf`;
+        docPdf.save(fname);
+      } catch (e) {
+        console.warn('PDF failed, print fallback', e);
+        window.print();
+      }
+    };
+  }
+
+  const moreBtn = document.getElementById('moreExamsBtn');
+  if(moreBtn) moreBtn.onclick = () => togglePublishedList(doc.studentId);
+
+  // show celebration if rank present — prefer classRank, otherwise schoolRank
   try {
-    const snap = await getDocs(collection(db,'teachers'));
-    teachersCache = snap.docs.map(d=>({ id:d.id, ...d.data() }));
-    // resolve subject names if subjectsCache available
-    if(!subjectsCache || !subjectsCache.length) await loadSubjects();
-    teachersCache.forEach(t => {
-      if(!t.subjectName){
-        if(t.subjects && Array.isArray(t.subjects)){
-          t.subjectName = t.subjects.map(id => {
-            const s = (subjectsCache||[]).find(x => x.id === id || x.name === id);
-            return s ? s.name : id;
-          }).join(', ');
-        } else if(t.subjectId){
-          const s = (subjectsCache||[]).find(x => x.id === t.subjectId || x.name === t.subjectId);
-          t.subjectName = s ? s.name : t.subjectId;
-        } else {
-          t.subjectName = t.subjectName || '';
+    const classRankNum = Number(doc.classRank);
+    const schoolRankNum = Number(doc.schoolRank);
+    const totalMarksStr = `${total}/${sumMax}`;
+    const avgStr = `${Number(averageRaw).toFixed(2)}%`;
+    const soundPath = doc.soundPath || 'assets/clap.mp3';
+
+    if(Number.isFinite(classRankNum) && classRankNum >= 1){
+      showCelebration({ rankType:'class', rank: classRankNum, studentName, className, totalMarks: totalMarksStr, averageStr: avgStr, soundPath, percent, examLabel });
+    } else if(Number.isFinite(schoolRankNum) && schoolRankNum >= 1){
+      showCelebration({ rankType:'school', rank: schoolRankNum, studentName, className, totalMarks: totalMarksStr, averageStr: avgStr, soundPath, percent, examLabel });
+    } else if(Number(percent) < 50){
+      showCelebration({ rankType:'none', rank: null, studentName, className, totalMarks: totalMarksStr, averageStr: avgStr, soundPath, percent, examLabel });
+    }
+  } catch(e){ console.warn('celebration check failed', e); }
+
+  if(doc.examId){
+    (async ()=>{
+      try{
+        const qAll = query(collection(db,'examTotals'), where('examId','==', doc.examId));
+        const snapAll = await getDocs(qAll);
+        const schoolSize = snapAll.size || 0;
+        let classSize = 0;
+        if(doc.classId){
+          snapAll.forEach(d => { const data = d.data(); if(data.classId === doc.classId) classSize++; });
         }
+        const schoolRankCell = document.getElementById('schoolRankCell'), classRankCell = document.getElementById('classRankCell');
+        if(schoolRankCell) schoolRankCell.textContent = doc.schoolRank && schoolSize ? `${doc.schoolRank} / ${schoolSize}` : (doc.schoolRank ? `${doc.schoolRank}` : '/—');
+        if(classRankCell) classRankCell.textContent = doc.classRank && classSize ? `${doc.classRank} / ${classSize}` : (doc.classRank ? `${doc.classRank}` : '/—');
+      }catch(e){ console.warn('Rank fetch failed', e); }
+    })();
+  }
+}
+
+/* ---------- togglePublishedList (unchanged) ---------- */
+const publishedListState = {};
+async function togglePublishedList(studentId){
+  if(!studentId) return;
+  const key = String(studentId);
+  if(!publishedListState[key]) publishedListState[key] = { visible:false, container:null, selectedExamId:null };
+  const state = publishedListState[key];
+  if(state.visible){
+    if(state.container && state.container.parentNode) state.container.parentNode.removeChild(state.container);
+    state.visible = false;
+    return;
+  }
+  const container = document.createElement('div');
+  container.className = 'card';
+  container.style.marginTop = '12px';
+  container.innerHTML = `<div style="padding:10px;color:var(--muted)">Loading…</div>`;
+  resultArea.appendChild(container);
+  state.container = container; state.visible = true;
+  try{
+    const q = query(collection(db,'examTotals'), where('studentId','==', studentId));
+    const snap = await getDocs(q);
+    const arr = [];
+    snap.forEach(d=> arr.push(d.data()));
+    if(arr.length === 0){ container.innerHTML = '<div style="padding:10px;color:var(--muted)">No published exams found.</div>'; return; }
+    arr.sort((a,b)=> (b.publishedAt?.seconds||0) - (a.publishedAt?.seconds||0));
+    const html = arr.map(a => {
+      const dateText = a.publishedAt ? new Date(a.publishedAt.seconds*1000).toLocaleDateString() : '';
+      return `<div style="padding:8px;border-bottom:1px solid #eef2f7"><button class="pubBtn" data-id="${escapeHtml(a.examId)}" style="background:none;border:0;font-weight:800">${escapeHtml(a.examName||a.examId||'(exam)')}</button><span style="float:right;color:var(--muted)">${escapeHtml(dateText)}</span></div>`;
+    }).join('');
+    container.innerHTML = html;
+    container.querySelectorAll('.pubBtn').forEach(b => {
+      b.onclick = async () => {
+        const exId = b.dataset.id;
+        const snap = await getDoc(doc(db,'examTotals', `${exId}_${studentId}`));
+        if(!snap.exists()) return alert('Not found');
+        renderResult(snap.data(), { source: 'examTotals' });
+      };
+    });
+  }catch(err){
+    console.error(err);
+    container.innerHTML = `<div style="padding:10px;color:#c0392b">Khalad ayaa dhacay, fadlan isku day mar kale.</div>`;
+  }
+}
+
+/* ---------- fallback ----- */
+async function fallbackFindLatestExamTotal(studentId){
+  try{
+    const q = query(collection(db,'examTotals'), where('studentId','==', studentId));
+    const snap = await getDocs(q);
+    const arr = [];
+    snap.forEach(d => arr.push(d.data()));
+    if(arr.length === 0) return null;
+    arr.sort((a,b)=> (b.publishedAt?.seconds||0) - (a.publishedAt?.seconds||0));
+    return arr[0];
+  }catch(e){ console.error(e); return null; }
+}
+
+// after you call renderResult(alt, ... ) or renderResult(latest, ...)
+// call this helper to update header
+async function setHeaderStudentNameById(studentId){
+  try {
+    const snap = await getDoc(doc(db,'students', studentId));
+    if(snap.exists()){
+      const d = snap.data();
+      const name = d.name || d.studentName || d.fullName || '';
+      const tag = document.getElementById('studentTag');
+      if(tag && name) tag.textContent = `— ${name}`;
+    }
+  } catch(e){ console.warn('setHeaderStudentNameById failed', e); }
+}
+
+
+/* ---------- helpers required by transactions view (updated) ---------- */
+
+/** Format month label. Accepts:
+ *  - "1-2026" or "01-2026" -> "Jan-2026"
+ *  - "2026-01" or ISO -> "Jan-2026"
+ *  - Date string -> formatted month-year
+ *  - otherwise returns original string
+ */
+function formatMonthLabel(m) {
+  if (!m && m !== 0) return '';
+  const s = String(m).trim();
+  // pattern: 1-2026 or 01-2026
+  const mm1 = s.match(/^(\d{1,2})-(\d{4})$/);
+  if (mm1) {
+    const mon = Number(mm1[1]);
+    const yr = mm1[2];
+    const names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    return (mon >=1 && mon <=12) ? `${names[mon-1]}-${yr}` : s;
+  }
+  // pattern: 2026-01
+  const mm2 = s.match(/^(\d{4})-(\d{1,2})$/);
+  if (mm2) {
+    const yr = mm2[1], mon = Number(mm2[2]);
+    const names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    return (mon >=1 && mon <=12) ? `${names[mon-1]}-${yr}` : s;
+  }
+  // try Date parse
+  const d = new Date(s);
+  if (!isNaN(d.getTime())) {
+    const names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    return `${names[d.getMonth()]}-${d.getFullYear()}`;
+  }
+  return s;
+}
+
+/** Download CSV helper (rows: array of arrays) */
+function downloadCSV(filename, rows) {
+  const csv = rows.map(r => r.map(cell => {
+    if (cell == null) return '';
+    const s = String(cell);
+    if (s.includes('"') || s.includes(',') || s.includes('\n')) {
+      return `"${s.replace(/"/g, '""')}"`;
+    }
+    return s;
+  }).join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+/** Export transactions to PDF using jsPDF+autoTable if available, otherwise returns false
+ *  meta: object with keys to print at top (e.g. { 'Student Name': 'Ali', 'Student ID': 'S001', 'Class': '5A' })
+ *  totals: object with totals to print under the table
+ */
+async function exportTransactionsToPDF(filename, columns, rows, meta = {}, totals = {}) {
+  try {
+    if (!(window.jspdf && window.jspdf.jsPDF)) return false;
+    const { jsPDF } = window.jspdf;
+    const docPdf = new jsPDF({ unit: 'pt', format: 'a4', orientation: 'portrait' });
+    const margin = 20;
+    let y = margin;
+    docPdf.setFontSize(14);
+    docPdf.text('Transactions', margin, y); y += 18;
+
+    // print meta (Student name, ID, class)
+    docPdf.setFontSize(11);
+    Object.keys(meta).forEach(k => {
+      docPdf.text(`${k}: ${meta[k]}`, margin, y);
+      y += 14;
+    });
+    y += 6;
+
+    // build body for autoTable
+    docPdf.autoTable({
+      startY: y,
+      head: [columns],
+      body: rows,
+      styles: { fontSize: 10, cellPadding: 6 },
+      headStyles: { fillColor: [240,240,240], textColor: [20,20,20], fontStyle: 'bold' },
+      margin: { left: margin, right: margin }
+    });
+
+    const afterTableY = docPdf.lastAutoTable ? docPdf.lastAutoTable.finalY + 12 : docPdf.internal.pageSize.getHeight() - 80;
+    docPdf.setFontSize(11);
+
+    // print totals below the table
+    Object.keys(totals).forEach((k) => {
+      docPdf.text(`${k}: ${totals[k]}`, margin, afterTableY + 14 * (Object.keys(totals).indexOf(k) + 1));
+    });
+
+    docPdf.save(filename);
+    return true;
+  } catch(e) {
+    console.warn('PDF export failed', e);
+    return false;
+  }
+}
+
+/* ---------- Updated renderStudentTransactionsModal (desktop table + mobile cards + exports + totals + Reesto Hore) ---------- */
+
+async function renderStudentTransactionsModal(studentId){
+  try{
+    showLoader && showLoader();
+
+    // fetch student info (best-effort)
+    let student = null;
+    try {
+      const sSnap = await getDoc(doc(db,'students', studentId));
+      if(sSnap.exists()) student = sSnap.data();
+    } catch(e){ console.warn('student lookup failed', e); }
+
+    // load transactions
+    const q = query(collection(db,'transactions'), where('target_type','==','student'), where('target_id','==', studentId));
+    const snap = await getDocs(q);
+    const txs = snap.docs.map(d=> ({ id:d.id, ...d.data() })).sort((a,b)=> (b.createdAt?.seconds||0) - (a.createdAt?.seconds||0));
+
+    // compute totals
+    const totalMonthlyPaid = txs.filter(t => (t.type === 'monthly') && !t.is_deleted).reduce((s,t) => s + (t.amount_cents || 0), 0);
+    const totalAllPaid = txs.filter(t => (t.type !== 'adjustment' && !t.is_deleted)).reduce((s,t) => s + (t.amount_cents || 0), 0);
+    const totalReesto = txs.filter(t => (t.type === 'adjustment' || t.type === 'adjust') && !t.is_deleted).reduce((s,t) => s + (t.amount_cents || 0), 0);
+    const currentBalance = (student && (typeof student.balance_cents !== 'undefined')) ? student.balance_cents : null;
+
+    // small inline CSS for mobile cards + badges and theme variables
+    const css = `
+      <style>
+        :root {
+          --tx-badge-pay: #16a34a;
+          --tx-badge-reesto: #0b6bd6;
+          --tx-bg-card: #ffffff;
+          --tx-text: #0f172a;
+          --tx-muted: #6b7280;
+          --tx-btn: #0b74ff;
+        }
+        .tx-header { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; }
+        .tx-actions { display:flex; gap:8px; align-items:center; }
+        .tx-btn { background:var(--tx-btn); color:#fff; border:0; padding:8px 10px; border-radius:8px; font-weight:700; cursor:pointer }
+        .tx-btn.ghost { background:transparent; color:var(--tx-text); border:1px solid rgba(0,0,0,0.06); font-weight:600 }
+        .tx-summary { text-align:right; min-width:180px; }
+        table.tx-table { width:100%; border-collapse:collapse; font-size:14px; background:transparent; color:var(--tx-text) }
+        table.tx-table thead th { text-align:left; padding:10px 8px; color:var(--tx-muted); font-weight:700; }
+        table.tx-table tbody td { padding:10px 8px; vertical-align:top; border-bottom:1px solid #f1f5f9; }
+        .badge-pay { background: rgba(16,163,127,0.08); color: var(--tx-badge-pay); padding:4px 8px; border-radius:999px; font-weight:700; display:inline-block }
+        .badge-reesto { background: rgba(11,107,214,0.08); color: var(--tx-badge-reesto); padding:4px 8px; border-radius:999px; font-weight:700; display:inline-block }
+        .tx-cards { display:none; gap:10px; }
+        .tx-card { border-radius:12px; box-shadow:0 6px 18px rgba(2,6,23,0.06); padding:10px; display:flex; gap:10px; align-items:flex-start; background:var(--tx-bg-card); }
+        .tx-card .left { flex:0 0 46px; display:flex; align-items:center; justify-content:center; }
+        .tx-card .content { flex:1; }
+        .tx-card .row { display:flex; justify-content:space-between; gap:8px; align-items:center; }
+        .tx-card .muted { color:var(--tx-muted); font-size:12px; }
+        .meta-line { font-size:13px; color:var(--tx-muted); }
+        @media (max-width:720px){
+          table.tx-table { display:none; }
+          .tx-cards { display:flex; flex-direction:column; }
+          .tx-summary { text-align:left; width:100%; margin-top:8px; }
+          .tx-header { align-items:flex-start; }
+          .tx-actions { order:2; width:100%; justify-content:flex-start; }
+        }
+      </style>
+    `;
+
+    // header + summary (inline card)
+    const name = (student && (student.fullName || student.name || student.studentName)) ? escapeHtml(student.fullName || student.name || student.studentName) : escapeHtml(studentId);
+    const className = student ? escapeHtml(student.className || student.classId || '') : '';
+
+    // header HTML w/ export & print buttons
+    let html = `${css}<div class="card"><div class="tx-header">
+      <div>
+        <div style="font-weight:900">${name}</div>
+        <div class="meta-line">ID: ${escapeHtml(studentId)} ${className ? ' • Class: ' + className : ''}</div>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end">
+        <div class="tx-summary">
+          <div style="font-weight:800">Total monthly paid: <span style="color:var(--tx-badge-pay)">${c2p(totalMonthlyPaid)}</span></div>
+          <div style="font-weight:700">Total all paid: <span style="color:var(--tx-badge-pay)">${c2p(totalAllPaid)}</span></div>
+          <div style="font-weight:700">Reesto Hore: <span style="color:var(--tx-badge-reesto)">${c2p(totalReesto)}</span></div>
+          <div style="font-weight:700">Current balance: <span style="color:#ef4444">${currentBalance===null? '—' : c2p(currentBalance)}</span></div>
+        </div>
+        <div class="tx-actions" style="margin-top:8px">
+          <button id="exportCsvBtn" class="tx-btn">⬇ CSV</button>
+          <button id="exportPdfBtn" class="tx-btn ghost" title="Export PDF">📄 PDF</button>
+          <button id="printBtn" class="tx-btn ghost" title="Print" style="padding:8px 10px" onclick="window.print()">🖨 Print</button>
+        </div>
+      </div>
+    </div></div>`;
+
+    // table header (no "By" column) and rows
+    html += `<div class="card" style="margin-top:10px;overflow:auto">
+      <table class="tx-table"><thead><tr>
+        <th>Date</th><th>Type</th><th>Months</th><th style="text-align:right">Amount</th><th>Method</th><th>Note</th>
+      </tr></thead><tbody>`;
+
+    // export rows: start with meta rows (student info)
+    const exportRows = [];
+    exportRows.push(['Student Name', name]);
+    exportRows.push(['Student ID', studentId]);
+    exportRows.push(['Class', className || '']);
+    exportRows.push([]); // blank line
+    exportRows.push(['Date','Type','Months','Amount','Method','Note']); // header
+
+    // build mobile card markup container
+    let cardsHtml = `<div class="tx-cards" style="margin-top:10px">`;
+
+    for(const tx of txs){
+      if(tx.is_deleted) continue; // hide soft-deleted
+      const d = tx.createdAt ? new Date(tx.createdAt.seconds * 1000) : null;
+      const date = d ? d.toLocaleString() : (tx.date || '');
+      const typeRaw = String(tx.type || '');
+      // display label: if adjustment -> Reesto Hore
+      const typeLabel = (typeRaw === 'adjustment' || typeRaw === 'adjust') ? 'Reesto Hore' : (typeRaw || '');
+      const typeEsc = escapeHtml(typeLabel);
+
+      // months may be array or single
+      let monthsLabel = '';
+      if (tx.related_months && Array.isArray(tx.related_months) && tx.related_months.length) {
+        monthsLabel = tx.related_months.map(m => formatMonthLabel(m)).join(', ');
+      } else if (tx.related_month) {
+        monthsLabel = formatMonthLabel(tx.related_month);
+      } else {
+        monthsLabel = '';
+      }
+      const amount = c2p(tx.amount_cents || 0);
+      const method = escapeHtml((tx.payment_method || '') + (tx.mobile_provider ? (' / ' + tx.mobile_provider) : ''));
+      const note = escapeHtml(tx.note || '');
+
+      // badge & classes: use Reesto label for adjustment
+      const badgeHtml = (typeRaw === 'adjustment' || typeRaw === 'adjust')
+        ? `<span class="badge-reesto">Reesto Hore</span>`
+        : `<span class="badge-pay">${escapeHtml(typeRaw || 'Payment')}</span>`;
+
+      html += `<tr>
+        <td style="padding:8px;white-space:nowrap">${escapeHtml(date)}</td>
+        <td style="padding:8px">${badgeHtml}</td>
+        <td style="padding:8px;white-space:nowrap">${escapeHtml(monthsLabel)}</td>
+        <td style="padding:8px;text-align:right">${amount}</td>
+        <td style="padding:8px;white-space:nowrap">${method}</td>
+        <td style="padding:8px">${note}</td>
+      </tr>`;
+
+      // export row (plain values)
+      exportRows.push([date, typeLabel, monthsLabel, amount, method, note]);
+
+      // mobile card for this tx (inline SVG icons)
+      const iconPay = `<svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 7h16v10H4z" stroke="#16a34a" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M8 12h8" stroke="#16a34a" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+      const iconReesto = `<svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 5v14M5 12h14" stroke="#0b6bd6" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+      const iconHtml = (typeRaw === 'adjustment' || typeRaw === 'adjust') ? iconReesto : iconPay;
+
+      cardsHtml += `<div class="tx-card">
+        <div class="left">${iconHtml}</div>
+        <div class="content">
+          <div class="row"><div style="font-weight:800">${escapeHtml(date)}</div><div style="font-weight:900;color:${typeRaw==='adjustment' ? 'var(--tx-badge-reesto)':'var(--tx-badge-pay)'}">${amount}</div></div>
+          <div class="muted" style="margin-top:6px">${typeEsc}${monthsLabel ? ' • ' + monthsLabel : ''}${method ? ' • ' + method : ''}</div>
+          <div style="margin-top:8px">${note}</div>
+        </div>
+      </div>`;
+    }
+
+    // totals rows in export (blank line then totals)
+    exportRows.push([]);
+    exportRows.push(['Totals', '', 'Total monthly paid', c2p(totalMonthlyPaid), '', '']);
+    exportRows.push(['Totals', '', 'Total all paid', c2p(totalAllPaid), '', '']);
+    exportRows.push(['Totals', '', 'Reesto Hore', c2p(totalReesto), '', '']);
+    exportRows.push(['Totals', '', 'Current balance', currentBalance===null? '—' : c2p(currentBalance), '', '']);
+
+    html += `</tbody></table>${cardsHtml}</div>`; // close cards container in string
+    html += `</div>`; // close outer card div
+
+    // render into resultArea (clear previous)
+    resultArea.style.display = 'block';
+    resultArea.innerHTML = html;
+    hideLoader && hideLoader();
+    try { resultArea.scrollIntoView({ behavior: 'smooth' }); } catch(e){}
+
+    // wire export buttons
+    const exportCsvBtn = document.getElementById('exportCsvBtn');
+    const exportPdfBtn = document.getElementById('exportPdfBtn');
+    const printBtn = document.getElementById('printBtn');
+
+    exportCsvBtn && (exportCsvBtn.onclick = () => {
+      try {
+        const safeName = (student && (student.fullName||student.name)) ? (student.fullName||student.name).replace(/\s+/g,'_') : studentId;
+        const fname = `${safeName}_transactions.csv`;
+        downloadCSV(fname, exportRows);
+        toast && toast('CSV downloaded');
+      } catch(e) { console.warn('CSV export failed', e); toast && toast('CSV export failed'); }
+    });
+
+    exportPdfBtn && (exportPdfBtn.onclick = async () => {
+      try {
+        const safeName = (student && (student.fullName||student.name)) ? (student.fullName||student.name).replace(/\s+/g,'_') : studentId;
+        const fname = `${safeName}_transactions.pdf`;
+        const cols = ['Date','Type','Months','Amount','Method','Note'];
+        // meta and totals for PDF (plain strings)
+        const meta = { 'Student Name': name, 'Student ID': studentId, 'Class': className || '' };
+        const totals = {
+          'Total monthly paid': c2p(totalMonthlyPaid),
+          'Total all paid': c2p(totalAllPaid),
+          'Reesto Hore': c2p(totalReesto),
+          'Current balance': (currentBalance===null? '—' : c2p(currentBalance))
+        };
+        // rows for PDF body: take exportRows, remove first meta lines and blank
+        const bodyRows = exportRows.slice(4, exportRows.length - 5); // between header and totals
+        // bodyRows contains arrays; pass to PDF exporter
+        const ok = await exportTransactionsToPDF(fname, cols, bodyRows, meta, totals);
+        if (!ok) {
+          // fallback to CSV
+          downloadCSV(fname.replace(/\.pdf$/,'') + '.csv', exportRows);
+          toast && toast('PDF export not available — downloaded CSV instead');
+        } else {
+          toast && toast('PDF downloaded');
+        }
+      } catch(e) {
+        console.warn('PDF export failed fallback to CSV', e);
+        downloadCSV(`${studentId}_transactions.csv`, exportRows);
+        toast && toast('Export failed — CSV saved');
       }
     });
-  } catch(err){ teachersCache = []; console.warn('loadTeachers failed', err); }
-}
 
-function isMobileViewport(){ return window.matchMedia && window.matchMedia('(max-width:768px)').matches; }
-/* populate helpers */
-function populateClassFilters(){
-  studentsClassFilter && (studentsClassFilter.innerHTML = '<option value="">All classes</option>');
-  examClassFilter && (examClassFilter.innerHTML = '<option value="">All classes</option>');
-  for(const c of classesCache){
-    const opt = document.createElement('option'); opt.value = c.name; opt.textContent = c.name;
-    studentsClassFilter && studentsClassFilter.appendChild(opt);
-    examClassFilter && examClassFilter.appendChild(opt.cloneNode(true));
+    printBtn && (printBtn.onclick = () => { try { window.print(); } catch(e){ console.warn(e); } });
+
+  }catch(err){
+    console.error('renderStudentTransactionsModal failed', err);
+    hideLoader && hideLoader();
+    message.textContent = 'Ma la soo bixi karo macluumaadka lacagaha. Fadlan isku day mar kale.';
+    toast && toast('Failed to load transactions');
+    throw err;
   }
 }
-function populateStudentsExamDropdown(){
-  if(!studentsExamForTotals) return;
-  studentsExamForTotals.innerHTML = '<option value="">— Show totals for exam —</option>';
-  for(const e of examsCache){
-    const opt = document.createElement('option'); opt.value = e.id; opt.textContent = e.name;
-    studentsExamForTotals.appendChild(opt);
+
+
+// Replace your existing renderStudentAttendanceModal with this function.
+async function renderStudentAttendanceModal(studentId){
+  // small helpers
+  function escapeHtml(s){ if(!s && s!==0) return ''; return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function computePercentFromFlags(flags){ if(!Array.isArray(flags)||flags.length===0) return 0; const present = flags.reduce((s,f)=>s + (f?1:0),0); return Math.round((present/flags.length)*100); }
+  function attendanceMessageForPercent(pct, name){
+    if(pct >= 100) return `<div style="padding:10px;border-radius:8px;background:#ecfdf5;color:#065f46">Congratulations, ${escapeHtml(name)}! Perfect attendance (${pct}%).</div>`;
+    if(pct >= 90) return `<div style="padding:10px;border-radius:8px;background:#ecfeff;color:#036666">Great job — excellent attendance (${pct}%).</div>`;
+    if(pct >= 80) return `<div style="padding:10px;border-radius:8px;background:#fff7ed;color:#92400e">Good — aim for 90%+ (${pct}%).</div>`;
+    if(pct >= 50) return `<div style="padding:10px;border-radius:8px;background:#fff1f2;color:#9f1239">Warning — your attendance is low (${pct}%). Please contact the school office.</div>`;
+    return `<div style="padding:10px;border-radius:8px;background:#fee2e2;color:#7f1d1d">Danger — very low attendance (${pct}%). Contact administration immediately.</div>`;
   }
-}
-/* ----------------------------
-  ANNOUNCEMENTS: admin functions 
-------------------------------*/
-/* ====== Admin announcements (drop-in replacement) ======
-   Requires existing imports already present:
-   getDocs, getDoc, addDoc, updateDoc, deleteDoc, setDoc, doc, collection, query, where, orderBy, limit, Timestamp
-   Also uses: toast(), escapeHtml(), currentUser, classesCache, examsCache, studentsCache, db
-*/
-const ANNOUNCEMENTS_COLL = 'announcements';
-const ANNOUNCE_LOG_COLL = 'announcements_log';
-const ANNOUNCEMENT_TEMPLATES_COLL = 'announcement_templates';
-const ADMIN_QUOTA_COLL = 'admin_quota';
-const ANNOUNCEMENTS_SETTINGS_DOC = doc(db, 'settings', 'announcements');
 
-let _cachedTemplates = null;
-let _cachedAnnouncements = null;
-let _annRenderLock = false;
+  // canvas pie generator (returns dataURL)
+  function createPieDataUrl(presentPct, size = 180){
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    const W = size * dpr;
+    const H = size * dpr;
+    const cx = W/2, cy = H/2, r = Math.min(W,H)/2 - 6*dpr;
+    const c = document.createElement('canvas');
+    c.width = W; c.height = H;
+    const g = c.getContext('2d');
+    g.scale(dpr, dpr);
 
-/* ---------- built-in templates (unchanged) ---------- */
-function builtInTemplates(){
-  return [
-    { key: 'monthly_payment_default', title: 'Monthly Fee — {month}', body: '{student_name}, please pay the monthly fee{monthly_amount} for {month} before the 5th. Your balance: {balance}', type: 'monthly_payment', audience: ['students'], allowMonthly: true },
-    { key: 'exam_announce', title: 'EXAM NOTICE — {exam}', body: 'OGEYSIIS: Imtixaanka {exam} waxaa uu bilaaban doonaa on {date}. Good luck!', type: 'exam', audience: ['students'] },
-    { key: 'top10_school', title: 'Top 10 — {exam}', body: '10ka arday ee ugu sareysa imtixaanka {exam}:\n1) {rank1}\n2) {rank2}\n3) {rank3}\n... up to 10', type: 'top10', audience: ['students'] },
-    { key: 'holiday_notice', title: 'School Holiday', body: 'Fasax: School will be closed on {date}. Enjoy the break!', type: 'holiday', audience: ['all'] },    
-    { key: 'urgent_alert', title: 'Urgent Notice', body: 'URGENT: {message} — please contact the school immediately.', type: 'urgent', audience: ['all'] },
-    { key: 'fee_reminder', title: 'Fee Reminder', body: '{student_name}, your school fees are overdue. Please settle before {due_date}.', type: 'general', audience: ['students'] },
-    { key: 'exam_published', title: 'Exam Results Published', body: 'Results for {exam} are published. Check your student portal for details.', type: 'exam', audience: ['students'] },
-    { key: 'attendance_warn', title: 'Attendance Notice', body: '{student_name}, your attendance is low. Please meet the class teacher.', type: 'general', audience: ['students'] },
-    { key: 'competition', title: 'Competition Update', body: 'Competition scores updated: check the Leaderboard for the latest rankings.', type: 'general', audience: ['all'] },
-    { key: 'payment_received', title: 'Payment Confirmed', body: 'Payment of {amount} received. Thank you — Finance Office.', type: 'general', audience: ['students'] },
-    { key: 'parent_meeting', title: 'Parent Meeting', body: 'Parents meeting on {date} at {time}. Attendance is mandatory.', type: 'general', audience: ['all'] },
-    { key: 'system_maintenance', title: 'System Maintenance', body: 'Portal maintenance planned on {date}. Some services may be unavailable.', type: 'general', audience: ['all'] },
-    { key: 'exam_tips', title: 'Exam Tips', body: 'Exam tips for {exam}: revise past papers, sleep well, and arrive early.', type: 'general', audience: ['students'] },
-    { key: 'library', title: 'Library Update', body: 'New books added to the library. Visit to borrow your copy.', type: 'general', audience: ['students'] },
-    { key: 'covid_notice', title: 'Health Notice', body: 'Health advisory: please follow hygiene guidelines and report any symptoms.', type: 'general', audience: ['all'] }
-  ];
-}
+    // base ring (light grey)
+    g.beginPath();
+    g.arc(size/2, size/2, r/dpr, 0, Math.PI*2);
+    g.fillStyle = '#f3f4f6';
+    g.fill();
 
-/* ---------- settings helpers ---------- */
-async function getAnnouncementsSettings(){
+    if(!Number.isFinite(presentPct) || presentPct <= 0){
+      // no data -> black circle center to show 0%
+      g.beginPath();
+      g.arc(size/2, size/2, (r/dpr)*0.88, 0, Math.PI*2);
+      g.fillStyle = '#111'; // black inner
+      g.fill();
+    } else if(presentPct >= 100){
+      // full present -> full blue circle
+      g.beginPath();
+      g.arc(size/2, size/2, (r/dpr)*0.88, 0, Math.PI*2);
+      g.fillStyle = '#0ea5e9'; // blue
+      g.fill();
+    } else {
+      // draw absent (red) full inner, then draw present arc (blue) on top
+      // draw full inner as red (absent) proportion
+      g.beginPath();
+      g.arc(size/2, size/2, (r/dpr)*0.88, 0, Math.PI*2);
+      g.fillStyle = '#ef4444'; // red for absent base
+      g.fill();
+
+      const start = -Math.PI/2; // top
+      const sweep = (presentPct/100) * Math.PI * 2;
+      const end = start + sweep;
+
+      // draw present arc (blue)
+      g.beginPath();
+      g.moveTo(size/2, size/2);
+      g.arc(size/2, size/2, (r/dpr)*0.88, start, end, false);
+      g.closePath();
+      g.fillStyle = '#0ea5e9';
+      g.fill();
+    }
+
+    // draw inner donut to make ring look nicer (white center)
+    g.beginPath();
+    g.arc(size/2, size/2, (r/dpr)*0.6, 0, Math.PI*2);
+    g.fillStyle = 'rgba(255,255,255,0.98)';
+    g.fill();
+
+    // text percent
+    g.font = `${14 * (dpr)}px sans-serif`;
+    g.fillStyle = '#0f1724';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillText(`${Math.round(presentPct||0)}%`, size/2, size/2);
+
+    return c.toDataURL('image/png');
+  }
+
+  // render helpers
+  function showHtml(html){
+    if(typeof resultArea !== 'undefined' && resultArea){
+      resultArea.style.display = 'block';
+      resultArea.innerHTML = html;
+      try{ resultArea.scrollIntoView({ behavior:'smooth' }); }catch(e){}
+    } else {
+      showModal(`Attendance • ${escapeHtml(studentNameForHdr)}`, html);
+    }
+  }
+
+  // loaders if present
+  try { if(typeof showLoader === 'function') showLoader(); } catch(e){}
+
   try {
-    const s = await getDoc(ANNOUNCEMENTS_SETTINGS_DOC);
-    if(!s.exists()) return { monthlyEnabled: false, excludedMonths: [], dailyLimit: 100 };
-    const data = s.data();
-    data.dailyLimit = 10; // always enforced
-    return data;
-  } catch(e){ console.warn(e); return { monthlyEnabled:false, excludedMonths: [], dailyLimit:10 }; }
-}
+    // 1) load student
+    let student = null;
+    try {
+      const sSnap = await getDoc(doc(db,'students', studentId));
+      if(sSnap && sSnap.exists()) student = { id: sSnap.id, ...sSnap.data() };
+    } catch(e){ console.warn('student lookup failed', e); }
+    const studentNameForHdr = (student && (student.fullName || student.name)) ? (student.fullName || student.name) : studentId;
+    const studentClassName = student ? (student.classId || student.class || student.className || '') : '';
 
-async function saveAnnouncementsSettings(settings){
-  try {
-    const safe = { monthlyEnabled: !!settings.monthlyEnabled, excludedMonths: Array.isArray(settings.excludedMonths) ? settings.excludedMonths : [], dailyLimit: 10 };
-    await setDoc(ANNOUNCEMENTS_SETTINGS_DOC, safe, { merge:true });
-    toast('Settings saved');
-    return true;
-  } catch(e){ console.error(e); toast('Failed to save settings'); return false; }
-}
+    // 2) class doc subjects
+    let classSubjectsList = [];
+    try {
+      if(studentClassName){
+        const classesSnap = await getDocs(collection(db,'classes'));
+        classesSnap.forEach(snap => {
+          const d = snap.data();
+          if(String(d.name) === String(studentClassName) || snap.id === String(studentClassName)) {
+            if(Array.isArray(d.subjects)) classSubjectsList = d.subjects.slice();
+          }
+        });
+      }
+    } catch(e){ console.warn('class read failed', e); }
 
-async function ensureMonthlyAnnouncementIfNeeded(){
-  try {
-    const settings = await getAnnouncementsSettings();
-    if(!settings.monthlyEnabled) return;
+    // 3) subjects map
+    const subjectsMap = {};
+    try {
+      const subsSnap = await getDocs(collection(db,'subjects'));
+      subsSnap.forEach(snap => {
+        const d = snap.data();
+        subjectsMap[snap.id] = d.name || d.title || snap.id;
+        if(d.name) subjectsMap[d.name] = d.name;
+      });
+    } catch(e){ /* ignore */ }
 
-    const now = new Date();
-    const month = now.getMonth() + 1; // 1..12
-    const year = now.getFullYear();
-    const monthKey = `${String(month).padStart(2,'0')}-${year}`; // e.g. "01-2026"
+    // 4) structured records
+    const structuredEntries = [];
+    try {
+      const recSnap = await getDocs(collection(db,'attendance_records'));
+      recSnap.forEach(snap => {
+        const r = snap.data();
+        if(studentClassName && r.class_id && String(r.class_id) !== String(studentClassName)) return;
+        if(!Array.isArray(r.entries)) return;
+        r.entries.forEach(e => {
+          if(String(e.studentId) === String(studentId)){
+            const percent = (typeof e.percent !== 'undefined') ? e.percent : computePercentFromFlags(e.flags || []);
+            structuredEntries.push({
+              source:'record',
+              recordId:snap.id,
+              date: r.date || '',
+              class: r.class_id || '',
+              subject: r.subject_id || r.subject || '',
+              periods: r.periods_count || r.periods || (e.flags ? e.flags.length : 0),
+              flags: e.flags || [],
+              present_count: (typeof e.present_count !== 'undefined') ? e.present_count : (e.flags ? e.flags.reduce((s,f)=>s + (f?1:0),0) : 0),
+              percent
+            });
+          }
+        });
+      });
+    } catch(e){ console.warn('attendance_records read failed', e); }
 
-    if(Array.isArray(settings.excludedMonths) && settings.excludedMonths.includes(month)) return;
-    if(now.getDate() !== 1) return; // only auto-create on the 1st
+    // 5) legacy attendance
+    const legacyRecs = [];
+    try {
+      const q1 = query(collection(db,'attendance'), where('studentId','==', studentId));
+      const snap1 = await getDocs(q1);
+      snap1.forEach(d => legacyRecs.push({ id:d.id, ...d.data() }));
+    } catch(e){ /* ignore */ }
+    try {
+      const q2 = query(collection(db,'attendance'), where('student_id','==', studentId));
+      const snap2 = await getDocs(q2);
+      snap2.forEach(d => legacyRecs.push({ id:d.id, ...d.data() }));
+    } catch(e){ /* ignore */ }
 
-    const snap = await getDocs(query(collection(db, ANNOUNCEMENTS_COLL)));
-    const exists = snap.docs.some(d => {
-      const data = d.data();
-      return data && data.type === 'monthly_payment' && data.monthYear === monthKey;
+    const normalizedLegacy = legacyRecs.map(r => {
+      const st = (r.status || r.attendance || '').toString().toLowerCase();
+      const present = (st === 'present' || st === 'p' || st === '1' || st === 'true');
+      return {
+        source:'legacy',
+        id: r.id,
+        date: r.date || (r.createdAt ? (r.createdAt.seconds ? new Date(r.createdAt.seconds*1000).toISOString().slice(0,10) : new Date(r.createdAt).toISOString().slice(0,10)) : ''),
+        class: r.class_id || r.class || '',
+        subject: r.subject || r.subject_id || '',
+        status: present ? 'present' : (st ? st : 'absent'),
+        note: r.note || ''
+      };
     });
-    if(exists) return;
 
-    const defaultTitle = `Monthly Fee — ${getMonthName(month)} ${year}`;
-    const defaultBody = `{student_name},\n\nPlease pay the monthly fee for ${getMonthName(month)} ${year} before 05-${String(month).padStart(2,'0')}-${year}. Your outstanding balance is: {balance}.\n\nThank you.`;
+    // combine and sort by date (desc)
+    const combined = [...structuredEntries, ...normalizedLegacy];
+    combined.sort((a,b) => (b.date||'').localeCompare(a.date||''));
 
-    await createAnnouncementDoc({
-      title: defaultTitle,
-      body: defaultBody,
-      type: 'monthly_payment',
-      audience: ['students'],
-      allowMonthly: true,
-      monthYear: monthKey,
-      meta: { autoCreated: true }
-    }, { autoCreated: true });
+    // build subject set
+    const subjSet = new Set();
+    if(Array.isArray(classSubjectsList) && classSubjectsList.length) classSubjectsList.forEach(s=> subjSet.add(String(s)));
+    combined.forEach(r => { if(r.subject) subjSet.add(String(r.subject)); });
+    const availableSubjects = Array.from(subjSet).map(s => ({ id: s, label: subjectsMap[s] || s }));
 
-    console.log('Auto-created monthly payment announcement', monthKey);
+    // compute totals by subject filter
+    function computeTotals(filterSubject){
+      let totalPeriods = 0, totalPresent = 0;
+      normalizedLegacy.forEach(r => {
+        if(filterSubject && String(r.subject) !== String(filterSubject)) return;
+        totalPeriods += 1;
+        const st = (r.status||'').toString().toLowerCase();
+        if(st === 'present' || st === 'p') totalPresent += 1;
+      });
+      structuredEntries.forEach(r => {
+        if(filterSubject && String(r.subject) !== String(filterSubject)) return;
+        totalPeriods += (r.periods || 0);
+        totalPresent += (r.present_count || 0);
+      });
+      const totalAbsent = Math.max(0, totalPeriods - totalPresent);
+      const pct = totalPeriods ? Math.round((totalPresent/totalPeriods)*100) : 0;
+      return { totalPeriods, totalPresent, totalAbsent, percent: pct };
+    }
+
+    // initial selected subject
+    let selectedSubject = '';
+
+    // function to render UI and attach handlers
+    function renderUI(){
+      const totals = computeTotals(selectedSubject);
+      const pieDataUrl = createPieDataUrl(totals.percent, 180);
+      const subjOptionsHtml = `<option value="">All subjects</option>` + availableSubjects.map(s => `<option value="${escapeHtml(s.id)}"${s.id === selectedSubject ? ' selected' : ''}>${escapeHtml(s.label)}</option>`).join('');
+
+      const rowsHtml = combined.filter(r => {
+        if(selectedSubject && String(r.subject) !== String(selectedSubject)) return false;
+        return true;
+      }).map(r => {
+        const subjLabel = subjectsMap[r.subject] || r.subject || '';
+        const details = r.source === 'legacy' ? `${escapeHtml(r.status || '')}${r.note ? ' • ' + escapeHtml(r.note) : ''}` : `Present ${r.present_count}/${r.periods || 0} • ${r.percent || 0}%`;
+        return `<tr style="border-bottom:1px solid #f1f5f9">
+          <td style="padding:8px;white-space:nowrap">${escapeHtml(r.date||'')}</td>
+          <td style="padding:8px">${escapeHtml(r.class||'')}</td>
+          <td style="padding:8px">${escapeHtml(subjLabel)}</td>
+          <td style="padding:8px">${details}</td>
+        </tr>`;
+      }).join('');
+
+      let tableSection = '';
+      if(rowsHtml.length === 0) {
+        tableSection = `<div class="card"><div class="muted">No attendance records for this filter.</div></div>`;
+      } else {
+        tableSection = `<div class="card" style="overflow:auto">
+          <table style="width:100%;border-collapse:collapse">
+            <thead><tr style="text-align:left"><th style="padding:8px">Date</th><th style="padding:8px">Class</th><th style="padding:8px">Subject</th><th style="padding:8px">Details</th></tr></thead>
+            <tbody>${rowsHtml}</tbody>
+          </table>
+        </div>`;
+      }
+
+      const html = `
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+            <div>
+              <div style="font-weight:900;font-size:1.05rem">${escapeHtml(studentNameForHdr)}</div>
+              <div class="muted">ID: ${escapeHtml(studentId)} ${studentClassName ? ' • Class: ' + escapeHtml(studentClassName) : ''}</div>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <select id="studentSubjFilter" style="padding:8px;border-radius:8px;border:1px solid #e6eef8">${subjOptionsHtml}</select>
+              <button id="exportPdfBtn" class="btn btn-ghost">Export PDF</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="display:flex;gap:16px;align-items:center">
+          <div style="min-width:160px;text-align:center">
+            <img id="pieImg" src="${pieDataUrl}" alt="attendance pie" width="160" height="160" style="border-radius:8px;display:block;margin:0 auto"/>
+            <div style="font-weight:800;margin-top:6px">${totals.percent}% Present</div>
+          </div>
+          <div style="flex:1">
+            <div style="display:flex;gap:16px;align-items:center">
+              <div><strong>Total periods</strong><div class="muted">${totals.totalPeriods}</div></div>
+              <div><strong>Present</strong><div class="muted">${totals.totalPresent}</div></div>
+              <div><strong>Absent</strong><div class="muted">${totals.totalAbsent}</div></div>
+            </div>
+            <div style="margin-top:8px">${attendanceMessageForPercent(totals.percent, studentNameForHdr)}</div>
+          </div>
+        </div>
+
+        ${tableSection}
+      `;
+      showHtml(html);
+
+      // attach events AFTER DOM injection
+      const subjSelect = (typeof resultArea !== 'undefined' && resultArea) ? resultArea.querySelector('#studentSubjFilter') : modalBody.querySelector('#studentSubjFilter');
+      const exportBtn = (typeof resultArea !== 'undefined' && resultArea) ? resultArea.querySelector('#exportPdfBtn') : modalBody.querySelector('#exportPdfBtn');
+
+      if(subjSelect){
+        subjSelect.onchange = () => {
+          selectedSubject = subjSelect.value || '';
+          renderUI(); // re-render entirely (safe and simple)
+        };
+      }
+
+      if(exportBtn){
+        exportBtn.onclick = async () => {
+          // prepare rows for PDF (filtered)
+          const rows = combined.filter(r => {
+            if(selectedSubject && String(r.subject) !== String(selectedSubject)) return false;
+            return true;
+          }).map(r => {
+            const subjLabel = subjectsMap[r.subject] || r.subject || '';
+            const details = r.source === 'legacy' ? `${r.status}${r.note ? ' • ' + r.note : ''}` : `Present ${r.present_count}/${r.periods || 0} • ${r.percent || 0}%`;
+            return [ r.date || '', r.class || '', subjLabel, details ];
+          });
+
+          // create PDF
+          try {
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF({ unit:'pt', format:'a4' });
+
+            // header
+            doc.setFontSize(14);
+            doc.text('Attendance Report', 40, 48);
+            doc.setFontSize(10);
+            doc.text(`Student: ${studentNameForHdr}`, 40, 64);
+            doc.text(`ID: ${studentId}`, 40, 78);
+            doc.text(`Class: ${studentClassName || '—'}`, 40, 92);
+            doc.text(`Subject (filter): ${selectedSubject ? (subjectsMap[selectedSubject] || selectedSubject) : 'All'}`, 40, 106);
+
+            // add pie image (recreate to ensure high quality)
+            const totals = computeTotals(selectedSubject);
+            const pieData = createPieDataUrl(totals.percent, 240); // bigger for PDF
+            const imgProps = doc.getImageProperties(pieData);
+            const imgW = 120;
+            const imgH = (imgProps.height / imgProps.width) * imgW;
+            doc.addImage(pieData, 'PNG', doc.internal.pageSize.getWidth() - imgW - 40, 40, imgW, imgH);
+
+            // add table (autoTable)
+            if(rows.length){
+              doc.autoTable({
+                startY: 140,
+                head: [['Date','Class','Subject','Details']],
+                body: rows,
+                styles: { fontSize: 9 },
+                headStyles: { fillColor: [240,240,240], textColor: 20, fontStyle:'bold' },
+                theme: 'grid',
+                margin: { left: 40, right: 40 }
+              });
+            } else {
+              doc.text('No attendance rows for selected filter.', 40, 160);
+            }
+
+            // footer: totals
+            const footerY = doc.internal.pageSize.getHeight() - 60;
+            doc.setFontSize(10);
+            doc.text(`Total periods: ${totals.totalPeriods}   Present: ${totals.totalPresent}   Absent: ${totals.totalAbsent}   (${totals.percent}% present)`, 40, footerY);
+
+            doc.save(`attendance_${studentId}_${selectedSubject || 'all'}.pdf`);
+          } catch(err){
+            console.error('PDF export failed', err);
+            if(typeof toast === 'function') toast('Export failed. See console.');
+          }
+        };
+      }
+    } // end renderUI
+
+    // initial render
+    renderUI();
+
+    try { if(typeof hideLoader === 'function') hideLoader(); } catch(e){}
+    return combined;
   } catch(err){
-    console.warn('ensureMonthlyAnnouncementIfNeeded error', err);
+    console.error('renderStudentAttendanceModal failed', err);
+    try { if(typeof hideLoader === 'function') hideLoader(); } catch(e){}
+    if(typeof toast === 'function') toast('Failed to load attendance');
+    const fallback = `<div class="card"><div class="muted">Ma la soo bixi karo macluumaadka joogitaanka. Fadlan isku day mar kale.</div></div>`;
+    if(typeof resultArea !== 'undefined' && resultArea) resultArea.innerHTML = fallback;
+    else showModal('Attendance', fallback);
+    throw err;
+  }
+}
+
+
+/* -----------------------------
+  STUDENT: render announcements for the currently found student
+  Paste into main.js where you have student object available after login/search.
+------------------------------*/
+// helper: format cents -> "xx.xx"
+// function c2p(cents){
+//   const n = Number(cents || 0);
+//   if(Number.isNaN(n)) return '0.00';
+//   return (n/100).toFixed(2);
+// } this function already created  please
+
+function getMonthNameNum(n){
+  const m = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  return m[(Number(n||0)-1)] || '';
+}
+
+// Robust helper: fetchTop10Results(examId) -> returns array of docs (max 10), sorted by total desc
+async function fetchTop10Results(examId) {
+  try {
+    // if orderBy/limit are available (imported), prefer server-side query for efficiency
+    if (typeof orderBy !== 'undefined' && typeof limit !== 'undefined' && typeof query !== 'undefined') {
+      const q = query(collection(db, 'results'), where('examId','==', examId), orderBy('total','desc'), limit(10));
+      const snap = await getDocs(q);
+      return snap.docs;
+    }
+
+    // Fallback: fetch matches and sort client-side (less efficient, but works)
+    const snap = await getDocs(query(collection(db, 'results'), where('examId','==', examId)));
+    const docs = snap.docs.slice();
+    docs.sort((a,b) => {
+      const ar = a.data();
+      const br = b.data();
+      const at = (ar && typeof ar.total !== 'undefined') ? Number(ar.total) : -Infinity;
+      const bt = (br && typeof br.total !== 'undefined') ? Number(br.total) : -Infinity;
+      return bt - at;
+    });
+    return docs.slice(0, 10);
+  } catch(e){
+    console.warn('fetchTop10Results failed', e);
+    return [];
   }
 }
 
@@ -423,8330 +1663,468 @@ function detectStudentAmounts(student) {
   return { monthlyAmount, balance };
 }
 
-/* ---------- templates helpers ---------- */
-async function getAnnouncementTemplates(){
-  try {
-    if(_cachedTemplates) return _cachedTemplates;
-    const snap = await getDocs(collection(db, ANNOUNCEMENT_TEMPLATES_COLL));
-    const docs = snap.docs.map(d => ({ id:d.id, ...d.data() }));
-    _cachedTemplates = docs.length ? docs : builtInTemplates().map((t,i)=>({ id:`builtin_${i}`, builtin:true, ...t }));
-    return _cachedTemplates;
-  } catch(e){ console.warn(e); _cachedTemplates = builtInTemplates().map((t,i)=>({ id:`builtin_${i}`, builtin:true, ...t })); return _cachedTemplates; }
-}
+async function expandAnnouncementForStudent(a, studentObj) {
+  if(!a) return { title: a?.title || '', body: a?.body || '' };
+  const titleTemplate = a.title || '';
+  let bodyTemplate = a.body || '';
 
-async function saveTemplate(template){
-  try {
-    const ref = await addDoc(collection(db, ANNOUNCEMENT_TEMPLATES_COLL), { ...template, createdBy: currentUser ? (currentUser.uid||currentUser.email) : 'unknown', createdAt: Timestamp.now() });
-    _cachedTemplates = null;
-    toast('Template saved');
-    return ref.id;
-  } catch(e){ console.error(e); toast('Failed to save template'); throw e; }
-}
-async function updateTemplate(id, data){
-  try { await updateDoc(doc(db, ANNOUNCEMENT_TEMPLATES_COLL, id), { ...data, updatedAt: Timestamp.now() }); _cachedTemplates = null; toast('Template updated'); return true; }
-  catch(e){ console.error(e); toast('Failed to update template'); throw e; }
-}
-async function deleteTemplate(id){
-  try { await deleteDoc(doc(db, ANNOUNCEMENT_TEMPLATES_COLL, id)); _cachedTemplates = null; toast('Template deleted'); return true; }
-  catch(e){ console.error(e); toast('Failed to delete template'); throw e; }
-}
+  // helper to replace tokens
+  const replaceTokens = (text, subs) => {
+    return text.replace(/\{([^\}]+)\}/g, (m, key) => {
+      const v = (subs && subs[key] !== undefined) ? subs[key] : m;
+      return v;
+    });
+  };
 
-/* ---------- admin quota and create announcement ---------- */
-async function getAdminQuotaCountForToday(adminId){
-  try {
-    const todayKey = (new Date()).toISOString().slice(0,10);
-    const qId = `${adminId}_${todayKey}`;
-    const qDoc = await getDoc(doc(db, ADMIN_QUOTA_COLL, qId));
-    if(!qDoc.exists()) return 0;
-    return qDoc.data().count || 0;
-  } catch(e){ console.warn(e); return 0; }
-}
+  // gather student amounts (defensive)
+  const { monthlyAmount, balance } = detectStudentAmounts(studentObj);
 
-async function createAnnouncementDoc(announcement, opts={}) {
-  const adminId = currentUser ? (currentUser.uid || currentUser.email) : 'unknown';
-  const todayKey = (new Date()).toISOString().slice(0,10);
-  const quotaId = `${adminId}_${todayKey}`;
-  const quotaRef = doc(db, ADMIN_QUOTA_COLL, quotaId);
-  try {
-    const settings = await getAnnouncementsSettings();
-    const dailyLimit = settings.dailyLimit || 10;
-    const qDoc = await getDoc(quotaRef);
-    let count = 0; if(qDoc.exists()) count = qDoc.data().count || 0;
-    if(!opts.autoCreated && count >= dailyLimit) throw new Error(`Daily send limit reached (${dailyLimit}).`);
-    const annRef = await addDoc(collection(db, ANNOUNCEMENTS_COLL), { ...announcement, createdBy: announcement.createdBy || adminId, createdAt: Timestamp.now() });
-    if(!opts.autoCreated) await setDoc(quotaRef, { count: count+1, lastUpdated: Timestamp.now(), adminId }, { merge:true });
-    await addDoc(collection(db, ANNOUNCE_LOG_COLL), { announcementId: annRef.id, createdBy: adminId, createdAt: Timestamp.now(), auto: !!opts.autoCreated, meta: announcement.meta || null });
-    _cachedAnnouncements = null;
-    return annRef;
-  } catch(e){ console.error(e); throw e; }
-}
+  // default substitutions
+  const monthName = (a.meta && a.meta.month) ? a.meta.month : (new Date()).toLocaleString(undefined, { month: 'long' });
+  const subs = {
+    student_name: studentObj?.fullName || studentObj?.name || studentObj?.displayName || (studentObj?.firstName ? `${studentObj.firstName} ${studentObj.lastName||''}`.trim() : 'Student'),
+    month: monthName,
+    balance: balance || '0.00',
+    monthly_amount: monthlyAmount || '',
+    amount: monthlyAmount || '',
+    // keep exam placeholders (may be used later)
+    exam: a.meta?.examName || a.meta?.examId || ''
+  };
 
-/* ---------- Composer modal (improved, templates + save-as-template) ---------- */
-function openComposeAnnouncementModal(pref = {}){
-  getAnnouncementTemplates().then(async templates => {
-    const classOptions = (classesCache||[]).map(c => `<option value="${escapeHtml(c.name)}">${escapeHtml(c.name)}</option>`).join('');
-    const templateOptions = (templates||[]).map(t => `<option value="${escapeHtml(t.id||t.key)}">${escapeHtml(t.title||t.key||'(template)')}</option>`).join('');
-    const examOptions = (examsCache||[]).map(e => `<option value="${escapeHtml(e.id)}">${escapeHtml(e.name||e.title||e.id)}</option>`).join('');
-    const adminId = currentUser ? (currentUser.uid || currentUser.email) : 'unknown';
-    const used = await getAdminQuotaCountForToday(adminId);
-    const remaining = Math.max(0, 10 - (Number(used) || 0));
-
-    // default for annAllowMonthly: false unless pref.allowMonthly
-    const annAllowMonthlyChecked = pref.allowMonthly ? 'checked' : '';
-
-    const html = `
-      <div style="min-width:320px;max-width:820px;display:flex;flex-direction:column;gap:10px;padding:10px">
-        <div style="display:flex;justify-content:space-between;align-items:center">
-          <div style="font-weight:800">Compose Announcement</div>
-          <div class="muted small">Remaining today: <strong id="composeQuotaRem">${remaining}</strong></div>
-        </div>
-
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <select id="annTemplateSelect" class="input" style="min-width:220px">
-            <option value="">— Select template —</option>
-            ${templateOptions}
-          </select>
-          <button id="annLoadTemplate" class="btn">Load</button>
-          <button id="openTemplatesFromCompose" class="btn btn-ghost" title="Manage Templates" style="margin-left:auto">
-            <!-- small templates icon -->
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="7" height="7" stroke="currentColor" stroke-width="1.2"/><rect x="14" y="3" width="7" height="7" stroke="currentColor" stroke-width="1.2"/><rect x="3" y="14" width="7" height="7" stroke="currentColor" stroke-width="1.2"/></svg>
-            <span style="margin-left:6px">Templates</span>
-          </button>
-        </div>
-
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <label style="flex:1">Type
-            <select id="annType" class="input">
-              <option value="general">General</option>
-              <option value="monthly_payment">Monthly Payment</option>
-              <option value="exam">Exam</option>
-              <option value="top10">Top10 (Exam)</option>
-              <option value="holiday">Holiday</option>
-              <option value="urgent">Urgent</option>
-            </select>
-          </label>
-
-          <label style="flex:1">Audience
-            <select id="annAudience" class="input">
-              <option value="students" selected>Students</option>
-              <option value="teachers">Teachers</option>
-              <option value="all">All</option>
-              <option value="specific_class">Specific class</option>
-              <option value="specific_student">Specific student</option>
-            </select>
-          </label>
-        </div>
-
-        <div id="annExamRow" style="display:none">
-          <label>Exam
-            <select id="annExamSelect" class="input">
-              <option value="">— Select exam —</option>
-              ${examOptions}
-            </select>
-          </label>
-        </div>
-
-        <div id="annClassRow" style="display:none">
-          <label>Select class
-            <select id="annClassSelect" class="input">
-              <option value="">-- choose class --</option>
-              ${classOptions}
-            </select>
-          </label>
-        </div>
-
-        <div id="annStudentRow" style="display:none">
-          <label>Student ID
-            <input id="annStudentId" class="input" placeholder="STD042687284" />
-          </label>
-        </div>
-
-        <label>Title <input id="annTitle" class="input" value="${escapeHtml(pref.title||'')}" maxlength="200" /></label>
-        <label>Body <textarea id="annBody" rows="7" class="input" maxlength="4000">${escapeHtml(pref.body||'')}</textarea></label>
-
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          <label style="display:flex;gap:8px;align-items:center">
-            <input type="checkbox" id="annAllowMonthly" ${annAllowMonthlyChecked}/>
-            <span>Mark as monthly template (auto-create)</span>
-          </label>
-
-          <label style="margin-left:auto;display:flex;gap:8px;align-items:center">
-            <input type="checkbox" id="saveAsTemplate" />
-            <span>Save this message as a template</span>
-          </label>
-        </div>
-
-        <div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">
-          <button id="annCancel" class="btn btn-ghost">Cancel</button>
-          <button id="annCreate" class="btn btn-primary">Create & Send</button>
-        </div>
-      </div>
-    `;
-    showModal('Compose Announcement', html);
-
-    // wiring
-    const annAudience = document.getElementById('annAudience');
-    const annClassRow = document.getElementById('annClassRow');
-    const annStudentRow = document.getElementById('annStudentRow');
-    const annExamRow = document.getElementById('annExamRow');
-    const annCreate = document.getElementById('annCreate');
-    const annCancel = document.getElementById('annCancel');
-    const annTemplateSelect = document.getElementById('annTemplateSelect');
-    const annLoadTemplate = document.getElementById('annLoadTemplate');
-    const annType = document.getElementById('annType');
-    const annExamSelect = document.getElementById('annExamSelect');
-    const openTemplatesFromCompose = document.getElementById('openTemplatesFromCompose');
-
-    function refreshAudienceUI(){
-      const v = annAudience ? annAudience.value : '';
-      annClassRow.style.display = v === 'specific_class' ? 'block' : 'none';
-      annStudentRow.style.display = v === 'specific_student' ? 'block' : 'none';
-    }
-    function refreshTypeUI(){
-      const t = annType.value;
-      annExamRow.style.display = (t === 'exam' || t === 'top10') ? 'block' : 'none';
-      if(t === 'monthly_payment'){
-        if(annAudience.value === 'teachers' || annAudience.value === 'all') annAudience.value = 'students';
-        const opt = annAudience.querySelector('option[value="teachers"]'); if(opt) opt.disabled = true;
-      } else {
-        const opt = annAudience.querySelector('option[value="teachers"]'); if(opt) opt.disabled = false;
-      }
-    }
-    if(annAudience) annAudience.addEventListener('change', refreshAudienceUI);
-    if(annType) annType.addEventListener('change', refreshTypeUI);
-    refreshAudienceUI(); refreshTypeUI();
-
-    annLoadTemplate.onclick = () => {
-      const id = annTemplateSelect.value; if(!id) return toast('Select a template first');
-      const t = (_cachedTemplates||[]).find(x => (x.id === id || x.key === id)); if(!t) return toast('Template not found');
-      const titleEl = document.getElementById('annTitle'); const bodyEl = document.getElementById('annBody');
-      if(titleEl) titleEl.value = t.title || ''; if(bodyEl) bodyEl.value = t.body || '';
-      if(annType) annType.value = t.type || 'general'; if(document.getElementById('annAllowMonthly')) document.getElementById('annAllowMonthly').checked = !!t.allowMonthly;
-      refreshTypeUI();
-      if((t.type === 'exam' || t.type === 'top10') && examsCache && examsCache.length){
-        const prefer = (t.meta && t.meta.examId) ? t.meta.examId : examsCache[0].id;
-        setTimeout(()=> { if(annExamSelect) annExamSelect.value = prefer; }, 40);
-      }
-      if(t.type === 'monthly_payment') { annAudience.value = 'students'; refreshAudienceUI(); }
-      toast('Template loaded');
-    };
-
-    openTemplatesFromCompose.onclick = (e) => { e.preventDefault(); openTemplatesModal(); };
-
-    annCancel.onclick = closeModal;
-
-    annCreate.onclick = async () => {
-      try {
-        const type = annType.value;
-        const title = document.getElementById('annTitle').value.trim() || 'Announcement';
-        const body = document.getElementById('annBody').value.trim() || '';
-        const audienceMode = annAudience.value;
-        const allowMonthly = !!document.getElementById('annAllowMonthly').checked;
-        const saveAsTemplate = !!document.getElementById('saveAsTemplate').checked;
-        let audience = [];
-        if(audienceMode === 'students') audience = ['students'];
-        else if(audienceMode === 'teachers') audience = ['teachers'];
-        else if(audienceMode === 'all') audience = ['all'];
-        else if(audienceMode === 'specific_class'){
-          const cls = document.getElementById('annClassSelect').value;
-          if(!cls){ toast('Please choose class'); return; }
-          audience = [`class:${cls}`];
-        } else if(audienceMode === 'specific_student'){
-          const sid = document.getElementById('annStudentId').value.trim();
-          if(!sid){ toast('Please enter student ID'); return; }
-          audience = [`student:${sid}`];
-        }
-
-        if(type === 'monthly_payment' && (audienceMode === 'teachers' || audienceMode === 'all')){
-          toast('Monthly announcements are students-only; switched to "students".');
-          audience = ['students'];
-        }
-
-        let meta = {};
-        if(type === 'exam' || type === 'top10'){
-          const examId = annExamSelect ? annExamSelect.value : '';
-          if(examId){
-            meta.examId = examId;
-            const ex = (window.examsCache || []).find(e => e.id === examId);
-            if(ex && (ex.name || ex.title)) meta.examName = ex.name || ex.title;
-            else {
-              try { const d = await getDoc(doc(db,'exams', examId)); if(d && d.exists()) meta.examName = d.data().name || d.data().title || examId; } catch(_) { meta.examName = examId; }
-            }
-          }
-        }
-
-        const ann = { title, body, type, audience, allowMonthly, createdBy: currentUser ? (currentUser.uid||currentUser.email) : 'unknown', createdAt: Timestamp.now(), meta };
-        if(type === 'monthly_payment' && allowMonthly){
-          const now = new Date(); ann.monthYear = `${String(now.getMonth()+1).padStart(2,'0')}-${now.getFullYear()}`;
-        }
-
-        await createAnnouncementDoc(ann, { autoCreated:false });
-
-        if(saveAsTemplate){
-          try { await saveTemplate({ title, body, type, audience, allowMonthly, meta }); } catch(e){ console.warn('save template failed', e); }
-        }
-
-        toast('Announcement created.');
-        closeModal();
-        _cachedAnnouncements = null; _cachedTemplates = null;
-        renderAnnouncements();
-      } catch(err){
-        console.error(err);
-        toast(err.message || 'Failed to create announcement');
-      }
-    };
-
-  }).catch(err => {
-    console.warn('templates fetch failed', err);
-    showModal('Compose Announcement', '<div style="padding:12px">Failed to load templates. Try again later.</div>');
-  });
-}
-
-/* ---------- Templates modal (used from Settings and Compose) ---------- */
-function openTemplatesModal(){
-  const templates = _cachedTemplates || [];
-  const html = `
-    <div style="min-width:320px;max-width:760px;padding:12px;display:flex;flex-direction:column;gap:10px">
-      <div style="display:flex;justify-content:space-between;align-items:center">
-        <div style="font-weight:900">Templates</div>
-        <div class="muted small">Use / Edit / Delete</div>
-      </div>
-      <div style="max-height:60vh;overflow:auto;display:flex;flex-direction:column;gap:8px">
-        ${templates.map(t => {
-          const id = escapeHtml(t.id||t.key||'');
-          const title = escapeHtml(t.title||t.key||'(untitled)');
-          const body = escapeHtml((t.body||'').slice(0,140));
-          return `<div style="display:flex;gap:10px;align-items:center;padding:8px;border-radius:8px;border:1px solid #eef2f7">
-            <div style="flex:1;min-width:0">
-              <div style="font-weight:800">${title}</div>
-              <div class="muted small" style="margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${body}</div>
-            </div>
-            <div style="display:flex;gap:8px;align-items:center">
-              <button class="tpl-use" data-id="${id}" title="Use" style="border:0;background:transparent;cursor:pointer" aria-label="Use">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M22 2L11 13" stroke="#0ea5e9" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
-              </button>
-              <button class="tpl-edit" data-id="${id}" title="Edit" style="border:0;background:transparent;cursor:pointer" aria-label="Edit">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z" stroke="#111827" stroke-width="1.2"/></svg>
-              </button>
-              <button class="tpl-del" data-id="${id}" title="Delete" style="border:0;background:transparent;cursor:pointer" aria-label="Delete">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M3 6h18M8 6v14a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2V6" stroke="#ef4444" stroke-width="1.2"/></svg>
-              </button>
-            </div>
-          </div>`; }).join('')}
-      </div>
-      <div style="text-align:right;margin-top:8px"><button id="tplClose" class="btn btn-ghost">Close</button></div>
-    </div>
-  `;
-  showModal('Templates', html);
-  setTimeout(()=> {
-    document.getElementById('tplClose').onclick = closeModal;
-    document.querySelectorAll('.tpl-use').forEach(b => b.onclick = (e) => { const id = b.dataset.id; const tpl = (_cachedTemplates||[]).find(x => (x.id===id||x.key===id)); if(!tpl) return toast('Template not found'); closeModal(); openComposeAnnouncementModal({ title: tpl.title, body: tpl.body, allowMonthly: !!tpl.allowMonthly, type: tpl.type, meta: tpl.meta||{} }); });
-    document.querySelectorAll('.tpl-edit').forEach(b => b.onclick = (e) => { const id = b.dataset.id; const tpl = (_cachedTemplates||[]).find(x => (x.id===id||x.key===id)); if(!tpl) return toast('Template not found'); closeModal(); openComposeAnnouncementModal({ title: tpl.title, body: tpl.body, allowMonthly: !!tpl.allowMonthly, type: tpl.type, meta: tpl.meta||{} }); setTimeout(()=> { const btn = document.getElementById('annCreate'); if(btn) btn.textContent = 'Save changes (template)'; }, 90); });
-    document.querySelectorAll('.tpl-del').forEach(b => b.onclick = async (e) => { const id = b.dataset.id; const tpl = (_cachedTemplates||[]).find(x => (x.id===id||x.key===id)); if(!tpl) return toast('Template not found'); if(String(tpl.id||tpl.key).startsWith('builtin_')) return toast('Cannot delete built-in template'); if(!confirm('Delete template?')) return; try { await deleteTemplate(tpl.id); _cachedTemplates = null; toast('Deleted'); closeModal(); } catch(err){ console.error(err); toast('Delete failed'); } });
-  },60);
-}
-
-/* ---------- Announcements page renderer (header + list) ---------- */
-async function renderAnnouncements(){
-  if(_annRenderLock) return;
-  _annRenderLock = true;
-  try {
-    const page = document.getElementById('pageAnnouncements'); if(!page) return;
-    const listContainer = page.querySelector('#announcementsList'); if(!listContainer) return;
-
-    // ensure only one header control group (prevent duplicates)
-    const headerBar = page.querySelector(':scope > div:first-child');
-    if(headerBar){
-      // remove any previous ann-controls to avoid duplicates then re-add
-      const existingControls = headerBar.querySelectorAll('.ann-controls');
-      existingControls.forEach(el => el.remove());
-
-      const btnWrap = document.createElement('div');
-      btnWrap.className = 'ann-controls';
-      btnWrap.style.display = 'flex';
-      btnWrap.style.gap = '8px';
-      btnWrap.style.alignItems = 'center';
-     // when injecting header controls, use valid SVG paths (no "...")
-btnWrap.innerHTML = `
-<button id="openComposeAnnouncement" class="btn btn-primary header-new" title="New Announcement" aria-label="New">
-  <svg class="icon-new" width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-  <span style="margin-left:6px">+ New</span>
-</button>
-<button id="refreshAnnouncements" class="btn header-refresh" title="Refresh" aria-label="Refresh">
-  <svg class="icon-refresh" width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M20 12a8 8 0 10-2.2 5.2L20 20" stroke="#0f1724" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
-</button>
-<button id="annSettingsBtn" class="btn header-settings" title="Settings" aria-label="Settings">
-  <svg class="icon-gear" width="16" height="16" viewBox="0 0 24 24" fill="none">
-    <path d="M12 15.5A3.5 3.5 0 1 0 12 8.5a3.5 3.5 0 0 0 0 7z" stroke="#0f1724" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06A2 2 0 1 1 2.28 18.9l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09c.67 0 1.23-.45 1.51-1a1.65 1.65 0 0 0-.33-1.82l-.06-.06A2 2 0 1 1 6.6 2.28l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V2a2 2 0 1 1 4 0v.09c0 .61.38 1.17 1 1.51h.54a1.65 1.65 0 0 0 1.82-.33l.06-.06A2 2 0 1 1 21.72 5.1l-.06.06a1.65 1.65 0 0 0-.33 1.82V8c.4.35.83.8 1 1.51H21a2 2 0 1 1 0 4h-.09c-.67 0-1.23.45-1.51 1z" stroke="#0f1724" stroke-width="0.8" stroke-linecap="round" stroke-linejoin="round"/>
-  </svg>
-</button>
-`;
-
-      headerBar.appendChild(btnWrap);
+  // special handling: monthly_payment announcements: if student balance is zero we will skip showing it
+  if(a.type === 'monthly_payment') {
+    // if student's balance is 0 or null (i.e., no amount due) do not present the announcement
+    if(!balance || Number(balance) === 0) {
+      // returning null signals caller to skip it (caller should filter out nulls)
+      return null;
     }
 
-    listContainer.innerHTML = '<div style="padding:8px">Loading announcements…</div>';
-
-    // fetch announcements and templates (cache)
-    const [annSnap, templates] = await Promise.all([ getDocs(query(collection(db, ANNOUNCEMENTS_COLL))), getAnnouncementTemplates() ]);
-    const announcements = annSnap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
-    _cachedAnnouncements = announcements;
-    _cachedTemplates = templates;
-
-    // build list (title + date + first 10 body chars). edit/delete icons (colored).
-    const itemsHtml = announcements.map(a => {
-      const ts = a.createdAt && a.createdAt.toDate ? a.createdAt.toDate().toLocaleString() : '';
-      const shortBody = escapeHtml((a.body||'').slice(0,10)) + ((a.body||'').length>10 ? '…' : '');
-      const titleShort = escapeHtml((a.title||'').slice(0,80));
-      return `
-        <div class="card ann-row" data-id="${escapeHtml(a.id)}" style="padding:10px;margin-bottom:10px;display:flex;flex-direction:column;gap:8px">
-          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
-            <div style="min-width:0">
-              <div style="font-weight:900;cursor:pointer" data-action="open-ann" data-id="${escapeHtml(a.id)}">${titleShort}</div>
-              <div class="muted small" style="margin-top:4px">${escapeHtml(ts)}</div>
-            </div>
-            <div style="display:flex;gap:8px;align-items:center">
-              <button class="btn btn-ghost btn-edit" data-id="${escapeHtml(a.id)}" title="Edit" aria-label="Edit">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z" stroke="#0f1724" stroke-width="1.2"/></svg>
-              </button>
-              <button class="btn btn-danger btn-delete" data-id="${escapeHtml(a.id)}" title="Delete" aria-label="Delete">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M3 6h18M8 6v14a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2V6" stroke="#ef4444" stroke-width="1.2"/></svg>
-              </button>
-            </div>
-          </div>
-          <div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer" data-action="open-ann" data-id="${escapeHtml(a.id)}">${shortBody}</div>
-        </div>
-      `;
-    }).join('');
-
-    listContainer.innerHTML = itemsHtml || '<div class="muted">No announcements.</div>';
-
-    // button wiring
-    const openComposeBtn = document.getElementById('openComposeAnnouncement');
-    if(openComposeBtn) openComposeBtn.onclick = (e) => { e.preventDefault(); openComposeAnnouncementModal(); };
-
-    const refreshBtn = document.getElementById('refreshAnnouncements');
-    if(refreshBtn) refreshBtn.onclick = (e) => { e.preventDefault(); _cachedAnnouncements = null; renderAnnouncements(); };
-
-    const settingsBtn = document.getElementById('annSettingsBtn');
-    if(settingsBtn) settingsBtn.onclick = (e) => { e.preventDefault(); openAnnouncementsSettingsModal(); };
-
-    // list item wiring (open / edit / delete)
-    Array.from(listContainer.querySelectorAll('[data-action="open-ann"]')).forEach(el => {
-      el.onclick = async (ev) => {
-        ev.preventDefault();
-        const id = el.getAttribute('data-id');
-        const a = (announcements||[]).find(x => x.id === id);
-        if(!a) return toast('Announcement not found');
-        await openAnnouncementModalWithDetails(a);
-      };
-    });
-
-    Array.from(listContainer.querySelectorAll('.btn-edit')).forEach(b => b.onclick = async (ev) => {
-      ev.preventDefault();
-      const id = b.dataset.id;
-      try {
-        const d = await getDoc(doc(db, ANNOUNCEMENTS_COLL, id));
-        if(!d.exists()) return toast('Not found');
-        const dat = d.data();
-        openComposeAnnouncementModal({ title: dat.title, body: dat.body, allowMonthly: !!dat.allowMonthly, type: dat.type, meta: dat.meta || {}, monthYear: dat.monthYear || '' });
-        setTimeout(()=> {
-          const btn = document.getElementById('annCreate');
-          if(!btn) return;
-          btn.textContent = 'Save changes';
-          btn.onclick = async () => {
-            try {
-              const newTitle = document.getElementById('annTitle').value.trim();
-              const newBody = document.getElementById('annBody').value.trim();
-              const newType = document.getElementById('annType').value;
-              const newAllow = !!document.getElementById('annAllowMonthly').checked;
-              await updateDoc(doc(db, ANNOUNCEMENTS_COLL, id), { title: newTitle, body: newBody, type: newType, allowMonthly: newAllow, updatedAt: Timestamp.now() });
-              toast('Saved');
-              closeModal();
-              _cachedAnnouncements = null;
-              renderAnnouncements();
-            } catch(err){ console.error(err); toast('Save failed'); }
-          };
-        }, 120);
-      } catch(err){ console.error(err); toast('Open failed'); }
-    });
-
-    Array.from(listContainer.querySelectorAll('.btn-delete')).forEach(b => b.onclick = async (ev) => {
-      ev.preventDefault();
-      const id = b.dataset.id;
-      if(!confirm('Delete announcement?')) return;
-      try { await deleteDoc(doc(db, ANNOUNCEMENTS_COLL, id)); toast('Deleted'); _cachedAnnouncements = null; renderAnnouncements(); } catch(err){ console.error(err); toast('Delete failed'); }
-    });
-
-  } catch(e){
-    console.error('renderAnnouncements', e);
-    const page = document.getElementById('pageAnnouncements');
-    if(page){ const listContainer = page.querySelector('#announcementsList'); if(listContainer) listContainer.innerHTML = '<div class="muted">Failed to load announcements</div>'; }
-  } finally {
-    setTimeout(()=>{ _annRenderLock = false; }, 220);
-  }
-}
-
-/* ---------- Show announcement modal with Top-10 lookup & student info ---------- */
-async function openAnnouncementModalWithDetails(a){
-  try {
-    let bodyHtml = `<div style="padding:10px;max-width:820px"><div style="font-weight:900">${escapeHtml(a.title)}</div><div class="muted small" style="margin-top:6px">${a.createdAt && a.createdAt.toDate ? a.createdAt.toDate().toLocaleString() : ''}</div><div style="white-space:pre-wrap;margin-top:12px">${escapeHtml(a.body)}</div>`;
-
-    // Top10 handling: try to fetch results and enrich with student data (balance/fees)
-if(a.type === 'top10' && a.meta && a.meta.examId){
-  try {
-    const examId = a.meta.examId;
-    // use helper to get top10 doc snapshots
-    const docs = await fetchTop10Results(examId);
-
-    if(docs.length > 0){
-      const rows = docs.map((d, idx) => {
-        const r = d.data();
-        const name = r.studentName || r.name || r.student || '—';
-        const sid = r.studentId || r.student || d.id;
-        const shortId = String(sid).slice(-4);
-        const className = r.class || r.className || '';
-        const avg = (typeof r.total !== 'undefined' && typeof r.max !== 'undefined')
-          ? (((Number(r.total) / (Number(r.max)||1)) * 100).toFixed(2) + '%')
-          : (r.average ? String(r.average) : '');
-        return `${idx+1}. ${name} • ID ${shortId} • ${className} • ${avg}`;
-      }).join('\n');
-
-      bodyTemplate = `Top 10 — ${escapeHtml(a.meta?.examName || a.meta?.examId || '')}\n\n${rows}`;
+    // The requested format: "... please pay the monthly fee :200 for January before the 5th. Your balance: 15480.00"
+    // We'll try to include the monthlyAmount if available
+    const monthlyText = monthlyAmount ? ` :${monthlyAmount}` : '';
+    // prefer full-body if provided, but inject monthlyAmount into a sensible place:
+    // If bodyTemplate contains '{monthly_amount}' use that; else try to replace '{balance}' etc.
+    if(bodyTemplate.includes('{monthly_amount}')) {
+      bodyTemplate = bodyTemplate;
     } else {
-      bodyTemplate = bodyTemplate.replace(/\{rank\d+\}/g,'').replace(/\.{3,}/g,'').trim();
-      bodyTemplate += `\n\n(No top-10 data found for this exam.)`;
-    }
-  } catch(e) {
-    console.warn('expandAnnouncementForStudent top10 load failed', e);
-    bodyTemplate += '\n\n(Unable to load Top-10 details.)';
-  }
-}
-
-
-    bodyHtml += `</div><div style="text-align:right;margin-top:10px"><button id="modalEditAnn" class="btn btn-ghost">Edit</button><button id="modalDeleteAnn" class="btn btn-danger">Delete</button></div>`;
-    showModal('Announcement', bodyHtml);
-
-    setTimeout(()=> {
-      const editBtn = document.getElementById('modalEditAnn');
-      const delBtn = document.getElementById('modalDeleteAnn');
-      if(editBtn) editBtn.onclick = async () => {
-        closeModal();
-        openComposeAnnouncementModal({ title: a.title, body: a.body, allowMonthly: !!a.allowMonthly, type: a.type, meta: a.meta || {}, monthYear: a.monthYear || '' });
-        setTimeout(()=> {
-          const btn = document.getElementById('annCreate');
-          if(!btn) return;
-          btn.textContent = 'Save changes';
-          btn.onclick = async () => {
-            try {
-              const newTitle = document.getElementById('annTitle').value.trim();
-              const newBody = document.getElementById('annBody').value.trim();
-              const newType = document.getElementById('annType').value;
-              const newAllow = !!document.getElementById('annAllowMonthly').checked;
-              await updateDoc(doc(db, ANNOUNCEMENTS_COLL, a.id), { title: newTitle, body: newBody, type: newType, allowMonthly: newAllow, updatedAt: Timestamp.now() });
-              toast('Saved'); closeModal(); _cachedAnnouncements = null; renderAnnouncements();
-            } catch(err){ console.error(err); toast('Save failed'); }
-          };
-        }, 120);
-      };
-      if(delBtn) delBtn.onclick = async () => {
-        if(!confirm('Delete announcement?')) return;
-        try { await deleteDoc(doc(db, ANNOUNCEMENTS_COLL, a.id)); toast('Deleted'); closeModal(); _cachedAnnouncements = null; renderAnnouncements(); } catch(err){ console.error(err); toast('Delete failed'); }
-      };
-    }, 80);
-
-  } catch(e){ console.error('openAnnouncementModalWithDetails failed', e); toast('Failed to open announcement'); }
-}
-
-/* ---------- Settings modal (monthly options + templates inside) ---------- */
-async function openAnnouncementsSettingsModal(){
-  try {
-    const [settings, templates] = await Promise.all([ getAnnouncementsSettings(), getAnnouncementTemplates() ]);
-    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    const excluded = settings.excludedMonths || [];
-    const adminId = currentUser ? (currentUser.uid||currentUser.email) : 'unknown';
-    const used = await getAdminQuotaCountForToday(adminId);
-    const remaining = Math.max(0, 10 - (Number(used) || 0));
-
-    const templatesHtml = (templates||[]).map(t => {
-      const id = escapeHtml(t.id||t.key||'');
-      const title = escapeHtml(t.title||t.key||'(template)');
-      const short = escapeHtml((t.body||'').slice(0,60)) + ((t.body||'').length>60 ? '…' : '');
-      return `
-        <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;padding:8px;border-radius:8px;border:1px solid #eef2f7">
-          <div style="min-width:0">
-            <div style="font-weight:800">${title}</div>
-            <div class="muted small" style="margin-top:4px">${short}</div>
-          </div>
-          <div style="display:flex;gap:8px;align-items:center">
-            <button class="tpl-use-btn" data-id="${id}" title="Use" style="border:0;background:transparent;cursor:pointer">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M22 2L11 13" stroke="#0ea5e9" stroke-width="1.4"/></svg>
-            </button>
-            <button class="tpl-edit-btn" data-id="${id}" title="Edit" style="border:0;background:transparent;cursor:pointer">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z" stroke="#111827" stroke-width="1.2"/></svg>
-            </button>
-            <button class="tpl-del-btn" data-id="${id}" title="Delete" style="border:0;background:transparent;cursor:pointer">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M3 6h18M8 6v14a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2V6" stroke="#ef4444" stroke-width="1.2"/></svg>
-            </button>
-          </div>
-        </div>`;
-    }).join('');
-
-    const html = `
-      <div style="min-width:320px;max-width:820px;display:flex;flex-direction:column;gap:12px;padding:12px">
-        <div style="display:flex;justify-content:space-between;align-items:center">
-          <div style="font-weight:900">Announcements Settings</div>
-          <div class="muted small">Daily limit is fixed to <strong>10</strong></div>
-        </div>
-
-        <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
-          <label style="display:flex;gap:8px;align-items:center">
-            <input type="checkbox" id="sets_monthlyEnabled" ${settings.monthlyEnabled ? 'checked' : ''}/>
-            <span>Auto-create monthly template (1st of month)</span>
-          </label>
-          <div style="margin-left:auto;text-align:right">
-            <div class="muted small">Used today: <strong id="quotaUsed">${escapeHtml(String(used))}</strong></div>
-            <div class="muted small">Remaining today: <strong id="quotaRemaining">${escapeHtml(String(remaining))}</strong></div>
-          </div>
-        </div>
-
-        <div>
-          <div style="font-weight:800;margin-bottom:6px">Excluded months (auto-create will skip these)</div>
-          <div style="display:flex;flex-wrap:wrap;gap:8px">
-            ${months.map((m,i)=>`<label style="display:flex;gap:6px;align-items:center"><input type="checkbox" class="sets_excl" value="${i+1}" ${ (settings.excludedMonths||[]).includes(i+1) ? 'checked' : '' }/> ${m}</label>`).join('')}
-          </div>
-        </div>
-
-        <div style="display:flex;gap:8px;justify-content:flex-end">
-          <button id="sets_cancel" class="btn btn-ghost">Cancel</button>
-          <button id="sets_save" class="btn btn-primary">Save settings</button>
-        </div>
-
-        <hr/>
-
-        <div style="display:flex;justify-content:space-between;align-items:center">
-          <div style="font-weight:900">Templates</div>
-          <div class="muted small">Use / Edit / Delete templates</div>
-        </div>
-        <div style="max-height:260px;overflow:auto;display:flex;flex-direction:column;gap:8px">
-          ${templatesHtml || '<div class="muted">No templates</div>'}
-        </div>
-      </div>
-    `;
-    showModal('Announcements Settings', html);
-
-    setTimeout(()=>{
-      document.getElementById('sets_cancel').onclick = closeModal;
-      document.getElementById('sets_save').onclick = async () => {
-        try {
-          const monthlyEnabled = !!document.getElementById('sets_monthlyEnabled').checked;
-          const exclEls = Array.from(document.querySelectorAll('.sets_excl'));
-          const excludedMonths = exclEls.filter(x=>x.checked).map(x=>Number(x.value));
-          await saveAnnouncementsSettings({ monthlyEnabled, excludedMonths });
-          closeModal();
-          _cachedTemplates = null; _cachedAnnouncements = null;
-          renderAnnouncements();
-        } catch(err){ console.error(err); toast('Save failed'); }
-      };
-
-      // template action wiring inside settings
-      document.querySelectorAll('.tpl-use-btn').forEach(b => b.onclick = (ev)=> { const id = b.getAttribute('data-id'); const tpl = (_cachedTemplates||[]).find(t => (t.id===id||t.key===id)); if(!tpl) return toast('Template not found'); closeModal(); openComposeAnnouncementModal({ title: tpl.title, body: tpl.body, allowMonthly: !!tpl.allowMonthly, type: tpl.type, meta: tpl.meta||{} }); });
-      document.querySelectorAll('.tpl-edit-btn').forEach(b => b.onclick = (ev)=> { const id = b.getAttribute('data-id'); const tpl = (_cachedTemplates||[]).find(t => (t.id===id||t.key===id)); if(!tpl) return toast('Template not found'); closeModal(); openComposeAnnouncementModal({ title: tpl.title, body: tpl.body, allowMonthly: !!tpl.allowMonthly, type: tpl.type, meta: tpl.meta||{} }); setTimeout(()=>{ const btn = document.getElementById('annCreate'); if(btn) btn.textContent='Save changes (template)'; }, 90); });
-      document.querySelectorAll('.tpl-del-btn').forEach(b => b.onclick = async (ev)=> { const id = b.getAttribute('data-id'); const tpl = (_cachedTemplates||[]).find(t => (t.id===id||t.key===id)); if(!tpl) return toast('Template not found'); if(String(tpl.id||tpl.key).startsWith('builtin_')) return toast('Cannot delete built-in template'); if(!confirm('Delete template?')) return; try { await deleteTemplate(tpl.id); _cachedTemplates = null; toast('Template deleted'); closeModal(); renderAnnouncements(); } catch(e){ console.error(e); toast('Delete failed'); } });
-    }, 60);
-
-  } catch(e){ console.error('openAnnouncementsSettingsModal failed', e); showModal('Settings', '<div style="padding:12px">Failed to load settings</div>'); }
-}
-
-/* ---------- expose to global if you need ---------- */
-window.renderAnnouncements = renderAnnouncements;
-window.openAnnouncementsSettingsModal = openAnnouncementsSettingsModal;
-window.openTemplatesModal = openTemplatesModal;
-window.openComposeAnnouncementModal = openComposeAnnouncementModal;
-window.ensureMonthlyAnnouncementIfNeeded = ensureMonthlyAnnouncementIfNeeded;
-
-
-
-/* ----------------------------
-  Admin UI wiring for announcements buttons + auto-load (kept but improved)
-------------------------------*/
-try {
-  // Compose + Refresh are created in renderAnnouncements, but keep old wiring in case page markup changed
-  const openComposeBtn = document.getElementById('openComposeAnnouncement');
-  if (openComposeBtn) openComposeBtn.addEventListener('click', (e) => { e.preventDefault(); openComposeAnnouncementModal(); });
-
-  const refreshBtn = document.getElementById('refreshAnnouncements');
-  if (refreshBtn) refreshBtn.addEventListener('click', (e) => { e.preventDefault(); renderAnnouncements().catch(err => console.warn('refreshAnnouncements failed', err)); });
-
-  const tabAnn = document.getElementById('tabAnnouncements');
-  if (tabAnn) tabAnn.addEventListener('click', (e) => {
-    e.preventDefault();
-    try { if (typeof showPage === 'function') showPage('announcements'); else {
-      document.querySelectorAll('.page').forEach(p => p.style.display = 'none');
-      const p = document.getElementById('pageAnnouncements'); if (p) p.style.display = 'block';
-    } } catch(e){ console.warn(e); }
-    renderAnnouncements().catch(err => console.warn('renderAnnouncements failed', err));
-  });
-
-  // Auto-load on page load if admin opens the announcements page
-  window.addEventListener('load', () => {
-    setTimeout(() => {
-      if (document.getElementById('pageAnnouncements')) {
-        renderAnnouncements().catch(err => console.warn('initial renderAnnouncements failed', err));
+      // if template already contains "{balance}" just keep it; else inject near "monthly fee"
+      if(!/\{monthly_amount\}/.test(bodyTemplate) && /monthly fee/i.test(bodyTemplate)) {
+        // insert monthlyText immediately after "monthly fee"
+        bodyTemplate = bodyTemplate.replace(/monthly fee/i, match => `${match}${monthlyText}`);
       }
-    }, 300);
-  });
-
-  const modalCloseBtn = document.getElementById('modalClose');
-  if (modalCloseBtn) modalCloseBtn.addEventListener('click', (e) => { e.preventDefault(); closeModal(); });
-
-} catch (e) {
-  console.warn('Admin announcements wiring failed', e);
-}
-
-
-/* rendering */
-
-/* -------------------------
-   New list + view UI logic
-   Paste into database.js
-   Replace old renderStudents/renderTeachers/renderClasses/renderSubjects
----------------------------*/
-
-/** helper: count students assigned to a class (by class.name) */
-function countStudentsInClass(className){
-  if(!className) return 0;
-  return (studentsCache || []).filter(s => (s.classId || '') === className).length;
-}
-
-/** ---------- TEACHERS (table view + View modal) ---------- */
-
-function renderTeachers(){
-  if(!teachersList) return;
-  const total = (teachersCache || []).length;
-
-  if(isMobileViewport()){
-    let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-      <strong>Total teachers: ${total}</strong>
-      <div class="muted">Mobile: tap View</div>
-    </div><div id="teachersMobileList">`;
-    const q = (teachersSearch && teachersSearch.value||'').trim().toLowerCase();
-    const subjFilter = (teachersSubjectFilter && teachersSubjectFilter.value) || '';
-    let list = (teachersCache || []).slice();
-    list = list.filter(t => {
-      if(subjFilter && (!(t.subjects || []).includes(subjFilter))) return false;
-      if(!q) return true;
-      return (t.fullName||'').toLowerCase().includes(q) || (t.phone||'').toLowerCase().includes(q) || (String(t.id||t.teacherId||'')).toLowerCase().includes(q) || ((t.email||'').toLowerCase().includes(q));
-    });
-
-    list.forEach((t, idx) => {
-      const id = escape(t.id || t.teacherId || '');
-      const name = escape(t.fullName || '');
-      const email = escape(t.email || '—');
-      html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px;border-bottom:1px solid #f1f5f9">
-        <div style="display:flex;gap:12px;align-items:center">
-          <div style="min-width:28px;text-align:center;font-weight:700">${idx+1}</div>
-          <div style="min-width:90px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${id}</div>
-          <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${name}</div>
-        </div>
-        <div style="display:flex;align-items:center;gap:8px">
-          <div style="min-width:160px;text-align:right;font-size:0.9rem;color:#555">${email}</div>
-          <div><button class="btn btn-ghost btn-sm mobile-teacher-view" data-id="${escape(t.id||t.teacherId||'')}">⋮</button></div>
-        </div>
-      </div>`;
-    });
-    html += `</div>`;
-    teachersList.innerHTML = html;
-
-    teachersList.querySelectorAll('.mobile-teacher-view').forEach(b=>{
-      b.onclick = (ev) => openViewTeacherModal({ target:{ dataset:{ id: ev.currentTarget.dataset.id } }});
-    });
-    return;
-  }
-
-  // desktop table (with Email column)
-  let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-      <strong>Total teachers: ${total}</strong>
-      <div class="muted">Showing ID, Name, Salary, Email — click View for more</div>
-    </div>`;
-  html += `<div style="overflow:auto"><table style="width:100%;border-collapse:collapse">
-    <thead>
-      <tr style="text-align:left;border-bottom:1px solid #e6eef8">
-        <th style="padding:8px;width:48px">No</th>
-        <th style="padding:8px;width:140px">ID</th>
-        <th style="padding:8px">Name</th>
-        <th style="padding:8px;width:160px">Email</th>
-        <th style="padding:8px;width:120px">Salary</th>
-        <th style="padding:8px;width:220px">Actions</th>
-      </tr>
-    </thead><tbody>`;
-
-  const q = (teachersSearch && teachersSearch.value||'').trim().toLowerCase();
-  const subjFilter = (teachersSubjectFilter && teachersSubjectFilter.value) || '';
-  let list = (teachersCache || []).slice();
-  list = list.filter(t => {
-    if(subjFilter && (!(t.subjects || []).includes(subjFilter))) return false;
-    if(!q) return true;
-    return (t.fullName||'').toLowerCase().includes(q) || (t.phone||'').toLowerCase().includes(q) || (String(t.id||t.teacherId||'')).toLowerCase().includes(q) || ((t.email||'').toLowerCase().includes(q));
-  });
-
-  list.forEach((t, idx) => {
-    const id = escape(t.id || t.teacherId || '');
-    const name = escape(t.fullName || '');
-    const email = escape(t.email || '—');
-    const salary = (typeof t.salary !== 'undefined' && t.salary !== null) ? escape(String(t.salary)) : '—';
-    html += `<tr style="border-bottom:1px solid #f1f5f9">
-      <td style="padding:8px;vertical-align:middle">${idx+1}</td>
-      <td style="padding:8px;vertical-align:middle">${id}</td>
-      <td style="padding:8px;vertical-align:middle">${name}</td>
-      <td style="padding:8px;vertical-align:middle">${email}</td>
-      <td style="padding:8px;vertical-align:middle">${salary}</td>
-      <td style="padding:8px;vertical-align:middle">
-        <button class="btn btn-ghost btn-sm view-teacher" data-id="${id}">View</button>
-        <button class="btn btn-ghost btn-sm edit-teacher" data-id="${id}">Edit</button>
-        <button class="btn btn-danger btn-sm del-teacher" data-id="${id}">Delete</button>
-      </td>
-    </tr>`;
-  });
-
-  html += `</tbody></table></div>`;
-  teachersList.innerHTML = html;
-
-  teachersList.querySelectorAll('.view-teacher').forEach(b => b.onclick = openViewTeacherModal);
-  teachersList.querySelectorAll('.edit-teacher').forEach(b => b.onclick = openEditTeacherModal);
-  teachersList.querySelectorAll('.del-teacher').forEach(b => b.onclick = deleteTeacher);
-}
-
-
-async function openViewTeacherModal(e){
-  const id = (e && e.target) ? e.target.dataset.id : (e && e.dataset ? e.dataset.id : e);
-  if(!id) return;
-  let t = teachersCache.find(x => (x.id === id) || (x.teacherId === id) );
-  if(!t && typeof getDoc === 'function'){
-    try {
-      const snap = await getDoc(doc(db,'teachers', id));
-      if(snap.exists()) t = { id: snap.id, ...snap.data() };
-    } catch(err){ console.error('load teacher for view failed', err); }
-  }
-  if(!t) return toast('Teacher not found');
-
-  const classesText = (t.classes && t.classes.length) ? t.classes.join(', ') : 'No classes';
-  const subsText = (t.subjects && t.subjects.length) ? (t.subjects.map(s=>{
-    // try map id -> subject.name if subjectsCache contains id
-    const found = (subjectsCache||[]).find(x => x.id === s || x.name === s);
-    return found ? found.name : s;
-  }).join(', ')) : 'No subjects';
-  const html = `
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-      <div><strong>ID</strong><div class="muted">${escape(t.id || t.teacherId || '')}</div></div>
-      <div><strong>Name</strong><div class="muted">${escape(t.fullName||'')}</div></div>
-      <div><strong>Phone</strong><div class="muted">${escape(t.phone||'')}</div></div>
-      <div><strong>Email</strong><div class="muted">${escape(t.email||'—')}</div></div>
-      <div><strong>Salary</strong><div class="muted">${typeof t.salary !== 'undefined' ? escape(String(t.salary)) : '—'}</div></div>
-      <div><strong>Created</strong><div class="muted">${t.createdAt ? (new Date(t.createdAt.seconds ? t.createdAt.seconds*1000 : t.createdAt)).toLocaleString() : '—'}</div></div>
-      <div style="grid-column:1 / -1"><strong>Classes</strong><div class="muted">${escape(classesText)}</div></div>
-      <div style="grid-column:1 / -1"><strong>Subjects</strong><div class="muted">${escape(subsText)}</div></div>
-    </div>
-    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
-      <button class="btn btn-ghost" id="viewTeacherClose">Close</button>
-      <button class="btn btn-ghost" id="viewTeacherEdit">Edit</button>
-      <button class="btn btn-ghost" id="viewTeacherSendReset">Send reset email</button>
-      <button class="btn btn-ghost" id="viewTeacherAdminReset">Admin reset (server)</button>
-      <button class="btn btn-danger" id="viewTeacherDel">Delete</button>
-    </div>
-  `;
-  showModal(`${escape(t.fullName||'')} — Teacher`, html);
-
-  modalBody.querySelector('#viewTeacherClose').onclick = closeModal;
-  modalBody.querySelector('#viewTeacherEdit').onclick = () => {
-    closeModal();
-    openEditTeacherModal({ target:{ dataset:{ id: t.id || t.teacherId } }});
-  };
-  modalBody.querySelector('#viewTeacherDel').onclick = async () => {
-    if(!confirm('Delete teacher?')) return;
-    await deleteTeacher({ target:{ dataset:{ id: t.id || t.teacherId } }});
-    closeModal();
-  };
-
-  modalBody.querySelector('#viewTeacherSendReset').onclick = async () => {
-    const email = t.email;
-    if(!email) return toast('Teacher has no email set');
-    await sendResetEmailFor(email);
-  };
-  
-
-  modalBody.querySelector('#viewTeacherAdminReset').onclick = async () => {
-    const newPass = prompt('Enter new password for teacher (min 6 chars):');
-    if(!newPass || newPass.length < 6) return toast('Password must be at least 6 characters');
-    if(!t.authUid) return toast('Teacher has no linked auth account');
-
-    try {
-      const token = currentUser && currentUser.getIdToken ? await currentUser.getIdToken(true) : null;
-      const resp = await fetch('/admin/setTeacherPassword', {
-        method: 'POST',
-        headers: { 'Content-Type':'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify({ uid: t.authUid, password: newPass })
-      });
-      if (!resp.ok) {
-        const txt = await resp.text();
-        console.error('admin reset failed', resp.status, txt);
-        return toast('Admin reset failed (server). Try Send reset email instead.');
-      }
-      toast('Password updated via admin API');
-    } catch(err){
-      console.error(err);
-      toast('Admin reset API not available');
-    }
-  };
-}
-
-
-/* ---------- Ensure teachers subject/class filter is populated ---------- */
-function populateTeachersSubjectFilter(){
-  // ensure subjectsCache and classesCache are available
-  if(teachersSubjectFilter){
-    teachersSubjectFilter.innerHTML = '<option value="">All subjects</option>';
-    for(const s of (subjectsCache || [])){
-      const opt = document.createElement('option');
-      opt.value = s.name;
-      opt.textContent = s.name;
-      teachersSubjectFilter.appendChild(opt);
     }
   }
-  // no dedicated teachersClassFilter element in your snippet, but ensure classes are available for teacher modals
-  // (class options will be read from classesCache when opening create/edit teacher modal)
-}
 
-/* ---------- Teachers create/edit (default TEC00001) ---------- */
-function openAddTeacherModal(){
-  const classOptions = (classesCache || []).map(c => `<option value="${escape(c.name)}">${escape(c.name)}</option>`).join('');
-  const subjectOptions = (subjectsCache || []).map(s => `<option value="${escape(s.name)}">${escape(s.name)}</option>`).join('');
-  showModal('Add Teacher', `
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-      <div><label>Teacher ID (optional)</label><input id="teacherId" placeholder="TEC00001" /></div>
-      <div><label>Salary</label><input id="teacherSalary" type="number" min="0" /></div>
-      <div style="grid-column:1 / -1"><label>Full name</label><input id="teacherName" /></div>
-      <div><label>Phone</label><input id="teacherPhone" /></div>
-      <div><label>Parent phone</label><input id="teacherParentPhone" /></div>
-      <div><label>Email (optional)</label><input id="teacherEmail" type="email" /></div>
-      <div><label>Password (optional)</label><input id="teacherPassword" type="password" placeholder="min 6 characters" /></div>
-      <div style="grid-column:1 / -1"><label>Assign classes (select multiple)</label><select id="teacherClasses" multiple size="6" style="width:100%">${classOptions}</select></div>
-      <div style="grid-column:1 / -1"><label>Assign subjects (select multiple)</label><select id="teacherSubjects" multiple size="6" style="width:100%">${subjectOptions}</select></div>
-    </div>
-    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
-      <button id="cancelTeacher" class="btn btn-ghost">Cancel</button>
-      <button id="saveTeacher" class="btn btn-primary">Save</button>
-    </div>
-  `);
-
-  modalBody.querySelector('#cancelTeacher').onclick = closeModal;
-
-  modalBody.querySelector('#saveTeacher').onclick = async () => {
-    let id = modalBody.querySelector('#teacherId').value.trim();
-    const name = (modalBody.querySelector('#teacherName').value || '').trim();
-    const phone = (modalBody.querySelector('#teacherPhone').value || '').trim();
-    const parentPhone = (modalBody.querySelector('#teacherParentPhone').value || '').trim();
-    const salaryVal = modalBody.querySelector('#teacherSalary').value;
-    const salary = salaryVal ? Number(salaryVal) : null;
-    const emailRaw = (modalBody.querySelector('#teacherEmail').value || '').trim();
-    const email = emailRaw ? emailRaw.toLowerCase() : '';
-    const password = modalBody.querySelector('#teacherPassword').value || '';
-    const classesSelected = Array.from(modalBody.querySelectorAll('#teacherClasses option:checked')).map(o => o.value);
-    const subjectsSelected = Array.from(modalBody.querySelectorAll('#teacherSubjects option:checked')).map(o => o.value);
-
-    if(!name) return toast('Teacher name is required');
-
-    // duplicate email check (client-side)
-    if(email && isTeacherEmailDuplicate(email)) {
-      return toast('Email already used by another teacher');
-    }
-
-    // password length check if provided
-    if(password && String(password).length < 6) return toast('Password must be at least 6 characters');
-
-    if(!id) id = await generateDefaultId('teachers','TEC',5);
-
-    const payload = {
-      id, teacherId: id, fullName: name, phone: phone || '', parentPhone: parentPhone || '',
-      salary: salary, classes: classesSelected, subjects: subjectsSelected,
-      createdAt: Timestamp.now(), createdBy: currentUser ? currentUser.uid : null
-    };
-
-    if(email) payload.email = email;
-
+  // Special handling: top10 -> produce a readable list summary for students (short)
+  if(a.type === 'top10' && a.meta && a.meta.examId) {
     try {
-      // If email + password provided: create auth user then set authUid on teacher doc
-      if(email && password){
-        try {
-          const userCred = await createUserWithEmailAndPassword(auth, email, password);
-          payload.authUid = userCred.user.uid;
-        } catch(err){
-          // createUserWithEmailAndPassword may fail when the email is already used in Firebase Auth.
-          console.warn('createUserWithEmailAndPassword failed', err);
-          // show better message
-          if(err && err.code === 'auth/email-already-in-use') {
-            return toast('Email already exists in Auth. Use a different email or remove existing account.');
-          }
-          // If other error, continue but inform user
-          toast('Failed to create auth user (teacher will be created without login).');
-        }
-      }
-
-      // save teacher doc
-      await setDoc(doc(db,'teachers', id), payload);
-      toast('Teacher created');
-      closeModal();
-      await loadTeachers(); renderTeachers();
-    } catch(err){
-      console.error('create teacher failed', err);
-      toast('Failed to create teacher');
-    }
-  };
-}
-
-
-async function sendResetEmailFor(email) {
-  try {
-    console.log('sendPasswordResetEmail -> requesting reset for', email);
-    await sendPasswordResetEmail(auth, email);
-    console.log('sendPasswordResetEmail -> accepted by Firebase (no network error)');
-    toast('Password reset email sent. Ask teacher to check spam/junk and Promotions tabs.');
-    return { ok: true };
-  } catch (err) {
-    console.error('sendPasswordResetEmail error', err);
-    if (err.code === 'auth/user-not-found') {
-      toast('No Auth user found with that email. Create an Auth account first (Firebase Console).');
-    } else if (err.code === 'auth/invalid-email') {
-      toast('Invalid email address.');
-    } else if (err.code === 'auth/operation-not-allowed') {
-      toast('Email/password sign-in is disabled in Firebase Console (enable it).');
-    } else if (err.code === 'auth/network-request-failed') {
-      toast('Network error. Check your connection.');
-    } else {
-      toast(err.message || 'Failed to send reset email (see console for details)');
-    }
-    return { ok: false, err };
-  }
-}
-
-
-
-/* Edit teacher (id may be teacher doc id) */
-async function openEditTeacherModal(e){
-  const id = e && e.target ? e.target.dataset.id : e;
-  if(!id) return;
-  let t = teachersCache.find(x => x.id === id || x.teacherId === id);
-  if(!t){
-    try {
-      const snap = await getDoc(doc(db,'teachers', id));
-      if(!snap.exists()) return toast('Teacher not found');
-      t = { id: snap.id, ...snap.data() };
-    } catch(err){ console.error(err); return toast('Failed to load teacher'); }
-  }
-
-  const classOptions = (classesCache || []).map(c => `<option value="${escape(c.name)}" ${ (t.classes||[]).includes(c.name) ? 'selected' : '' }>${escape(c.name)}</option>`).join('');
-  const subjectOptions = (subjectsCache || []).map(s => `<option value="${escape(s.name)}" ${ (t.subjects||[]).includes(s.name) ? 'selected' : '' }>${escape(s.name)}</option>`).join('');
-
-  showModal('Edit Teacher', `
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-      <div><label>Teacher ID</label><input id="teacherId" value="${escape(t.teacherId||t.id||'')}" disabled /></div>
-      <div><label>Salary</label><input id="teacherSalary" type="number" min="0" value="${escape(String(t.salary||''))}" /></div>
-      <div style="grid-column:1 / -1"><label>Full name</label><input id="teacherName" value="${escape(t.fullName||'')}" /></div>
-      <div><label>Phone</label><input id="teacherPhone" value="${escape(t.phone||'')}" /></div>
-      <div><label>Parent phone</label><input id="teacherParentPhone" value="${escape(t.parentPhone||'')}" /></div>
-      <div><label>Email</label><input id="teacherEmail" type="email" value="${escape(t.email||'')}" /></div>
-      <div><label>New password (optional)</label><input id="teacherNewPassword" type="password" placeholder="Leave blank to keep current password" /></div>
-      <div style="grid-column:1 / -1"><label>Assign classes (select multiple)</label><select id="teacherClasses" multiple size="6" style="width:100%">${classOptions}</select></div>
-      <div style="grid-column:1 / -1"><label>Assign subjects (select multiple)</label><select id="teacherSubjects" multiple size="6" style="width:100%">${subjectOptions}</select></div>
-    </div>
-
-    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
-      <button id="cancelTeacher" class="btn btn-ghost">Cancel</button>
-      <button id="sendReset" class="btn btn-ghost">Send password reset email</button>
-      <button id="adminReset" class="btn btn-ghost">Admin reset password</button>
-      <button id="updateTeacher" class="btn btn-primary">Save</button>
-    </div>
-  `);
-
-  modalBody.querySelector('#cancelTeacher').onclick = closeModal;
-
-  modalBody.querySelector('#sendReset').onclick = async () => {
-    const email = (modalBody.querySelector('#teacherEmail').value || '').trim().toLowerCase();
-    if(!email) return toast('Teacher has no email set');
-    await sendResetEmailFor(email);
-  };
-  
-
-  // Admin reset via server endpoint using Firebase Admin SDK (server must implement)
-  modalBody.querySelector('#adminReset').onclick = async () => {
-    const newPass = (modalBody.querySelector('#teacherNewPassword').value || '').trim();
-    if(!newPass || newPass.length < 6) return toast('Enter a new password of at least 6 characters to admin-reset');
-    // t.authUid should exist if we created auth account earlier; if not, we may need to create one.
-    if(!t.authUid) return toast('Teacher has no linked auth account. Create an auth account first (set email+password).');
-
-    // get ID token to authorize the admin API call (optional; server may accept other auth)
-    let idToken = null;
-    try {
-      if (currentUser && typeof currentUser.getIdToken === 'function') idToken = await currentUser.getIdToken(true);
-    } catch(e){ console.warn('getIdToken failed', e); }
-
-    // call server endpoint (you must implement on your server / cloud function)
-    try {
-      const resp = await fetch('/admin/setTeacherPassword', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(idToken ? { Authorization: `Bearer ${idToken}` } : {})
-        },
-        body: JSON.stringify({ uid: t.authUid, password: newPass })
-      });
-      if (!resp.ok) {
-        const txt = await resp.text();
-        console.error('adminReset failed', resp.status, txt);
-        return toast('Admin reset failed (server error). Falling back to reset email.');
-      }
-      toast('Password updated via admin API');
-    } catch(err){
-      console.error('adminReset call failed', err);
-      toast('Admin reset API not available — sending reset email instead');
-      // fallback to reset email
-      try {
-        const email = (modalBody.querySelector('#teacherEmail').value || '').trim().toLowerCase();
-        if(email) { await sendPasswordResetEmail(auth, email); toast('Password reset email sent (fallback)'); }
-      } catch(e2){ console.error(e2); toast('Fallback reset email failed'); }
-    }
-  };
-
-  modalBody.querySelector('#updateTeacher').onclick = async () => {
-    const name = (modalBody.querySelector('#teacherName').value || '').trim();
-    const phone = (modalBody.querySelector('#teacherPhone').value || '').trim();
-    const parentPhone = (modalBody.querySelector('#teacherParentPhone').value || '').trim();
-    const salaryVal = modalBody.querySelector('#teacherSalary').value;
-    const salary = salaryVal ? Number(salaryVal) : null;
-    const emailRaw = (modalBody.querySelector('#teacherEmail').value || '').trim();
-    const email = emailRaw ? emailRaw.toLowerCase() : '';
-    const newPass = (modalBody.querySelector('#teacherNewPassword').value || '').trim();
-    const classesSelected = Array.from(modalBody.querySelectorAll('#teacherClasses option:checked')).map(o => o.value);
-    const subjectsSelected = Array.from(modalBody.querySelectorAll('#teacherSubjects option:checked')).map(o => o.value);
-
-    if(!name) return toast('Teacher name is required');
-
-    // duplicate email check excluding current teacher
-    if(email && isTeacherEmailDuplicate(email, t.id)) {
-      return toast('Email already used by another teacher');
-    }
-
-    // if admin provided a new password in update flow, prefer adminReset endpoint or fallback to sendReset
-    if(newPass && newPass.length < 6) return toast('New password must be at least 6 characters');
-
-    try {
-      // If email provided and teacher has no authUid and admin provided a password, attempt to create auth user
-      if(email && !t.authUid && newPass){
-        try {
-          const uc = await createUserWithEmailAndPassword(auth, email, newPass);
-          // if success, attach authUid
-          t.authUid = uc.user.uid;
-        } catch(err){
-          console.warn('createUserDuringUpdate failed', err);
-          // if email exists in Auth, we cannot take it; inform admin and continue
-          if(err && err.code === 'auth/email-already-in-use') {
-            toast('Email already in use in Auth; teacher saved without linking auth.');
-          } else {
-            toast('Failed to create auth user; teacher saved without auth link.');
-          }
-        }
-      }
-
-      // update teacher document
-      await updateDoc(doc(db,'teachers', t.id), {
-        fullName: name, phone: phone || '', parentPhone: parentPhone || '', salary: salary,
-        classes: classesSelected, subjects: subjectsSelected, email: email || '', updatedAt: Timestamp.now(), updatedBy: currentUser ? currentUser.uid : null,
-        ...(t.authUid ? { authUid: t.authUid } : {})
-      });
-
-      // if admin provided a newPass and teacher has authUid, attempt admin reset call (best-effort)
-      if(newPass && t.authUid){
-        try {
-          // attempt admin-reset via server endpoint (optional)
-          const token = currentUser && currentUser.getIdToken ? await currentUser.getIdToken(true) : null;
-          const resp = await fetch('/admin/setTeacherPassword', {
-            method: 'POST',
-            headers: { 'Content-Type':'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-            body: JSON.stringify({ uid: t.authUid, password: newPass })
-          });
-          if (!resp.ok) {
-            // fallback to sendPasswordResetEmail
-            const em = email || t.email;
-            if(em) { await sendPasswordResetEmail(auth, em); toast('Saved. Admin reset not available — reset email sent.'); }
-            else toast('Saved. Admin reset not available (no email)'); 
-          } else {
-            toast('Saved and password updated via admin API');
-          }
-        } catch(err){
-          console.warn('admin reset failed in update flow', err);
-          const em = email || t.email;
-          if(em) { await sendPasswordResetEmail(auth, em); toast('Saved. Admin reset failed — reset email sent.'); }
-          else toast('Saved. Admin reset failed (no email).');
-        }
+      // attempt to fetch top10 results
+      const examId = a.meta.examId;
+      // use 'results' collection (if your DB differs, adapt)
+      const q = query(collection(db,'results'), where('examId','==', examId), orderBy('total','desc'), limit(10));
+      const snap = await getDocs(q);
+      if(snap.size > 0) {
+        const rows = snap.docs.map((d, idx) => {
+          const r = d.data();
+          const name = r.studentName || r.name || r.student || '—';
+          const sid = r.studentId || r.student || d.id;
+          const shortId = String(sid).slice(-4);
+          const avg = (typeof r.total !== 'undefined' && typeof r.max !== 'undefined') ? (((r.total/(r.max||1))*100).toFixed(2) + '%') : (r.average ? String(r.average) : '');
+          return `${idx+1}. ${name} • ID ${shortId} • ${r.class || r.className || ''} • ${avg}`;
+        }).join('\n');
+        // build a readable body
+        bodyTemplate = `Top 10 — ${escapeHtml(a.meta?.examName || a.meta?.examId || '')}\n\n${rows}`;
       } else {
-        toast('Teacher updated');
+        // fallback summary if no results collection rows
+        bodyTemplate = bodyTemplate.replace(/\{rank\d+\}/g,'').replace(/\.{3,}/g,'').trim();
+        bodyTemplate += `\n\n(No top-10 data found for this exam.)`;
       }
-
-      closeModal();
-      await loadTeachers(); renderTeachers();
-    } catch(err){
-      console.error('update teacher failed', err);
-      toast('Failed to update teacher');
-    }
-  };
-}
-
-
-
-/* Delete teacher (keeps same behavior) */
-async function deleteTeacher(e){
-  const id = e && e.target ? e.target.dataset.id : e;
-  if(!id) return;
-  if(!confirm('Delete teacher?')) return;
-  try {
-    await deleteDoc(doc(db,'teachers', id));
-    toast('Teacher deleted');
-    await loadTeachers(); renderTeachers();
-  } catch(err){
-    console.error('delete teacher failed', err);
-    toast('Failed to delete teacher');
-  }
-}
-
-/* -------------------------
-  Wire buttons (defensive)
---------------------------*/
-if(typeof openAddTeacher !== 'undefined' && openAddTeacher){
-  openAddTeacher.onclick = openAddTeacherModal;
-}
-
-/** ---------- CLASSES (table view + View modal listing students) ---------- */
-function renderClasses(){
-  if(!classesList) return;
-  const q = (classSearch && classSearch.value||'').trim().toLowerCase();
-  let list = (classesCache || []).slice();
-  list = list.filter(c => {
-    if(!q) return true;
-    return (c.name||'').toLowerCase().includes(q) || (c.id||'').toLowerCase().includes(q);
-  });
-
-  const total = list.length;
-
-  if(isMobileViewport()){
-    let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-      <strong>Total classes: ${total}</strong>
-      <div class="muted">Mobile: tap View</div>
-    </div><div id="classesMobileList">`;
-    list.forEach((c, idx) => {
-      const name = escape(c.name || '');
-      html += `<div class="mobile-row" style="display:flex;justify-content:space-between;align-items:center;padding:10px;border-bottom:1px solid #f1f5f9">
-        <div style="display:flex;gap:12px;align-items:center">
-          <div style="min-width:28px;text-align:center;font-weight:700">${idx+1}</div>
-          <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${name}</div>
-        </div>
-        <div><button class="btn btn-ghost btn-sm mobile-class-view" data-id="${escape(c.id||c.name||'')}">⋮</button></div>
-      </div>`;
-    });
-    html += `</div>`;
-    classesList.innerHTML = html;
-
-    classesList.querySelectorAll('.mobile-class-view').forEach(b => {
-      b.onclick = (ev) => openViewClassModal({ target: { dataset: { id: ev.currentTarget.dataset.id } } });
-    });
-    return;
-  }
-
-  // desktop original table
-  let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-      <strong>Total classes: ${total}</strong>
-      <div class="muted">Columns: No, ID, Name, Total students</div>
-    </div>`;
-
-  html += `<div style="overflow:auto"><table style="width:100%;border-collapse:collapse">
-    <thead>
-      <tr style="text-align:left;border-bottom:1px solid #e6eef8">
-        <th style="padding:8px;width:48px">No</th>
-        <th style="padding:8px;width:140px">ID</th>
-        <th style="padding:8px">Class</th>
-        <th style="padding:8px;width:120px">Total students</th>
-        <th style="padding:8px;width:220px">Actions</th>
-      </tr>
-    </thead><tbody>`;
-
-  list.forEach((c, idx) => {
-    const id = escape(c.id || '');
-    const name = escape(c.name || '');
-    const totalStudents = countStudentsInClass(c.name || '');
-    html += `<tr style="border-bottom:1px solid #f1f5f9">
-      <td style="padding:8px;vertical-align:middle">${idx+1}</td>
-      <td style="padding:8px;vertical-align:middle">${id}</td>
-      <td style="padding:8px;vertical-align:middle">${name}</td>
-      <td style="padding:8px;vertical-align:middle">${totalStudents}</td>
-      <td style="padding:8px;vertical-align:middle">
-        <button class="btn btn-ghost btn-sm view-class" data-id="${id}">View</button>
-        <button class="btn btn-ghost btn-sm edit-class" data-id="${id}">Edit</button>
-        <button class="btn btn-danger btn-sm del-class" data-id="${id}">Delete</button>
-      </td>
-    </tr>`;
-  });
-
-  html += `</tbody></table></div>`;
-  classesList.innerHTML = html;
-
-  classesList.querySelectorAll('.view-class').forEach(b=> b.onclick = openViewClassModal);
-  classesList.querySelectorAll('.edit-class').forEach(b=> b.onclick = openEditClassModal);
-  classesList.querySelectorAll('.del-class').forEach(b=> b.onclick = deleteClass);
-}
-
-async function openViewClassModal(e){
-  const id = (e && e.target) ? e.target.dataset.id : (e && e.dataset ? e.dataset.id : e);
-  if(!id) return;
-  const c = classesCache.find(x => x.id === id || x.name === id);
-  if(!c) return toast('Class not found');
-
-  const assigned = (studentsCache || []).filter(s => (s.classId || '') === (c.name || c.id || ''));
-  let studentsHtml = '<div class="muted">No students</div>';
-  if(assigned.length){
-    studentsHtml = `<table style="width:100%;border-collapse:collapse">
-      <thead><tr style="border-bottom:1px solid #e6eef8"><th style="padding:6px">No</th><th style="padding:6px">ID</th><th style="padding:6px">Name</th></tr></thead><tbody>`;
-    assigned.forEach((s, i) => {
-      studentsHtml += `<tr style="border-bottom:1px solid #f1f5f9"><td style="padding:6px">${i+1}</td><td style="padding:6px">${escape(s.studentId||s.id||'')}</td><td style="padding:6px">${escape(s.fullName||'')}</td></tr>`;
-    });
-    studentsHtml += '</tbody></table>';
-  }
-
-  const html = `
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-      <div><strong>ID</strong><div class="muted">${escape(c.id||'')}</div></div>
-      <div><strong>Class name</strong><div class="muted">${escape(c.name||'')}</div></div>
-      <div style="grid-column:1 / -1"><strong>Subjects</strong><div class="muted">${escape((c.subjects||[]).join(', ') || 'No subjects')}</div></div>
-      <div style="grid-column:1 / -1"><strong>Assigned students (${assigned.length})</strong>${studentsHtml}</div>
-    </div>
-    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
-      <button class="btn btn-ghost" id="viewClassClose">Close</button>
-      <button class="btn btn-ghost" id="viewClassEdit">Edit</button>
-      <button class="btn btn-danger" id="viewClassDel">Delete</button>
-    </div>
-  `;
-  showModal(`Class — ${escape(c.name||'')}`, html);
-
-  modalBody.querySelector('#viewClassClose').onclick = closeModal;
-  modalBody.querySelector('#viewClassEdit').onclick = () => {
-    closeModal();
-    openEditClassModal({ target:{ dataset:{ id: c.id } } });
-  };
-  modalBody.querySelector('#viewClassDel').onclick = async () => {
-    if(!confirm('Delete class?')) return;
-    await deleteClass({ target: { dataset: { id: c.id } } });
-    closeModal();
-  };
-}
-
-openAddClass.onclick = () => {
-  const subjectOptions = subjectsCache.map(s=>`<option value="${escape(s.name)}">${escape(s.name)}</option>`).join('');
-  showModal('Add Class', `
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-      <div><label>Class ID (optional)</label><input id="modalClassId" placeholder="CLS0001" /></div>
-      <div><label>&nbsp;</label></div>
-      <div style="grid-column:1 / -1"><label>Class name</label><input id="modalClassName" placeholder="Grade 4A" /></div>
-      <div style="grid-column:1 / -1"><label>Assign subjects (select multiple)</label>
-        <select id="modalClassSubjects" multiple size="6" style="width:100%">${subjectOptions}</select></div>
-    </div>
-    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
-      <button id="cancelClass" class="btn btn-ghost">Cancel</button>
-      <button id="saveClass" class="btn btn-primary">Save</button>
-    </div>
-  `);
-  modalBody.querySelector('#cancelClass').onclick = closeModal;
-  modalBody.querySelector('#saveClass').onclick = async () => {
-    const name = modalBody.querySelector('#modalClassName').value.trim();
-    let id = modalBody.querySelector('#modalClassId').value.trim();
-    if(!name) return alert('Enter class name');
-    if(!id) id = await generateDefaultId('classes','CLS',4);
-    const chosen = Array.from(modalBody.querySelectorAll('#modalClassSubjects option:checked')).map(o=>o.value);
-    await setDoc(doc(db,'classes',id), { id, name, subjects: chosen });
-    closeModal(); await loadClasses(); renderClasses(); populateClassFilters(); renderStudents();
-  };
-};
-
-function openEditClassModal(e){
-  const id = e && e.target ? e.target.dataset.id : e;
-  const c = classesCache.find(x=>x.id===id);
-  if(!c) return toast && toast('Class not found');
-  const subjectsHtml = subjectsCache.map(s=>`<label style="margin-right:8px"><input type="checkbox" value="${escape(s.name)}" ${c.subjects?.includes(s.name)?'checked':''} /> ${escape(s.name)}</label>`).join('');
-  showModal('Edit Class', `
-    <div style="display:grid;grid-template-columns:1fr;gap:8px">
-      <div><label>Class name</label><input id="modalClassName" value="${escape(c.name)}" /></div>
-      <div><label>Assign subjects</label><div id="modalClassSubjects">${subjectsHtml || '<div class="muted">No subjects yet</div>'}</div></div>
-    </div>
-    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
-      <button id="cancelClass" class="btn btn-ghost">Cancel</button>
-      <button id="saveClass" class="btn btn-primary">Save</button>
-    </div>
-  `);
-  modalBody.querySelector('#cancelClass').onclick = closeModal;
-  modalBody.querySelector('#saveClass').onclick = async () => {
-    const name = modalBody.querySelector('#modalClassName').value.trim();
-    const chosen = Array.from(modalBody.querySelectorAll('#modalClassSubjects input[type=checkbox]:checked')).map(i=>i.value);
-    if(!name) return alert('Enter name');
-    await updateDoc(doc(db,'classes',id), { name, subjects: chosen });
-    closeModal(); await loadClasses(); renderClasses(); populateClassFilters(); renderStudents();
-  };
-}
-
-async function deleteClass(e){
-  const id = e.target.dataset.id;
-  if(!confirm('Delete class?')) return;
-  await deleteDoc(doc(db,'classes',id));
-  await loadClasses(); renderClasses(); populateClassFilters(); renderStudents();
-}
-/** ---------- SUBJECTS (table view + View modal) ---------- */
-function renderSubjects(){
-  if(!subjectsList) return;
-  const q = (subjectSearch && subjectSearch.value||'').trim().toLowerCase();
-  let list = (subjectsCache || []).slice();
-  list = list.filter(s => {
-    if(!q) return true;
-    return (s.name||'').toLowerCase().includes(q) || (s.id||'').toLowerCase().includes(q);
-  });
-
-  const total = list.length;
-
-  if(isMobileViewport()){
-    let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-      <strong>Total subjects: ${total}</strong>
-      <div class="muted">Mobile: tap View</div>
-    </div><div id="subjectsMobileList">`;
-    list.forEach((s, idx) => {
-      html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px;border-bottom:1px solid #f1f5f9">
-        <div style="display:flex;gap:12px;align-items:center">
-          <div style="min-width:28px;text-align:center;font-weight:700">${idx+1}</div>
-          <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escape(s.name||'')}</div>
-        </div>
-        <div><button class="btn btn-ghost btn-sm mobile-sub-view" data-id="${escape(s.id||s.name||'')}">⋮</button></div>
-      </div>`;
-    });
-    html += `</div>`;
-    subjectsList.innerHTML = html;
-
-    subjectsList.querySelectorAll('.mobile-sub-view').forEach(b => {
-      b.onclick = (ev) => openViewSubjectModal({ target:{ dataset:{ id: ev.currentTarget.dataset.id } }});
-    });
-    return;
-  }
-
-  // desktop table (unchanged)
-  let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-      <strong>Total subjects: ${total}</strong>
-      <div class="muted">Columns: No, ID, Subject</div>
-    </div>`;
-
-  html += `<div style="overflow:auto"><table style="width:100%;border-collapse:collapse">
-    <thead>
-      <tr style="text-align:left;border-bottom:1px solid #e6eef8">
-        <th style="padding:8px;width:48px">No</th>
-        <th style="padding:8px;width:140px">ID</th>
-        <th style="padding:8px">Subject</th>
-        <th style="padding:8px;width:220px">Actions</th>
-      </tr>
-    </thead><tbody>`;
-
-  list.forEach((s, idx) => {
-    const id = escape(s.id || '');
-    const name = escape(s.name || '');
-    html += `<tr style="border-bottom:1px solid #f1f5f9">
-      <td style="padding:8px;vertical-align:middle">${idx+1}</td>
-      <td style="padding:8px;vertical-align:middle">${id}</td>
-      <td style="padding:8px;vertical-align:middle">${name}</td>
-      <td style="padding:8px;vertical-align:middle">
-        <button class="btn btn-ghost btn-sm view-sub" data-id="${id}">View</button>
-        <button class="btn btn-ghost btn-sm edit-sub" data-id="${id}">Edit</button>
-        <button class="btn btn-danger btn-sm del-sub" data-id="${id}">Delete</button>
-      </td>
-    </tr>`;
-  });
-
-  html += `</tbody></table></div>`;
-  subjectsList.innerHTML = html;
-
-  subjectsList.querySelectorAll('.view-sub').forEach(b=> b.onclick = openViewSubjectModal);
-  subjectsList.querySelectorAll('.edit-sub').forEach(b=> b.onclick = openEditSubjectModal);
-  subjectsList.querySelectorAll('.del-sub').forEach(b=> b.onclick = deleteSubject);
-}
-
-function openViewSubjectModal(e){
-  const id = (e && e.target) ? e.target.dataset.id : (e && e.dataset ? e.dataset.id : e);
-  if(!id) return;
-  const s = subjectsCache.find(x => x.id === id || x.name === id);
-  if(!s) return toast('Subject not found');
-
-  const includedIn = (classesCache || []).filter(c => Array.isArray(c.subjects) && c.subjects.includes(s.name || s.id));
-  const classesHtml = includedIn.length ? `<div class="muted">${includedIn.map(c => escape(c.name)).join(', ')}</div>` : `<div class="muted">Not part of any class</div>`;
-  const html = `
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-      <div><strong>ID</strong><div class="muted">${escape(s.id||'')}</div></div>
-      <div><strong>Subject</strong><div class="muted">${escape(s.name||'')}</div></div>
-      <div style="grid-column:1 / -1"><strong>Used in classes (${includedIn.length})</strong>${classesHtml}</div>
-    </div>
-    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
-      <button class="btn btn-ghost" id="viewSubClose">Close</button>
-      <button class="btn btn-ghost" id="viewSubEdit">Edit</button>
-      <button class="btn btn-danger" id="viewSubDel">Delete</button>
-    </div>
-  `;
-  showModal(`Subject — ${escape(s.name||'')}`, html);
-
-  modalBody.querySelector('#viewSubClose').onclick = closeModal;
-  modalBody.querySelector('#viewSubEdit').onclick = () => {
-    closeModal();
-    openEditSubjectModal({ target:{ dataset:{ id: s.id } }});
-  };
-  modalBody.querySelector('#viewSubDel').onclick = async () => {
-    if(!confirm('Delete subject?')) return;
-    await deleteSubject({ target:{ dataset:{ id: s.id } }});
-    closeModal();
-  };
-}
-
-/* ---------- Subjects add/edit (default SUB0001) ---------- */
-openAddSubject && (openAddSubject.onclick = () => {
-  showModal('Add Subject', `
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-      <div><label>Subject ID (optional)</label><input id="modalSubId" placeholder="SUB0001" /></div>
-      <div>&nbsp;</div>
-      <div style="grid-column:1 / -1"><label>Subject name</label><input id="modalSubName" placeholder="Mathematics" /></div>
-    </div>
-    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
-      <button id="cancelSub" class="btn btn-ghost">Cancel</button>
-      <button id="saveSub" class="btn btn-primary">Save</button>
-    </div>
-  `);
-  modalBody.querySelector('#cancelSub').onclick = closeModal;
-  modalBody.querySelector('#saveSub').onclick = async () => {
-    let id = modalBody.querySelector('#modalSubId').value.trim();
-    const name = modalBody.querySelector('#modalSubName').value.trim();
-    if(!name) return alert('Name required');
-    if(!id) id = await generateDefaultId('subjects','SUB',4); // SUB0001 style
-    await setDoc(doc(db,'subjects', id), { id, name });
-    closeModal(); await loadSubjects(); renderSubjects(); populateClassFilters();
-  };
-});
-
-function openEditSubjectModal(e){
-  const id = e && e.target ? e.target.dataset.id : e;
-  const s = subjectsCache.find(x=>x.id===id);
-  if(!s) return toast && toast('Subject not found');
-  showModal('Edit Subject', `
-    <div><label>Subject name</label><input id="modalSubName" value="${escape(s.name)}" /></div>
-    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
-      <button id="cancelSub" class="btn btn-ghost">Cancel</button>
-      <button id="saveSub" class="btn btn-primary">Save</button>
-    </div>
-  `);
-  modalBody.querySelector('#cancelSub').onclick = closeModal;
-  modalBody.querySelector('#saveSub').onclick = async () => {
-    const name = modalBody.querySelector('#modalSubName').value.trim();
-    if(!name) return alert('Name required');
-    await updateDoc(doc(db,'subjects',id), { name });
-    closeModal(); await loadSubjects(); renderSubjects(); populateClassFilters();
-  };
-}
-
-
-async function deleteSubject(e){
-  const id = e.target.dataset.id;
-  if(!confirm('Delete subject?')) return;
-  await deleteDoc(doc(db,'subjects',id));
-  await loadSubjects(); renderSubjects(); populateClassFilters();
-}
-
-
-
-
-/* events */
-tabStudents && (tabStudents.onclick = ()=>showPage('students'));
-tabClasses && (tabClasses.onclick = ()=>showPage('classes'));
-tabSubjects && (tabSubjects.onclick = ()=>showPage('subjects'));
-tabExams && (tabExams.onclick = ()=>showPage('exams'));
-tabTeachers && (tabTeachers.onclick = ()=>showPage('teachers'));
-
-studentsSearch && (studentsSearch.oninput = renderStudents);
-studentsClassFilter && (studentsClassFilter.onchange = renderStudents);
-studentsExamForTotals && (studentsExamForTotals.onchange = renderStudents);
-classSearch && (classSearch.oninput = renderClasses);
-subjectSearch && (subjectSearch.oninput = renderSubjects);
-examSearch && (examSearch.oninput = renderExams);
-examClassFilter && (examClassFilter.onchange = renderExams);
-teachersSearch && (teachersSearch.oninput = renderTeachers);
-teachersSubjectFilter && (teachersSubjectFilter.onchange = renderTeachers);
-
-
-
-
-/** async renderStudents (awaits exam totals when the filter is set) */
-
-
-/** view student modal (keeps existing fields; adds Edit/Delete actions) */
-
-async function renderStudents(){
-  if(!studentsList) return;
-  const q = (studentsSearch && studentsSearch.value||'').trim().toLowerCase();
-  const classFilterVal = (studentsClassFilter && studentsClassFilter.value) || '';
-  const examFilter = (studentsExamForTotals && studentsExamForTotals.value) || '';
-
-  if(examFilter && typeof loadExamTotalsForExam === 'function'){
-    try { await loadExamTotalsForExam(examFilter); } catch(e){ console.warn('loadExamTotalsForExam failed', e); }
-  }
-
-  let filtered = (studentsCache || []).filter(s=>{
-    if(classFilterVal && s.classId !== classFilterVal) return false;
-    if(!q) return true;
-    return (s.fullName||'').toLowerCase().includes(q) || (s.phone||'').toLowerCase().includes(q) || (s.studentId||'').toLowerCase().includes(q);
-  });
-
-  const total = filtered.length;
-
-  // mobile: compact list
-  if(isMobileViewport()){
-    let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-        <strong>Total students: ${total}</strong>
-        <div class="muted">Mobile view: tap "More" to open student</div>
-      </div><div id="studentsMobileList">`;
-    filtered.forEach((s, idx) => {
-      const sid = escape(s.studentId || s.id || '');
-      const name = escape(s.fullName || '');
-      html += `<div class="mobile-row" style="display:flex;justify-content:space-between;align-items:center;padding:10px;border-bottom:1px solid #f1f5f9">
-        <div style="display:flex;gap:10px;align-items:center">
-          <div style="min-width:28px;text-align:center;font-weight:700">${idx+1}</div>
-          <div style="min-width:90px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${sid}</div>
-          <div style="min-width:120px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${name}</div>
-        </div>
-        <div><button class="btn btn-ghost btn-sm mobile-more" data-id="${escape(s.studentId||s.id||'')}">⋮</button></div>
-      </div>`;
-    });
-    html += `</div>`;
-    studentsList.innerHTML = html;
-
-    // wire "More" buttons to open view modal
-    studentsList.querySelectorAll('.mobile-more').forEach(b => {
-      b.onclick = (ev) => openViewStudentModal({ target: { dataset: { id: ev.currentTarget.dataset.id } } });
-    });
-    return;
-  }
-
-  // desktop: keep original table layout
-  let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-      <strong>Total students: ${total}</strong>
-      <div class="muted">Columns: No, ID, Name, Parent, Class, Total</div>
-    </div>`;
-
-  html += `<div style="overflow:auto"><table style="width:100%;border-collapse:collapse">
-    <thead>
-      <tr style="text-align:left;border-bottom:1px solid #e6eef8">
-        <th style="padding:8px;width:48px">No</th>
-        <th style="padding:8px;width:140px">ID</th>
-        <th style="padding:8px">Name</th>
-        <th style="padding:8px;width:160px">Parent</th>
-        <th style="padding:8px;width:120px">Class</th>
-        <th style="padding:8px;width:100px">Total</th>
-        <th style="padding:8px;width:220px">Actions</th>
-      </tr>
-    </thead><tbody>`;
-
-  filtered.forEach((s, idx) => {
-    const sid = escape(s.studentId || s.id || '');
-    const parent = escape(s.parentPhone || s.motherName || '—');
-    const cls = escape(s.classId || '—');
-    let totalDisplay = '—';
-    if(examFilter && examTotalsCache[examFilter] && examTotalsCache[examFilter][s.studentId]) {
-      totalDisplay = escape(String(examTotalsCache[examFilter][s.studentId].total || '—'));
-    }
-    html += `<tr style="border-bottom:1px solid #f1f5f9">
-      <td style="padding:8px;vertical-align:middle">${idx+1}</td>
-      <td style="padding:8px;vertical-align:middle">${sid}</td>
-      <td style="padding:8px;vertical-align:middle">${escape(s.fullName||'')}</td>
-      <td style="padding:8px;vertical-align:middle">${parent}</td>
-      <td style="padding:8px;vertical-align:middle">${cls}</td>
-      <td style="padding:8px;vertical-align:middle">${totalDisplay}</td>
-      <td style="padding:8px;vertical-align:middle">
-        <button class="btn btn-ghost btn-sm view-stu" data-id="${escape(s.studentId||s.id||'')}">View</button>
-        <button class="btn btn-ghost btn-sm edit-stu" data-id="${escape(s.studentId||s.id||'')}">Edit</button>
-        <button class="btn btn-danger btn-sm del-stu" data-id="${escape(s.studentId||s.id||'')}">${s.status==='deleted'?'Unblock':'Delete'}</button>
-      </td>
-    </tr>`;
-  });
-
-  html += `</tbody></table></div>`;
-  studentsList.innerHTML = html;
-
-  // desktop wiring
-  studentsList.querySelectorAll('.view-stu').forEach(b=> b.addEventListener('click', openViewStudentModal));
-  studentsList.querySelectorAll('.edit-stu').forEach(b=> b.addEventListener('click', openEditStudentModal));
-  studentsList.querySelectorAll('.del-stu').forEach(b=> b.addEventListener('click', deleteOrUnblockStudent));
-}
-
-async function openViewStudentModal(e){
-  const id = (e && e.target) ? e.target.dataset.id : (e && e.dataset ? e.dataset.id : e);
-  if(!id) return;
-  let s = studentsCache.find(x => x.studentId === id || x.id === id);
-  if(!s && typeof getDoc === 'function'){
-    try {
-      const snap = await getDoc(doc(db,'students', id));
-      if(snap.exists()) s = { id: snap.id, ...snap.data() };
-    } catch(err){ console.error('load student for view failed', err); }
-  }
-  if(!s) return toast && toast('Student not found');
-
-  const html = `
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-      <div><strong>ID</strong><div class="muted">${escape(s.studentId||s.id||'')}</div></div>
-      <div><strong>Name</strong><div class="muted">${escape(s.fullName||'')}</div></div>
-      <div><strong>Mother</strong><div class="muted">${escape(s.motherName||'')}</div></div>
-      <div><strong>Phone</strong><div class="muted">${escape(s.phone||'')}</div></div>
-      <div><strong>Parent phone</strong><div class="muted">${escape(s.parentPhone||'')}</div></div>
-      <div><strong>Age</strong><div class="muted">${escape(String(s.age||'—'))}</div></div>
-      <div><strong>Gender</strong><div class="muted">${escape(s.gender||'—')}</div></div>
-      <div><strong>Fee</strong><div class="muted">${typeof s.fee !== 'undefined' ? escape(String(s.fee)) : '—'}</div></div>
-      <div style="grid-column:1 / -1"><strong>Class</strong><div class="muted">${escape(s.classId||'—')}</div></div>
-      <div style="grid-column:1 / -1"><strong>Status</strong><div class="muted">${escape(s.status||'active')}</div></div>
-    </div>
-    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
-      <button class="btn btn-ghost" id="viewStuEdit">Edit</button>
-      <button class="btn btn-danger" id="viewStuDel">${s.status==='deleted' ? 'Unblock' : 'Delete'}</button>
-      <button class="btn btn-primary" id="viewStuClose">Close</button>
-    </div>
-  `;
-  showModal(`${escape(s.fullName||'Student')}`, html);
-
-  document.getElementById('viewStuClose').onclick = closeModal;
-  document.getElementById('viewStuEdit').onclick = () => {
-    closeModal();
-    openEditStudentModal({ target:{ dataset:{ id: s.studentId || s.id } } });
-  };
-  document.getElementById('viewStuDel').onclick = async () => {
-    if(s.status === 'deleted'){
-      await updateDoc(doc(db,'students', s.studentId), { status:'active' });
-      await setDoc(doc(db,'studentsLatest', s.studentId), { blocked:false }, { merge:true });
-      await loadStudents(); renderStudents(); toast(`${s.fullName} unblocked`);
-      closeModal();
-      return;
-    }
-    if(!confirm('Delete student? This will mark student as deleted and block public access.')) return;
-    await updateDoc(doc(db,'students', s.studentId), { status:'deleted' });
-    await setDoc(doc(db,'studentsLatest', s.studentId), { blocked:true, blockMessage:'You are fired' }, { merge:true });
-    await loadStudents(); renderStudents(); toast(`${s.fullName} deleted and blocked`);
-    closeModal();
-  };
-}
-
-
-/* ---------- Students create/edit (styling improved, logic preserved) ---------- */
-openAddStudent && (openAddStudent.onclick = () => {
-  const options = classesCache.map(c=>`<option value="${escape(c.name)}">${escape(c.name)}</option>`).join('');
-  showModal('Add Student', `
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-      <div><label>Student ID</label><input id="stuId" placeholder="e.g. 12345" /></div>
-      <div><label>Class</label><select id="stuClass"><option value="">Select class</option>${options}</select></div>
-      <div style="grid-column:1 / -1"><label>Full name</label><input id="stuName" /></div>
-      <div><label>Mother's name</label><input id="stuMother" placeholder="Faadum Abdi Ahmed" /></div>
-      <div><label>Phone</label><input id="stuPhone" /></div>
-      <div><label>Parent phone</label><input id="stuParentPhone" /></div>
-      <div><label>Age</label><input id="stuAge" type="number" min="3" max="30" /></div>
-      <div><label>Gender</label><select id="stuGender"><option value="">Select</option><option value="Male">Male</option><option value="Female">Female</option></select></div>
-      <div style="grid-column:1 / -1"><label>Fee</label><input id="stuFee" type="number" min="0" /></div>
-    </div>
-    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
-      <button id="cancelStu" class="btn btn-ghost">Cancel</button>
-      <button id="saveStu" class="btn btn-primary">Save</button>
-    </div>
-  `);
-
-  modalBody.querySelector('#cancelStu').onclick = closeModal;
-  modalBody.querySelector('#saveStu').onclick = async () => {
-    let id = modalBody.querySelector('#stuId').value.trim();
-    const name = modalBody.querySelector('#stuName').value.trim();
-    const mother = modalBody.querySelector('#stuMother').value.trim();
-    const phone = modalBody.querySelector('#stuPhone').value.trim();
-    const parentPhone = modalBody.querySelector('#stuParentPhone').value.trim();
-    const age = Number(modalBody.querySelector('#stuAge').value) || null;
-    const gender = (modalBody.querySelector('#stuGender').value || null);
-    const fee = modalBody.querySelector('#stuFee').value ? Number(modalBody.querySelector('#stuFee').value) : null;
-    const classId = modalBody.querySelector('#stuClass').value;
-    if(!name) return alert('Name required');
-    if(gender && !['Male','Female'].includes(gender)) return alert('Gender must be Male or Female');
-    if(!id) id = await generateDefaultId('students','STD',9);
-    await setDoc(doc(db,'students',id), { studentId:id, fullName:name, motherName: mother || '', phone, parentPhone: parentPhone || '', age, gender: gender || null, fee: fee, classId, status:'active' });
-    closeModal(); await loadStudents(); renderStudents(); toast(`${name} created`);
-  };
-});
-
-/* openEditStudentModal expects event-like parameter with dataset.id */
-function openEditStudentModal(e){
-  const id = e && e.target ? e.target.dataset.id : e;
-  const s = studentsCache.find(x=>x.studentId===id || x.id===id);
-  if(!s) return toast && toast('Student not found');
-  const options = classesCache.map(c=>`<option value="${escape(c.name)}" ${c.name===s.classId?'selected':''}>${escape(c.name)}</option>`).join('');
-  showModal('Edit Student', `
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-      <div><label>Student ID</label><input id="stuId" value="${escape(s.studentId)}" disabled /></div>
-      <div><label>Class</label><select id="stuClass"><option value="">Select class</option>${options}</select></div>
-      <div style="grid-column:1 / -1"><label>Full name</label><input id="stuName" value="${escape(s.fullName)}" /></div>
-      <div><label>Mother's name</label><input id="stuMother" value="${escape(s.motherName||'')}" /></div>
-      <div><label>Phone</label><input id="stuPhone" value="${escape(s.phone||'')}" /></div>
-      <div><label>Parent phone</label><input id="stuParentPhone" value="${escape(s.parentPhone||'')}" /></div>
-      <div><label>Age</label><input id="stuAge" type="number" value="${escape(String(s.age||''))}" /></div>
-      <div><label>Gender</label><select id="stuGender"><option value="">Select</option><option value="Male" ${s.gender==='Male'?'selected':''}>Male</option><option value="Female" ${s.gender==='Female'?'selected':''}>Female</option></select></div>
-      <div style="grid-column:1 / -1"><label>Fee</label><input id="stuFee" type="number" value="${escape(String(s.fee||''))}" /></div>
-    </div>
-    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
-      <button id="cancelStu" class="btn btn-ghost">Cancel</button>
-      <button id="addResult" class="btn btn-ghost">Add/Edit Result</button>
-      <button id="saveStu" class="btn btn-primary">Save</button>
-    </div>
-  `);
-
-  modalBody.querySelector('#cancelStu').onclick = closeModal;
-  modalBody.querySelector('#addResult').onclick = async () => { closeModal(); await openStudentResultModalFor(s); };
-
-  modalBody.querySelector('#saveStu').onclick = async () => {
-    const name = modalBody.querySelector('#stuName').value.trim();
-    const mother = modalBody.querySelector('#stuMother').value.trim();
-    const phone = modalBody.querySelector('#stuPhone').value.trim();
-    const parentPhone = modalBody.querySelector('#stuParentPhone').value.trim();
-    const age = Number(modalBody.querySelector('#stuAge').value) || null;
-    const gender = (modalBody.querySelector('#stuGender').value || null);
-    const fee = modalBody.querySelector('#stuFee').value ? Number(modalBody.querySelector('#stuFee').value) : null;
-    const classId = modalBody.querySelector('#stuClass').value;
-    if(!name) return alert('Name required');
-    if(gender && !['Male','Female'].includes(gender)) return alert('Gender must be Male or Female');
-    await updateDoc(doc(db,'students',s.studentId), { fullName:name, motherName: mother || '', phone, parentPhone: parentPhone || '', age, gender: gender || null, fee: fee, classId });
-    closeModal(); await loadStudents(); renderStudents(); toast(`${name} updated`);
-  };
-}
-
-
-async function deleteOrUnblockStudent(e){
-  const id = e.target.dataset.id;
-  const s = studentsCache.find(x=>x.studentId===id || x.id===id);
-  if(!s) return;
-  if(s.status === 'deleted'){
-    await updateDoc(doc(db,'students',s.studentId), { status:'active' });
-    await setDoc(doc(db,'studentsLatest', s.studentId), { blocked:false }, { merge:true });
-    await loadStudents(); renderStudents(); toast(`${s.fullName} unblocked`);
-    return;
-  }
-  if(!confirm('Delete student? This will mark student as deleted and block public access.')) return;
-  await updateDoc(doc(db,'students',s.studentId), { status:'deleted' });
-  await setDoc(doc(db,'studentsLatest', s.studentId), { blocked:true, blockMessage:'You are fired' }, { merge:true });
-  await loadStudents(); renderStudents(); toast(`${s.fullName} deleted and blocked`);
-}
-
-
-
-
-
-
-/* -------------------------------------
-   Exam open / add results / publish
-   -------------------------------------*/
-
-   function renderExams(){
-    if(!examsList) return;
-  
-    // ensure sort control exists (same as before)
-    const controlsId = 'examControlsArea';
-    let controls = document.getElementById(controlsId);
-    if(!controls && pageExams){
-      controls = document.createElement('div'); controls.id = controlsId; controls.style.marginBottom = '8px';
-      const sel = document.createElement('select'); sel.id = 'examSortSelect';
-      sel.innerHTML = `<option value="date">Sort: Date (default)</option><option value="a-z">A → Z</option><option value="z-a">Z → A</option>`;
-      sel.value = examSortMode || 'date';
-      sel.onchange = (ev)=>{ examSortMode = ev.target.value; renderExams(); };
-      controls.appendChild(sel);
-      pageExams.insertBefore(controls, examsList);
-    } else if(controls){
-      const sel = document.getElementById('examSortSelect'); if(sel) sel.value = examSortMode;
-    }
-  
-    const q = (examSearch && examSearch.value||'').trim().toLowerCase();
-    const classFilterVal = (examClassFilter && examClassFilter.value) || '';
-    examsList.innerHTML = '';
-  
-    let list = examsCache.slice();
-    // filter
-    list = list.filter(e => {
-      if(classFilterVal && (!e.classes || !e.classes.includes(classFilterVal))) return false;
-      if(!q) return true;
-      return (e.name||'').toLowerCase().includes(q);
-    });
-  
-    // sort
-    if(examSortMode === 'date'){
-      list.sort((a,b)=> {
-        const ta = (a.date && a.date.seconds) ? a.date.seconds : (a.publishedAt?.seconds || 0);
-        const tb = (b.date && b.date.seconds) ? b.date.seconds : (b.publishedAt?.seconds || 0);
-        return tb - ta;
-      });
-    } else if(examSortMode === 'a-z'){
-      list.sort((a,b)=> (a.name||'').localeCompare(b.name||''));
-    } else if(examSortMode === 'z-a'){
-      list.sort((a,b)=> (b.name||'').localeCompare(a.name||''));
-    }
-  
-    // mobile vs desktop switch
-    const mobile = (typeof isMobileViewport === 'function') ? isMobileViewport() : (window.matchMedia && window.matchMedia('(max-width:768px)').matches);
-  
-    if(mobile){
-      // compact mobile list but show FULL exam name (wrap, no ellipsis)
-      let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-        <strong>Total exams: ${list.length}</strong>
-        <div class="muted">Tap More for exam details</div>
-      </div><div id="examsMobileList">`;
-  
-      list.forEach((e, idx) => {
-        const statusLabel = (e.status === 'published') ? 'Published' : (e.status === 'deactivated' ? 'Deactivated' : 'Unpublished');
-        html += `<div style="padding:12px;border-bottom:1px solid #f1f5f9;display:flex;flex-direction:column;gap:6px">
-          <div style="font-weight:800;display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
-            <div style="display:flex;gap:8px;align-items:flex-start;flex:1;min-width:0">
-              <div style="min-width:26px;text-align:center;font-weight:700">${idx+1}</div>
-              <!-- FULL name allowed: wrap and break-word -->
-              <div style="flex:1;white-space:normal;word-break:break-word;">${escape(e.name||'')}</div>
-            </div>
-            <div style="text-align:right;flex-shrink:0"><small class="muted">${escape(statusLabel)}</small></div>
-          </div>
-          <div style="display:flex;justify-content:flex-end">
-            <button class="btn btn-ghost btn-sm mobile-exam-more" data-id="${escape(e.id)}">⋮</button>
-          </div>
-        </div>`;
-      });
-  
-      html += `</div>`;
-      examsList.innerHTML = html;
-  
-      // wire mobile More buttons to open modal
-      examsList.querySelectorAll('.mobile-exam-more').forEach(b => {
-        b.onclick = (ev) => openExamModal(ev.currentTarget.dataset.id);
-      });
-  
-      return;
-    }
-  
-    // Desktop: original rows (keeps actions)
-    for(const e of list){
-      const div = document.createElement('div'); div.className='row';
-      const status = e.status || 'draft';
-      const classesText = e.classes && e.classes.length ? e.classes.join(', ') : 'All classes';
-      const dateText = e.date ? (new Date(e.date.seconds ? e.date.seconds*1000 : e.date)).toLocaleDateString() : '';
-      div.innerHTML = `<div class="meta">
-          <strong>${escape(e.name)} ${status==='published'?'<span style="color:#059669">(published)</span>':status==='deactivated'?'<span style="color:#dc2626">(deactivated)</span>':'(unpublished)'}</strong>
-          <small>${escape(classesText)} • ${escape(dateText)}</small>
-        </div>
-        <div>
-          <button class="btn btn-ghost btn-sm open-exam" data-id="${escape(e.id)}">Open</button>
-          <button class="btn btn-ghost btn-sm edit-exam" data-id="${escape(e.id)}">Edit</button>
-          <button class="btn btn-danger btn-sm del-exam" data-id="${escape(e.id)}">Delete</button>
-          <button class="btn btn-primary btn-sm pub-exam" data-id="${escape(e.id)}">${e.status==='published'?'Unpublish':'Publish'}</button>
-        </div>`;
-      examsList.appendChild(div);
-    }
-  
-    document.querySelectorAll('.open-exam').forEach(b=>b.onclick = openExam);
-    document.querySelectorAll('.edit-exam').forEach(b=>b.onclick = openEditExamModal);
-    document.querySelectorAll('.del-exam').forEach(b=>b.onclick = deleteExam);
-    document.querySelectorAll('.pub-exam').forEach(b=>b.onclick = togglePublishExam);
-  }
-
-/* ---------- openExamModal (show exam details + footer actions) ---------- */
-async function openExamModal(examId){
-  if(!examId) return;
-  // try cached exam, fallback to DB fetch
-  let ex = examsCache.find(x => x.id === examId);
-  if(!ex){
-    try {
-      const snap = await getDoc(doc(db,'exams', examId));
-      if(!snap.exists()) return toast && toast('Exam not found');
-      ex = { id: snap.id, ...snap.data() };
-    } catch(err){ console.error('openExamModal load failed', err); return toast && toast('Failed to load exam'); }
-  }
-
-  const statusLabel = ex.status === 'published' ? 'Published' : (ex.status === 'deactivated' ? 'Deactivated' : 'Unpublished');
-  const classesText = (ex.classes && ex.classes.length) ? ex.classes.join(', ') : 'All classes';
-  const dateText = ex.date ? (new Date(ex.date.seconds ? ex.date.seconds*1000 : ex.date)).toLocaleDateString() : '—';
-
-  const html = `
-    <div style="display:grid;grid-template-columns:1fr;gap:8px">
-      <div><strong>Exam</strong><div class="muted">${escape(ex.name||'')}</div></div>
-      <div><strong>Status</strong><div class="muted">${escape(statusLabel)}</div></div>
-      <div><strong>Classes assigned</strong><div class="muted">${escape(classesText)}</div></div>
-      <div><strong>Date</strong><div class="muted">${escape(dateText)}</div></div>
-    </div>
-    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
-      <button class="btn btn-ghost" id="examModalOpen">Open</button>
-      <button class="btn btn-ghost" id="examModalEdit">Edit</button>
-      <button class="btn btn-danger" id="examModalDelete">Delete</button>
-      <button class="btn btn-primary" id="examModalToggle">${ex.status==='published' ? 'Unpublish' : 'Publish'}</button>
-      <button class="btn" id="examModalClose">Close</button>
-    </div>
-  `;
-
-  showModal(`${escape(ex.name||'Exam')}`, html);
-
-  // wire buttons
-  const openBtn = document.getElementById('examModalOpen');
-  const editBtn = document.getElementById('examModalEdit');
-  const delBtn = document.getElementById('examModalDelete');
-  const toggleBtn = document.getElementById('examModalToggle');
-  const closeBtn = document.getElementById('examModalClose');
-
-  if(openBtn) openBtn.onclick = () => {
-    closeModal();
-    // reuse original openExam navigator
-    openExam({ target: { dataset: { id: ex.id } } });
-  };
-  if(editBtn) editBtn.onclick = () => {
-    closeModal();
-    openEditExamModal({ target: { dataset: { id: ex.id } } });
-  };
-  if(delBtn) delBtn.onclick = async () => {
-    if(!confirm('Delete exam?')) return;
-    await deleteExam({ target: { dataset: { id: ex.id } } });
-    closeModal();
-  };
-  if(toggleBtn) toggleBtn.onclick = async () => {
-    await togglePublishExam({ target: { dataset: { id: ex.id } } });
-    // refresh UI in modal and list
-    await loadExams();
-    renderExams();
-    // update modal - replace status text and toggle label
-    const newEx = examsCache.find(x=>x.id===ex.id) || ex;
-    const newStatus = newEx.status === 'published' ? 'Published' : (newEx.status === 'deactivated' ? 'Deactivated' : 'Unpublished');
-    const newLabel = newEx.status === 'published' ? 'Unpublish' : 'Publish';
-    // update DOM elements safely
-    try {
-      // replace the modal by reopening with fresh data
-      closeModal();
-      openExamModal(ex.id);
-    } catch(e){ console.error(e); }
-  };
-  if(closeBtn) closeBtn.onclick = closeModal;
-}
-
-  
-   function openExam(e){
-  const id = e.target.dataset.id;
-  if(!id) return alert('No exam id');
-  window.location.href = `exam.html?examId=${encodeURIComponent(id)}`;
-}
-
-/* create / edit / delete / publish exam (same UI) */
-openAddExam.onclick = () => {
-  // build exam list for linking (exclude current - not applicable here)
-  const examLinkOptions = examsCache.map(e => `<option value="${e.id}">${escape(e.name)} ${e.status==='published'?'(published)':''}</option>`).join('');
-  const subjHtml = subjectsCache.map(s => {
-    const defMax = s.max || 100;
-    return `<label style="display:inline-block;margin-right:8px; margin-bottom:6px;">
-      <input type="checkbox" class="exam-sub" data-name="${escape(s.name)}" data-default-max="${escape(String(defMax))}" checked />
-      ${escape(s.name)}
-      <input class="exam-sub-max" data-name="${escape(s.name)}" value="${escape(String(defMax))}" style="width:66px;margin-left:6px;padding:2px" />
-      <small style="margin-left:6px;color:#6b7280">max</small>
-    </label>`;
-  }).join('');
-
-  const classHtml = classesCache.map(c => `<label style="display:inline-block;margin-right:6px"><input type="checkbox" class="exam-cls" data-name="${escape(c.name)}" checked /> ${escape(c.name)}</label>`).join('');
-
-  showModal('Create Exam', `
-    <label>Exam name</label><input id="examName" placeholder="Midterm 2026" />
-    <label>Date</label><input id="examDate" type="date" />
-    <div style="margin-top:8px">
-      <label>Link from existing exam (optional)</label>
-      <select id="linkFromExam"><option value="">— New exam —</option>${examLinkOptions}</select>
-      <div style="font-size:0.9rem;color:#6b7280;margin-top:6px">If you select an existing exam, this new exam will use remaining per-subject max (100 - linked.max).</div>
-    </div>
-
-    <div style="margin-top:8px"><button id="toggleChkSubjects" class="btn btn-ghost btn-sm">Uncheck All Subjects</button> <button id="setMaxAll" class="btn btn-ghost btn-sm">Set max for checked</button></div>
-    <label style="margin-top:8px">Subjects (each has its own max)</label><div id="examSubjects">${subjHtml || '<div class="muted">No subjects</div>'}</div>
-    <div style="margin-top:8px"><button id="toggleChkClasses" class="btn btn-ghost btn-sm">Uncheck All Classes</button></div>
-    <label style="margin-top:8px">Classes</label><div id="examClasses">${classHtml || '<div class="muted">No classes</div>'}</div>
-  <div style="margin-top:8px">
-  <label><input type="checkbox" id="enableAssignment" /> Enable Assignment</label>
-  <label><input type="checkbox" id="enableQuiz" /> Enable Quiz</label>
-  <label><input type="checkbox" id="enableMonthly" /> Enable Monthly</label>
-  <label><input type="checkbox" id="enableCW1" /> Enable CW1</label>
-  <label><input type="checkbox" id="enableCW2" /> Enable CW2</label>
-  <label><input type="checkbox" id="enableExam" checked disabled /> Enable Exam</label>
-</div>
-
-    <div style="margin-top:12px"><button id="saveExam" class="btn btn-primary">Create</button> <button id="cancelExam" class="btn btn-ghost">Cancel</button></div>
-  `);
-
-  // utilities for linking
-  async function applyLinking(linkedId){
-    // if not linking -> restore defaults (subjectsCache defaults)
-    if(!linkedId){
-      // rebuild UI subjects from subjectsCache (defaults)
-      modalBody.querySelector('#examSubjects').innerHTML = subjectsCache.map(s=>{
-        const defMax = s.max || 100;
-        return `<label style="display:inline-block;margin-right:8px; margin-bottom:6px;">
-          <input type="checkbox" class="exam-sub" data-name="${escape(s.name)}" data-default-max="${escape(String(defMax))}" checked />
-          ${escape(s.name)}
-          <input class="exam-sub-max" data-name="${escape(s.name)}" value="${escape(String(defMax))}" style="width:66px;margin-left:6px;padding:2px" />
-          <small style="margin-left:6px;color:#6b7280">max</small>
-        </label>`;
-      }).join('');
-      return;
-    }
-
-    // fetch linked exam data
-    const linkedSnap = await getDoc(doc(db,'exams', linkedId));
-    if(!linkedSnap.exists()){
-      alert('Linked exam not found'); return;
-    }
-    const linked = linkedSnap.data();
-    const linkedSubjectsMap = new Map((linked.subjects || []).map(s=>[s.name, s.max || 0]));
-
-    // compute new subject list: for each subject that exists in linked, compute remainder = 100 - linkedMax
-    // also include other subjects (not linked) but remainder = 100 (admin can choose)
-    const htmlParts = subjectsCache.map(s=>{
-      const linkedMax = linkedSubjectsMap.get(s.name);
-      if(linkedMax != null){
-        const remainder = Math.max(0, 100 - Number(linkedMax));
-        if(remainder <= 0){
-          // disabled: linked exam already uses full 100 for this subject
-          return `<div style="display:inline-block;vertical-align:top;margin-right:8px;margin-bottom:10px;width:220px">
-            <label style="display:block">
-              <input type="checkbox" class="exam-sub" data-name="${escape(s.name)}" data-default-max="${escape(String(s.max||100))}" disabled />
-              ${escape(s.name)} <small style="color:#b91c1c"> (no remainder)</small>
-            </label>
-            <div style="margin-top:4px">
-              <input class="exam-sub-max" data-name="${escape(s.name)}" value="${escape(String(remainder))}" style="width:66px;margin-left:6px;padding:2px" disabled/>
-              <small style="margin-left:6px;color:#6b7280">max (remaining)</small>
-            </div>
-            <div style="font-size:0.78rem;color:#6b7280;margin-top:4px">Linked exam already allocates ${linkedMax} — remainder ${remainder}</div>
-          </div>`;
-        } else {
-          // enabled with remainder
-          return `<div style="display:inline-block;vertical-align:top;margin-right:8px;margin-bottom:10px;width:220px">
-            <label style="display:block">
-              <input type="checkbox" class="exam-sub" data-name="${escape(s.name)}" data-default-max="${escape(String(remainder))}" checked />
-              ${escape(s.name)}
-            </label>
-            <div style="margin-top:4px">
-              <input class="exam-sub-max" data-name="${escape(s.name)}" value="${escape(String(remainder))}" style="width:66px;margin-left:6px;padding:2px" />
-              <small style="margin-left:6px;color:#6b7280">max (remaining)</small>
-            </div>
-            <div style="font-size:0.78rem;color:#6b7280;margin-top:4px">Linked exam uses ${linkedMax}, remainder ${remainder}</div>
-          </div>`;
-        }
-      } else {
-        // subject not present in linked exam -> admin can choose full 100 (or any value)
-        const defMax = s.max || 100;
-        return `<div style="display:inline-block;vertical-align:top;margin-right:8px;margin-bottom:10px;width:220px">
-          <label style="display:block">
-            <input type="checkbox" class="exam-sub" data-name="${escape(s.name)}" data-default-max="${escape(String(defMax))}" checked />
-            ${escape(s.name)}
-          </label>
-          <div style="margin-top:4px">
-            <input class="exam-sub-max" data-name="${escape(s.name)}" value="${escape(String(defMax))}" style="width:66px;margin-left:6px;padding:2px" />
-            <small style="margin-left:6px;color:#6b7280">max</small>
-          </div>
-        </div>`;
-      }
-    }).join('');
-    modalBody.querySelector('#examSubjects').innerHTML = htmlParts;
-  }
-
-  // hook link change
-  modalBody.querySelector('#linkFromExam').onchange = async (ev) => {
-    await applyLinking(ev.target.value);
-  };
-
-  document.getElementById('toggleChkSubjects').onclick = ()=> {
-    const inputs = modalBody.querySelectorAll('#examSubjects input.exam-sub');
-    const allChecked = Array.from(inputs).every(i=>i.checked || i.disabled);
-    inputs.forEach(i=> { if(!i.disabled) i.checked = !allChecked; });
-    document.getElementById('toggleChkSubjects').textContent = allChecked ? 'Check All Subjects' : 'Uncheck All Subjects';
-  };
-
-  document.getElementById('toggleChkClasses').onclick = ()=> {
-    const inputs = modalBody.querySelectorAll('#examClasses input.exam-cls');
-    const allChecked = Array.from(inputs).every(i=>i.checked);
-    inputs.forEach(i=> i.checked = !allChecked);
-    document.getElementById('toggleChkClasses').textContent = allChecked ? 'Check All Classes' : 'Uncheck All Classes';
-  };
-
-  document.getElementById('setMaxAll').onclick = ()=> {
-    const v = prompt('Set max for all checked subjects (number)', '100');
-    if(v==null) return;
-    const n = Number(v) || 100;
-    modalBody.querySelectorAll('#examSubjects input.exam-sub:checked').forEach(i=>{
-      const name = i.dataset.name;
-      const maxInput = modalBody.querySelector(`#examSubjects input.exam-sub-max[data-name="${name}"]`);
-      if(maxInput) maxInput.value = String(n);
-    });
-  };
-
-  // Save handler
-  document.getElementById('saveExam').onclick = async () => {
-    const name = document.getElementById('examName').value.trim();
-    const date = document.getElementById('examDate').value || null;
-    const linkedFrom = modalBody.querySelector('#linkFromExam').value || null;
-    if(!name) return alert('Name required');
-
-    // chosen subjects only from checked (and enabled) inputs
-    const chosenSubjects = Array.from(modalBody.querySelectorAll('#examSubjects input.exam-sub:checked')).map(i=>{
-      const nm = i.dataset.name;
-      const maxInput = modalBody.querySelector(`#examSubjects input.exam-sub-max[data-name="${nm}"]`);
-      const maxVal = maxInput ? Number(maxInput.value || i.dataset.defaultMax) : Number(i.dataset.defaultMax);
-      return { name: nm, max: Math.max(0, maxVal) };
-    });
-
-    // validation: ensure each chosen subject max + linked.max <= 100 (if linked)
-    if(linkedFrom){
-      const linkedSnap = await getDoc(doc(db,'exams', linkedFrom));
-      if(linkedSnap.exists()){
-        const linked = linkedSnap.data();
-        const linkedMap = new Map((linked.subjects||[]).map(s=>[s.name, s.max||0]));
-        for(const cs of chosenSubjects){
-          const linkedMax = linkedMap.get(cs.name) || 0;
-          if((linkedMax + cs.max) > 100){
-            return alert(`Subject ${cs.name} combined max (${linkedMax + cs.max}) exceeds 100. Adjust values.`);
-          }
-        }
-      }
-    }
-
-    const chosenClasses = Array.from(modalBody.querySelectorAll('#examClasses input.exam-cls:checked')).map(i=> i.dataset.name );
-    const enableAssignment = Boolean(document.getElementById('enableAssignment').checked);
-    const enableQuiz = Boolean(document.getElementById('enableQuiz').checked);
-    const enableMonthly = Boolean(document.getElementById('enableMonthly').checked);
-    const enableExam = Boolean(document.getElementById('enableExam').checked);
-
-          // force exam enabled & include cw1/cw2
-const enableCW1 = Boolean(document.getElementById('enableCW1').checked);
-const enableCW2 = Boolean(document.getElementById('enableCW2').checked);
-// always keep exam true (locked)
-const payloadComponents = { assignment: enableAssignment, quiz: enableQuiz, monthly: enableMonthly, cw1: enableCW1, cw2: enableCW2, exam: true };
-    const payload = {
-      name,
-      date: date ? new Date(date) : null,
-      status: 'draft',
-      classes: chosenClasses,
-      subjects: chosenSubjects,
-      // components: { assignment: enableAssignment, quiz: enableQuiz, monthly: enableMonthly, exam: enableExam },
-
-
-components: payloadComponents,
-
-      createdAt: Timestamp.now(),
-      createdBy: currentUser.uid
-    };
-    if(linkedFrom) payload.linkedExamId = linkedFrom;
-
-    await addDoc(collection(db,'exams'), payload);
-    closeModal(); await loadExams(); renderExams(); populateStudentsExamDropdown(); toast('Exam created');
-  };
-
-  document.getElementById('cancelExam').onclick = closeModal;
-};
-
-
-/* ---------- Replace openEditExamModal ---------- */
-function openEditExamModal(e){
-  const id = e.target ? e.target.dataset.id : e; // support calling with id directly
-  const ex = examsCache.find(x=>x.id===id);
-  if(!ex) return;
-
-  // compute exam subject name set (original exam selection)
-  const exSubjectMap = new Map((ex.subjects || []).map(s => [s.name, s.max || 0]));
-
-  // build exam link options and make current linked selected
-  const examLinkOptions = `<option value="">— None —</option>` + examsCache.map(ev=>{
-    if(ev.id === ex.id) return '';
-    return `<option value="${ev.id}" ${ex.linkedExamId===ev.id ? 'selected' : ''}>${escape(ev.name)} ${ev.status==='published'?'(published)':''}</option>`;
-  }).join('');
-
-  // compute initial allowed subjects based on classes selected on this exam
-  function computeAllowedFromClasses(classNames){
-    const allowed = new Set();
-    if(Array.isArray(classNames) && classNames.length){
-      for(const clsName of classNames){
-        const clsDoc = classesCache.find(c => c.name === clsName);
-        if(clsDoc && Array.isArray(clsDoc.subjects)){
-          for(const subName of clsDoc.subjects) allowed.add(subName);
-        }
-      }
-    }
-    return allowed;
-  }
-  const initialAllowed = computeAllowedFromClasses(ex.classes || []);
-
-  // subject HTML (note: show max from exam subject definition if present)
-  const subjHtml = subjectsCache.map(s=>{
-    const curMax = exSubjectMap.get(s.name) ?? s.max ?? 100;
-    const allowed = initialAllowed.size ? initialAllowed.has(s.name) : true;
-    const checked = ex.subjects?.find(ss=>ss.name===s.name) ? 'checked' : '';
-    const disabled = allowed ? '' : 'disabled';
-    const hint = allowed ? '' : `<div style="font-size:0.78rem;color:#6b7280;margin-top:4px">Not part of currently selected classes — cannot enable until class includes it</div>`;
-    return `<div style="display:inline-block;vertical-align:top;margin-right:8px;margin-bottom:10px;width:220px">
-      <label style="display:block">
-        <input type="checkbox" class="exam-sub" data-name="${escape(s.name)}" data-default-max="${escape(String(s.max||100))}" ${checked} ${disabled} />
-        ${escape(s.name)}
-      </label>
-      <div style="margin-top:4px">
-        <input class="exam-sub-max" data-name="${escape(s.name)}" value="${escape(String(curMax))}" style="width:66px;margin-left:6px;padding:2px" ${disabled}/>
-        <small style="margin-left:6px;color:#6b7280">max</small>
-      </div>
-      ${hint}
-    </div>`;
-  }).join('');
-
-  const classHtml = classesCache.map(c=>{
-    const checked = ex.classes && ex.classes.includes(c.name) ? 'checked' : '';
-    return `<label style="display:inline-block;margin-right:10px;margin-bottom:6px"><input type="checkbox" class="exam-cls" data-name="${escape(c.name)}" ${checked} /> ${escape(c.name)}</label>`;
-  }).join('');
-
-  showModal('Edit Exam', `
-    <label>Exam name</label><input id="examName" value="${escape(ex.name)}" />
-    <label>Date</label><input id="examDate" type="date" value="${ex.date? (new Date(ex.date.seconds?ex.date.seconds*1000:ex.date)).toISOString().slice(0,10):''}" />
-    <div style="margin-top:8px">
-      <label>Link from existing exam (optional)</label>
-      <select id="linkFromExam">${examLinkOptions}</select>
-      <div style="font-size:0.9rem;color:#6b7280;margin-top:6px">Linking will use remainder per-subject (100 - linked.max).</div>
-    </div>
-
-    <div style="margin-top:8px"><button id="toggleChkSubjects" class="btn btn-ghost btn-sm">Toggle Subjects</button> <button id="setMaxAll" class="btn btn-ghost btn-sm">Set max for checked</button></div>
-    <label style="margin-top:8px">Subjects</label><div id="examSubjects" style="margin-top:6px">${subjHtml || '<div class="muted">No subjects</div>'}</div>
-
-    <div style="margin-top:8px"><button id="toggleChkClasses" class="btn btn-ghost btn-sm">Toggle Classes</button></div>
-    <label style="margin-top:8px">Classes</label><div id="examClasses" style="margin-top:6px">${classHtml || '<div class="muted">No classes</div>'}</div>
-
-  <div style="margin-top:8px">
-  <label><input type="checkbox" id="enableAssignment" ${ex.components?.assignment?'checked':''} /> Enable Assignment</label>
-  <label><input type="checkbox" id="enableQuiz" ${ex.components?.quiz?'checked':''} /> Enable Quiz</label>
-  <label><input type="checkbox" id="enableMonthly" ${ex.components?.monthly?'checked':''} /> Enable Monthly</label>
-  <label><input type="checkbox" id="enableCW1" ${ex.components?.cw1?'checked':''} /> Enable CW1</label>
-  <label><input type="checkbox" id="enableCW2" ${ex.components?.cw2?'checked':''} /> Enable CW2</label>
-  <!-- exam locked -->
-  <label><input type="checkbox" id="enableExam" checked disabled /> Enable Exam</label>
-</div>
-
-
-    <div style="margin-top:12px"><button id="saveExam" class="btn btn-primary">Save</button> <button id="cancelExam" class="btn btn-ghost">Cancel</button></div>
-  `);
-
-  // helper to recompute allowed subjects when classes changed
-  function updateSubjectEnablesByClassSelection(){
-    const checkedClasses = Array.from(modalBody.querySelectorAll('#examClasses input.exam-cls:checked')).map(i=>i.dataset.name);
-    const newAllowed = computeAllowedFromClasses(checkedClasses);
-    modalBody.querySelectorAll('#examSubjects input.exam-sub').forEach(inp=>{
-      const nm = inp.dataset.name;
-      const allowed = newAllowed.size ? newAllowed.has(nm) : true;
-      inp.disabled = !allowed;
-      const maxInput = modalBody.querySelector(`#examSubjects input.exam-sub-max[data-name="${nm}"]`);
-      if(maxInput) maxInput.disabled = !allowed;
-      if(!allowed) inp.checked = false;
-      // update hint
-      const parent = inp.closest('div');
-      if(parent){
-        let existingHint = parent.querySelector('.not-allowed-hint');
-        if(!allowed){
-          if(!existingHint){
-            const hint = document.createElement('div');
-            hint.className = 'not-allowed-hint';
-            hint.style.fontSize = '0.78rem';
-            hint.style.color = '#6b7280';
-            hint.style.marginTop = '4px';
-            hint.textContent = 'Not part of selected classes — cannot enable until class includes it';
-            parent.appendChild(hint);
-          }
-        } else {
-          if(existingHint) existingHint.remove();
-        }
-      }
-    });
-  }
-
-  // when any class checkbox changes, refresh allowed subjects
-  modalBody.querySelectorAll('#examClasses input.exam-cls').forEach(cb=> cb.onchange = updateSubjectEnablesByClassSelection);
-  updateSubjectEnablesByClassSelection(); // initial state
-
-  // when linkFromExam changes - similar behavior to create: recompute subject maxes based on selected linked exam
-  modalBody.querySelector('#linkFromExam').onchange = async (ev) => {
-    const linkedId = ev.target.value || null;
-    if(!linkedId){
-      // restore current exam's subject maxima from ex (the original)
-      modalBody.querySelectorAll('#examSubjects input.exam-sub-max').forEach(inp => {
-        const nm = inp.dataset.name;
-        const cur = exSubjectMap.get(nm) ?? (subjectsCache.find(ss=>ss.name===nm)?.max || 100);
-        inp.value = String(cur);
-        inp.disabled = !computeAllowedFromClasses(ex.classes || []).size ? false : !computeAllowedFromClasses(ex.classes || []).has(nm);
-      });
-      return;
-    }
-    const linkedSnap = await getDoc(doc(db,'exams', linkedId));
-    if(!linkedSnap.exists()) return alert('Linked exam not found');
-    const linked = linkedSnap.data();
-    const linkedMap = new Map((linked.subjects||[]).map(s=>[s.name, s.max||0]));
-
-    // for each subject input: if subject exists in linked, set max = (100 - linkedMax) and disable if remainder <= 0
-    modalBody.querySelectorAll('#examSubjects input.exam-sub-max').forEach(inp => {
-      const nm = inp.dataset.name;
-      const linkedMax = linkedMap.get(nm) || 0;
-      const remainder = Math.max(0, 100 - linkedMax);
-      inp.value = String(remainder);
-      // disable if remainder <= 0
-      const chk = modalBody.querySelector(`#examSubjects input.exam-sub[data-name="${nm}"]`);
-      if(chk){
-        chk.disabled = (remainder <= 0);
-        if(remainder <= 0) chk.checked = false;
-      }
-    });
-  };
-
-  document.getElementById('toggleChkSubjects').onclick = ()=> {
-    const inputs = modalBody.querySelectorAll('#examSubjects input.exam-sub');
-    const enabledInputs = Array.from(inputs).filter(i=>!i.disabled);
-    const allChecked = enabledInputs.length && enabledInputs.every(i=>i.checked);
-    enabledInputs.forEach(i=> i.checked = !allChecked);
-  };
-  document.getElementById('toggleChkClasses').onclick = ()=> {
-    const inputs = modalBody.querySelectorAll('#examClasses input.exam-cls');
-    inputs.forEach(i=> i.checked = !i.checked);
-    updateSubjectEnablesByClassSelection();
-  };
-  document.getElementById('setMaxAll').onclick = ()=> {
-    const v = prompt('Set max for all checked subjects (number)', '100');
-    if(v==null) return;
-    const n = Number(v) || 100;
-    modalBody.querySelectorAll('#examSubjects input.exam-sub:checked').forEach(i=>{
-      const name = i.dataset.name;
-      const maxInput = modalBody.querySelector(`#examSubjects input.exam-sub-max[data-name="${name}"]`);
-      if(maxInput) maxInput.value = String(n);
-    });
-  };
-
-  // Save handler
-  document.getElementById('saveExam').onclick = async ()=> {
-    const name = document.getElementById('examName').value.trim();
-    const date = document.getElementById('examDate').value || null;
-    const linkedFrom = modalBody.querySelector('#linkFromExam').value || null;
-    if(!name) return alert('Name required');
-
-    const chosenSubjects = Array.from(modalBody.querySelectorAll('#examSubjects input.exam-sub:checked')).map(i=>{
-      const nm = i.dataset.name;
-      const maxInput = modalBody.querySelector(`#examSubjects input.exam-sub-max[data-name="${nm}"]`);
-      const maxVal = maxInput ? Number(maxInput.value || i.dataset.defaultMax) : Number(i.dataset.defaultMax);
-      return { name: nm, max: Math.max(0, maxVal) };
-    });
-
-    // validation vs linked
-    if(linkedFrom){
-      const linkedSnap = await getDoc(doc(db,'exams', linkedFrom));
-      if(linkedSnap.exists()){
-        const linked = linkedSnap.data();
-        const linkedMap = new Map((linked.subjects||[]).map(s=>[s.name, s.max||0]));
-        for(const cs of chosenSubjects){
-          const linkedMax = linkedMap.get(cs.name) || 0;
-          if((linkedMax + cs.max) > 100){
-            return alert(`Subject ${cs.name} combined max (${linkedMax + cs.max}) exceeds 100. Adjust values.`);
-          }
-        }
-      }
-    }
-
-    const chosenClasses = Array.from(modalBody.querySelectorAll('#examClasses input.exam-cls:checked')).map(i=> i.dataset.name );
-    const enableAssignment = Boolean(document.getElementById('enableAssignment').checked);
-    const enableQuiz = Boolean(document.getElementById('enableQuiz').checked);
-    const enableMonthly = Boolean(document.getElementById('enableMonthly').checked);
-    const enableCW1 = Boolean(document.getElementById('enableCW1').checked);
-    const enableCW2 = Boolean(document.getElementById('enableCW2').checked);
-    // exam locked -> always true
-    const enableExam = true;
-    
-
-    await updateDoc(doc(db,'exams',ex.id), {
-      name,
-      date: date ? new Date(date) : null,
-      subjects: chosenSubjects,
-      classes: chosenClasses,
-      components: { assignment: enableAssignment, quiz: enableQuiz, monthly: enableMonthly, cw1: enableCW1, cw2: enableCW2, exam: enableExam },
-      linkedExamId: linkedFrom || null
-    });
-    closeModal(); await loadExams(); renderExams(); populateStudentsExamDropdown(); toast('Exam updated');
-  };
-
-  document.getElementById('cancelExam').onclick = closeModal;
-}
-
-
-
-async function deleteExam(e){
-  const id = e.target.dataset.id;
-  if(!confirm('Delete exam?')) return;
-  await deleteDoc(doc(db,'exams',id));
-  await loadExams(); renderExams(); populateStudentsExamDropdown(); toast('Exam deleted');
-}
-
-/* Toggle publish/unpublish - uses helper fallback to update studentsLatest */
-async function togglePublishExam(e){
-  const id = e.target.dataset.id;
-  const exSnap = await getDoc(doc(db,'exams',id));
-  if(!exSnap.exists()) return;
-  const ex = exSnap.data();
-  if(ex.status === 'published'){
-    await updateDoc(doc(db,'exams',id), { status:'draft' });
-    await fallbackStudentsLatestForUnpublishedExam(id);
-    await loadExams(); renderExams(); toast('Exam unpublished');
-    return;
-  }
-  if(ex.status === 'deactivated') return alert('Deactivated exam cannot be published');
-  await publishExam(id);
-  await loadExams(); renderExams(); toast('Exam published');
-}
-
-/* ---------- Replace publishExam ---------- */
-async function publishExam(examId){
-  // reload students and classes to be safe
-  await loadStudents();
-  await loadClasses();
-
-  const exSnap = await getDoc(doc(db,'exams',examId));
-  if(!exSnap.exists()) return;
-  const exam = { id: exSnap.id, ...exSnap.data() };
-
-  // gather submitted results (drafts) from subcollection exams/{examId}/results
-  const resultsSnap = await getDocs(collection(db,'exams',examId,'results'));
-  const studentResults = {};
-  resultsSnap.forEach(d => studentResults[d.id] = d.data().marks || {});
-
-  // if linked exam exists and is published, we'll use examTotals snapshot for quick lookup
-  let linkedTotalsCache = {}; // studentId -> { subjectName -> mark, subjectMax -> linkedMax }
-  let linkedSubjectsMeta = {}; // subjectName -> linkedMax
-  if(exam.linkedExamId){
-    // fetch linked exam doc and its subjects meta
-    const linkedSnap = await getDoc(doc(db,'exams', exam.linkedExamId));
-    if(linkedSnap.exists()){
-      const linkedExam = linkedSnap.data();
-      (linkedExam.subjects || []).forEach(s => linkedSubjectsMeta[s.name] = s.max || 0);
-    }
-    // prefetch all examTotals for linkedExamId to speed up
-    const q = query(collection(db,'examTotals'), where('examId','==', exam.linkedExamId));
-    const snap = await getDocs(q);
-    snap.forEach(d => {
-      const data = d.data();
-      const sid = data.studentId;
-      if(!linkedTotalsCache[sid]) linkedTotalsCache[sid] = {};
-      (data.subjects || []).forEach(s => {
-        linkedTotalsCache[sid][s.name] = Number(s.mark || s.total || 0);
-      });
-    });
-  }
-
-  const allowedClasses = exam.classes && exam.classes.length ? exam.classes : null;
-  const totals = [];
-
-  for(const s of studentsCache){
-    if(s.status === 'deleted') continue;
-    if(allowedClasses && !allowedClasses.includes(s.classId)) continue;
-
-    const classDoc = classesCache.find(c => c.name === s.classId) || null;
-    const classAssigned = (classDoc && Array.isArray(classDoc.subjects)) ? new Set(classDoc.subjects) : null;
-
-    // compute student-specific subject defs: intersection of exam.subjects and classAssigned
-    let studentSubjectDefs = [];
-    if(classAssigned){
-      studentSubjectDefs = (exam.subjects || []).filter(sd => classAssigned.has(sd.name));
-    } else {
-      studentSubjectDefs = [];
-    }
-
-    const marks = studentResults[s.studentId] || {};
-    let total = 0; let count = 0;
-    const subs = [];
-
-    for (const sub of studentSubjectDefs) {
-      // current exam part (coerce to numeric defaults)
-      const savedVal = marks[sub.name];
-      let assignment = 0, quiz = 0, monthly = 0, cw1 = 0, cw2 = 0, paper = 0;
-    
-      if (typeof savedVal === 'number') {
-        paper = Number(savedVal || 0);
-      } else if (savedVal && typeof savedVal === 'object') {
-        assignment = Number(savedVal.assignment || 0);
-        quiz       = Number(savedVal.quiz || 0);
-        monthly    = Number(savedVal.monthly || 0);
-        cw1        = Number(savedVal.cw1 || 0);
-        cw2        = Number(savedVal.cw2 || 0);
-        paper      = Number(savedVal.exam || 0);
-      } else {
-        // ensure zeros for configured components (keeps consistent shape)
-        if (exam.components?.assignment) assignment = 0;
-        if (exam.components?.quiz)       quiz = 0;
-        if (exam.components?.monthly)    monthly = 0;
-        if (exam.components?.cw1)        cw1 = 0;
-        if (exam.components?.cw2)        cw2 = 0;
-        if (exam.components?.exam)       paper = 0;
-      }
-    
-      // compute totals and clamp to subject max
-      const curMax = Number(sub.max || 100);
-      let curSubTotal = assignment + quiz + monthly + cw1 + cw2 + paper;
-      if (curSubTotal > curMax) curSubTotal = curMax;
-    
-      // linked exam part (if any)
-      let linkedPart = 0;
-      let linkedMax = 0;
-      if (exam.linkedExamId) {
-        linkedMax = Number(linkedSubjectsMeta[sub.name] || 0);
-        const linkedPerStudent = linkedTotalsCache[s.studentId] || {};
-        linkedPart = Number(linkedPerStudent[sub.name] || 0);
-      }
-    
-      // combined total for this subject (bounded)
-      const combinedTotal = Math.min(curSubTotal + linkedPart, (linkedMax + curMax) || 100);
-    
-      // build components object with safe numeric values (no undefined)
-      const compObj = {
-        assignment: Number(assignment || 0),
-        quiz:       Number(quiz || 0),
-        monthly:    Number(monthly || 0),
-        cw1:        Number(cw1 || 0),
-        cw2:        Number(cw2 || 0),
-        exam:       Number(paper || 0)
-      };
-      if (linkedPart > 0) {
-        compObj.linked = { total: Number(linkedPart), max: Number(linkedMax) };
-      }
-    
-      subs.push({
-        name: sub.name,
-        mark: Number(Math.round(combinedTotal)),
-        max: Number((linkedMax + curMax) || 100),
-        components: compObj
-      });
-    
-      total += combinedTotal;
-      count++;
-    }
-    
-    const average = count ? (total / count) : 0;
-    totals.push({ studentId: s.studentId, studentName: s.fullName, classId: s.classId, total, average, subjects: subs, motherName: s.motherName || '' });
-  }
-
-  // compute ranks (same as before)
-  totals.sort((a,b)=> b.total - a.total);
-  totals.forEach((t,i)=> t.schoolRank = i+1);
-  const byClass = {};
-  totals.forEach(t=>{ if(!byClass[t.classId]) byClass[t.classId]=[]; byClass[t.classId].push(t); });
-  Object.keys(byClass).forEach(cls=>{
-    byClass[cls].sort((a,b)=> b.total - a.total);
-    byClass[cls].forEach((t,i)=> t.classRank = i+1);
-  });
-
-  // write examTotals and studentsLatest
-  const writes = [];
-  for (const t of totals) {
-    const examTotalsId = `${examId}_${t.studentId}`;
-  
-    // ensure components is a plain object with booleans (no undefined)
-    const safeComponents = Object.assign(
-      { assignment:false, quiz:false, monthly:false, cw1:false, cw2:false, exam:false },
-      (exam.components || {})
-    );
-  
-    // ensure subjects array exists and subject entries have safe numeric values
-    const safeSubjects = (t.subjects || []).map(s => {
-      const comps = s.components || {};
-      const safeComps = {
-        assignment: Number(comps.assignment || 0),
-        quiz:       Number(comps.quiz || 0),
-        monthly:    Number(comps.monthly || 0),
-        cw1:        Number(comps.cw1 || 0),
-        cw2:        Number(comps.cw2 || 0),
-        exam:       Number(comps.exam || 0)
-      };
-      if (comps.linked && typeof comps.linked.total !== 'undefined') {
-        safeComps.linked = { total: Number(comps.linked.total || 0), max: Number(comps.linked.max || 0) };
-      }
-      return {
-        name: s.name || '',
-        mark: Number(s.mark || 0),
-        max:  Number(s.max || 0),
-        components: safeComps
-      };
-    });
-  
-    const payload = {
-      examId,
-      examName: String(exam.name || ''),
-      components: safeComponents,
-      studentId: String(t.studentId || ''),
-      studentName: String(t.studentName || ''),
-      motherName: String(t.motherName || ''),
-      classId: String(t.classId || ''),
-      className: String(t.classId || ''),
-      subjects: safeSubjects,
-      total: Number(t.total || 0),
-      average: Number(t.average || 0),
-      classRank: Number(t.classRank || 0),
-      schoolRank: Number(t.schoolRank || 0),
-      publishedAt: Timestamp.now()
-    };
-  
-    writes.push(setDoc(doc(db,'examTotals', examTotalsId), payload));
-    writes.push(setDoc(doc(db,'studentsLatest', t.studentId), payload));
-  }
-  
-  writes.push(updateDoc(doc(db,'exams',examId), { status:'published', publishedAt: Timestamp.now() }));
-  await Promise.all(writes);
-}
-
-
-/* When unpublishing, fallback studentsLatest */
-async function fallbackStudentsLatestForUnpublishedExam(examId){
-  for(const s of studentsCache){
-    try {
-      const latestSnap = await getDoc(doc(db,'studentsLatest',s.studentId));
-      if(!latestSnap.exists()) continue;
-      const latest = latestSnap.data();
-      if(latest.examId !== examId) continue;
-      const snap = await getDocs(query(collection(db,'examTotals'), where('studentId','==', s.studentId)));
-      const arr = [];
-      snap.forEach(d => {
-        const data = d.data();
-        if(data.examId !== examId) arr.push(data);
-      });
-      if(arr.length === 0){
-        await setDoc(doc(db,'studentsLatest', s.studentId), { examId: null, blocked: latest.blocked || false }, { merge:true });
-      } else {
-        arr.sort((a,b)=> {
-          const ta = a.publishedAt && a.publishedAt.seconds ? a.publishedAt.seconds : 0;
-          const tb = b.publishedAt && b.publishedAt.seconds ? b.publishedAt.seconds : 0;
-          return tb - ta;
-        });
-        await setDoc(doc(db,'studentsLatest', s.studentId), arr[0], { merge:true });
-      }
-    } catch(err){
-      console.error('fallback err', err);
-    }
-  }
-}
-
-
-/* ---------- Replace openStudentResultModalFor ---------- */
-async function openStudentResultModalFor(student){
-  // find student's class doc (strict: do NOT fallback to all subjects)
-  const classDoc = classesCache.find(c=>c.name === student.classId);
-  let classSubjects = [];
-  if(classDoc && Array.isArray(classDoc.subjects) && classDoc.subjects.length){
-    classSubjects = classDoc.subjects.map(name => {
-      const subj = subjectsCache.find(ss=>ss.name===name);
-      return subj ? { name: subj.name, max: subj.max || 100 } : { name, max:100 };
-    });
-  } else {
-    classSubjects = []; // no assigned subjects -> we will show message
-  }
-
-  const examOptions = examsCache.map(e=>`<option value="${e.id}">${escape(e.name)} ${e.status==='published'?'(published)':''}</option>`).join('');
-  const momLine = student.motherName ? ` — Ina Hooyo: ${escape(student.motherName)}` : '';
-  const classLine = student.classId ? ` — Class: ${escape(student.classId)}` : '';
-  const idLine = student.studentId ? ` — (${escape(student.studentId)})` : '';
-
-  showModal(`Add/Edit Result — ${escape(student.fullName)}${idLine}${momLine}${classLine}`, `
-    <label>Select Exam</label><select id="resExamSelect"><option value="">Select exam</option>${examOptions}</select>
-    <div id="resFormArea" style="margin-top:12px"></div>
-    <div style="margin-top:12px"><button id="saveRes" class="btn btn-primary">Save</button> <button id="cancelRes" class="btn btn-ghost">Cancel</button></div>
-  `);
-  const resExamSelect = document.getElementById('resExamSelect');
-
-  // helper to fetch linked exam totals for this student (if published) or linked results draft
-  async function fetchLinkedMarksForStudent(linkedExamId){
-    if(!linkedExamId) return {};
-    // prefer published examTotals snapshot (if exists)
-    const snap = await getDoc(doc(db,'examTotals', `${linkedExamId}_${student.studentId}`));
-    if(snap.exists()){
-      const data = snap.data();
-      // construct map name -> mark (total for subject)
-      const map = {};
-      (data.subjects || []).forEach(s => {
-        map[s.name] = { mark: s.mark != null ? s.mark : s.total || 0, components: s.components || {} };
-      });
-      return { examMeta: data, marksMap: map };
-    } else {
-      // fallback to draft results saved under exams/{linkedExamId}/results/{studentId}
-      const r = await getDoc(doc(db,'exams', linkedExamId, 'results', student.studentId));
-      if(r.exists()){
-        const marks = r.data().marks || {};
-        // marks may be object or number per subject. Normalize to mark number if number, or sum components if object
-        const marksMap = {};
-        for(const key of Object.keys(marks)){
-          const v = marks[key];
-          if(typeof v === 'number') marksMap[key] = { mark: Number(v), components: {} };
-          else if(typeof v === 'object' && v !== null){
-            const total = (Number(v.assignment||0) + Number(v.quiz||0) + Number(v.monthly||0) + Number(v.exam||0));
-            marksMap[key] = { mark: total, components: v };
-          }
-        }
-        return { examMeta: null, marksMap };
-      }
-    }
-    return {};
-  }
-
-  async function renderForExamId(examId){
-    const area = document.getElementById('resFormArea');
-    if(!examId){
-      area.innerHTML = `<div class="muted">Select an exam to load fields.</div>`;
-      return;
-    }
-    const exSnap = await getDoc(doc(db,'exams', examId));
-    const ex = exSnap.exists() ? { id: exSnap.id, ...exSnap.data() } : null;
-    if(!ex) { area.innerHTML = `<div class="muted">Exam not found.</div>`; return; }
-
-    const examSubNames = (ex.subjects || []).map(s=>s.name);
-    // strict intersection
-    const enabledSubjects = classSubjects.filter(cs => examSubNames.includes(cs.name));
-    const missingSubjects = classSubjects.filter(cs => !examSubNames.includes(cs.name));
-    const comps = ex.components || { assignment:false, quiz:false, monthly:false, exam:true };
-
-    // if class has no subjects
-    if(!classSubjects.length){
-      area.innerHTML = `<div style="color:#b91c1c">This student's class has no subjects assigned. Please assign subjects to the class first.</div>`;
-      return;
-    }
-
-    // If nothing in intersection -> show message + quick edit exam button
-    if(enabledSubjects.length === 0){
-      const missingList = missingSubjects.length ? `<div style="margin-top:8px">Class subjects not included in this exam: <strong>${missingSubjects.map(ms=>escape(ms.name)).join(', ')}</strong></div>` : '';
-      area.innerHTML = `<div style="color:#b91c1c">No common subjects between this student's class and the selected exam. ${missingList} <div style="margin-top:8px"><button id="openEditExamQuick" class="btn btn-ghost btn-sm">Edit exam & check subjects</button></div></div>`;
-      const btn = document.getElementById('openEditExamQuick');
-      if(btn) btn.onclick = ()=> openEditExamModal({ target: { dataset: { id: ex.id } } });
-      return;
-    }
-
-    // if this exam links to another exam, fetch linked marks for this student
-    let linkedData = null;
-    let linkedMarksMap = {};
-    if(ex.linkedExamId){
-      linkedData = await fetchLinkedMarksForStudent(ex.linkedExamId);
-      linkedMarksMap = linkedData.marksMap || {};
-    }
-
-    // build HTML: for each enabledSubject show two columns if linked: linked read-only + current inputs
-    const html = enabledSubjects.map(s=>{
-      let parts = '';
-      if(ex.linkedExamId){
-        // show linked mark read-only (if available)
-        const l = linkedMarksMap[s.name];
-        const lmark = l ? Number(l.mark || 0) : 0;
-        parts += `<div style="margin-bottom:4px;font-size:0.9rem;color:#374151">Linked (prev): <strong>${lmark}</strong></div>`;
-      }
-      // show components for current exam
-      if(comps.assignment) parts += `<label>Assignment (max ${s.max})</label><input id="res_${escape(s.name)}_assignment" type="number" min="0" />`;
-      if(comps.quiz)       parts += `<label>Quiz (max ${s.max})</label><input id="res_${escape(s.name)}_quiz" type="number" min="0" />`;
-      if(comps.monthly)    parts += `<label>Monthly (max ${s.max})</label><input id="res_${escape(s.name)}_monthly" type="number" min="0" />`;
-      if(comps.cw1)        parts += `<label>CW1 (max ${s.max})</label><input id="res_${escape(s.name)}_cw1" type="number" min="0" />`;
-      if(comps.cw2)        parts += `<label>CW2 (max ${s.max})</label><input id="res_${escape(s.name)}_cw2" type="number" min="0" />`;
-      if(comps.exam)       parts += `<label>Exam (max ${s.max})</label><input id="res_${escape(s.name)}_exam" type="number" min="0" />`;
-      
-
-      // show note about combined max if linked
-      const combinedNote = ex.linkedExamId ? `<div style="font-size:0.85rem;color:#6b7280;margin-top:6px">Combined max for this subject = ${ (linkedMarksMap[s.name] && linkedMarksMap[s.name].components && typeof linkedMarksMap[s.name].components._max !== 'undefined') ? (Number(linkedMarksMap[s.name].components._max) + s.max) : '≤100' } (ensure combined ≤ 100)</div>` : '';
-
-      return `<div style="margin-bottom:12px;padding:8px;border-bottom:1px solid #eee"><strong>${escape(s.name)}</strong>${parts}${combinedNote}</div>`;
-    }).join('');
-
-    // note about missing class subjects
-    const notCheckedNote = missingSubjects.length ? `<div style="margin-top:8px;font-size:0.9rem;color:#6b7280">Note: other class subjects (${missingSubjects.map(ms=>escape(ms.name)).join(', ')}) are not enabled in this exam. Edit the exam to enable them.</div>` : '';
-
-    area.innerHTML = html + notCheckedNote;
-
-    // populate existing saved marks (current exam) and show linked marks (read-only already appended)
-    const r = await getDoc(doc(db,'exams',ex.id,'results', student.studentId));
-    const curMarks = r.exists() ? (r.data().marks || {}) : {};
-    for(const s of showSubjects){
-      const compObj = {};
-      let isObject = false;
-      let curSum = 0;
-      for(const comp of ['assignment','quiz','monthly','cw1','cw2','exam']){
-        if(ex.components?.[comp]){
-          const el = document.getElementById('res_'+s.name+'_'+comp);
-          const val = el && el.value ? Number(el.value) : 0;
-          if(val > s.max){ alert(`${s.name} maximum for this exam is ${s.max}`); return; }
-          compObj[comp] = val;
-          curSum += val;
-          isObject = true;
-        }
-      }
-      if(isObject) marks[s.name] = compObj;
-      else {
-        const el = document.getElementById('res_'+s.name+'_exam') || document.getElementById('res_'+s.name+'_assignment');
-        const val = el && el.value ? Number(el.value) : 0;
-        marks[s.name] = Math.min(Number(val), s.max);
-        curSum = Number(marks[s.name]);
-      }
-    
-      // validate combined with linked
-      const linkedVal = linkedMarksMap[s.name] ? Number(linkedMarksMap[s.name]) : 0;
-      if((linkedVal + curSum) > 100){
-        return alert(`Combined total for ${s.name} exceeds 100 (linked ${linkedVal} + current ${curSum}). Adjust values.`);
-      }
-    }
-    
-
-  }
-
-  // onchange
-  resExamSelect.onchange = async ()=> { await renderForExamId(resExamSelect.value); };
-
-  // default selection logic (same as before)
-  let defaultExamId = '';
-  const examsForClass = examsCache.filter(e => !e.classes || e.classes.length === 0 || e.classes.includes(student.classId));
-  if(examsForClass.length){
-    examsForClass.sort((a,b)=>{
-      const ta = (a.publishedAt?.seconds || a.createdAt?.seconds || 0);
-      const tb = (b.publishedAt?.seconds || b.createdAt?.seconds || 0);
-      return tb - ta;
-    });
-    const publishedForClass = examsForClass.find(x=>x.status === 'published');
-    defaultExamId = (publishedForClass && publishedForClass.id) || examsForClass[0].id;
-  } else if(examsCache.length){
-    const sorted = examsCache.slice().sort((a,b)=> (b.createdAt?.seconds||0) - (a.createdAt?.seconds||0));
-    defaultExamId = sorted[0].id;
-  }
-  if(defaultExamId){
-    resExamSelect.value = defaultExamId;
-    resExamSelect.dispatchEvent(new Event('change'));
-  }
-
-  // Save handler - validates combined totals (linked + current) per subject <= 100
-  document.getElementById('saveRes').onclick = async ()=>{
-    const examId = document.getElementById('resExamSelect').value;
-    if(!examId) return alert('Select exam');
-    const exSnap = await getDoc(doc(db,'exams',examId));
-    const ex = exSnap.exists() ? { id: exSnap.id, ...exSnap.data() } : null;
-    if(!ex) return alert('Exam missing');
-
-    // build showSubjects = strict intersection
-    const examSubNames = (ex.subjects || []).map(s=>s.name);
-    const showSubjects = classSubjects.filter(cs => examSubNames.includes(cs.name));
-    // fetch linked marks map to validate combined totals
-    let linkedMarksMap = {};
-    if(ex.linkedExamId){
-      const linkedSnap = await getDoc(doc(db,'examTotals', `${ex.linkedExamId}_${student.studentId}`));
-      if(linkedSnap.exists()){
-        const ld = linkedSnap.data();
-        (ld.subjects || []).forEach(s => {
-          linkedMarksMap[s.name] = Number(s.mark || s.total || 0);
-        });
-      } else {
-        // fallback to draft results
-        const rld = await getDoc(doc(db,'exams', ex.linkedExamId, 'results', student.studentId));
-        if(rld.exists()){
-          const mm = rld.data().marks || {};
-          for(const k of Object.keys(mm)){
-            const v = mm[k];
-            if(typeof v === 'number') linkedMarksMap[k] = Number(v);
-            else if(typeof v === 'object' && v !== null) linkedMarksMap[k] = (Number(v.assignment||0) + Number(v.quiz||0) + Number(v.monthly||0) + Number(v.exam||0));
-          }
-        }
-      }
-    }
-
-    const marks = {};
-    for(const s of showSubjects){
-      const compObj = {};
-      let isObject = false;
-      // compute current exam components sum
-      let curSum = 0;
-      for(const comp of ['assignment','quiz','monthly','exam']){
-        if(ex.components?.[comp]){
-          const el = document.getElementById('res_'+s.name+'_'+comp);
-          if(el){
-            let val = el.value ? Number(el.value) : 0;
-            if(val > s.max){ val = s.max; el.value = String(val); alert(`${s.name} maximum for this exam is ${s.max}`); }
-            compObj[comp] = val; isObject = true;
-            curSum += val;
-          }
-        }
-      }
-      if(isObject) marks[s.name] = compObj;
-      else {
-        const el = document.getElementById('res_'+s.name+'_exam') || document.getElementById('res_'+s.name+'_assignment') || document.getElementById('res_'+s.name+'_quiz');
-        const val = el && el.value ? Number(el.value) : 0;
-        marks[s.name] = Math.min(Number(val), s.max);
-        curSum = Number(marks[s.name]);
-      }
-
-      // combined validation vs linked
-      const linkedVal = linkedMarksMap[s.name] ? Number(linkedMarksMap[s.name]) : 0;
-      if((linkedVal + curSum) > 100){
-        return alert(`Combined total for ${s.name} exceeds 100 (linked ${linkedVal} + current ${curSum}). Adjust values.`);
-      }
-    }
-
-    // save draft / result for current exam
-    await setDoc(doc(db,'exams',examId,'results', student.studentId), { studentId:student.studentId, marks, savedAt: Timestamp.now() });
-
-    // if exam is published, recompute published snapshot (keeps public view up-to-date)
-    try {
-      if(ex.status === 'published'){
-        await publishExam(ex.id);
-        await loadExams(); renderExams(); populateStudentsExamDropdown();
-      }
-    } catch(err){
-      console.error('Error while updating published snapshot after save:', err);
-    }
-
-    closeModal();
-    toast(`${student.fullName} successfully recorded exam results`);
-  };
-
-  document.getElementById('cancelRes').onclick = closeModal;
-}
-
-
-
-
-/* Load examTotals for quick per-exam lookup used by student list */
-async function loadExamTotalsForExam(examId){
-  const q = query(collection(db,'examTotals'), where('examId','==', examId));
-  const snap = await getDocs(q);
-  examTotalsCache[examId] = {};
-  snap.forEach(d=> {
-    const data = d.data();
-    examTotalsCache[examId][data.studentId] = data;
-  });
-  renderStudents();
-}
-
-/* helper: escape */
-function escape(s){ if(s==null) return ''; return String(s).replace(/[&<>"']/g, (c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;"}[c])); }
-
-/* expose reload function */
-window._reloadAdmin = async ()=>{ await loadAll(); console.log('reloaded'); };
-
-
-
-
-
-
-/* ------------------------
-  Payments / Transactions
-  Paste into database.js (append)
--------------------------*/
-
-/* safe local caches if not present */
-if(typeof transactionsCache === 'undefined') var transactionsCache = [];
-
-
-/* small helpers (pennies <-> display currency) */
-function p2c(amount){ // parse to cents (supports strings or numbers)
-  if(amount === null || amount === undefined || amount === '') return 0;
-  return Math.round(Number(amount) * 100);
-}
-function c2p(cents){ // cents -> display string with 2 decimals
-  return (Number(cents || 0) / 100).toFixed(2);
-}
-
-/* ---------------- helpers & loaders ---------------- */
-function capitalize(str){
-  if(!str) return '';
-  return str.charAt(0).toUpperCase() + str.slice(1);
-}
-
-
-/* ---------------- Robust PDF export + export helpers ---------------- */
-
-function getJsPDFConstructor() {
-  // prefer window.jspdf.jsPDF (umd), then window.jsPDF (global), return null if none
-  try {
-    if (window.jspdf && window.jspdf.jsPDF) return window.jspdf.jsPDF;
-    if (window.jsPDF) return window.jsPDF;
-    if (window.jspdf && window.jspdf.default && window.jspdf.default.jsPDF) return window.jspdf.default.jsPDF;
-  } catch(e){ /* ignore */ }
-  return null;
-}
-
-/** Render element to PNG using html2canvas and add to a pdf (fallback) */
-async function exportElementToPdfFallback(filename, el) {
-  // detect html2canvas (it normally exposes global html2canvas)
-  const h2c = (typeof html2canvas !== 'undefined') ? html2canvas : (window.html2canvas || null);
-  if (!h2c) {
-    alert('PDF export not available (no jsPDF and no html2canvas).');
-    return false;
-  }
-  try {
-    const canvas = await h2c(el, { scale: 2, useCORS: true, logging: false });
-    const img = canvas.toDataURL('image/png');
-    const JsPDF = getJsPDFConstructor();
-    if (!JsPDF) {
-      // try older shape
-      if (window.jspdf && window.jspdf.jsPDF) {
-        const doc = new window.jspdf.jsPDF({ unit:'pt', format:'a4', orientation: 'portrait' });
-        const w = doc.internal.pageSize.getWidth();
-        const h = (canvas.height * (w / canvas.width));
-        doc.addImage(img, 'PNG', 20, 20, w - 40, h);
-        doc.save(filename);
-        return true;
-      }
-      alert('PDF export not available');
-      return false;
-    }
-    const doc = new JsPDF({ unit:'pt', format:'a4', orientation: 'portrait' });
-    const w = doc.internal.pageSize.getWidth();
-    const h = (canvas.height * (w / canvas.width));
-    doc.addImage(img, 'PNG', 20, 20, w - 40, h);
-    doc.save(filename);
-    return true;
-  } catch (e) {
-    console.error('exportElementToPdfFallback failed', e);
-    return false;
-  }
-}
-
-
-
-
-/* ---------- inline SVG helpers & loader utilities ---------- */
-
-function svgPay(){ 
-  return `<svg class="icon-sm" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <rect x="2" y="6" width="20" height="12" rx="2" stroke="currentColor" stroke-width="1.4"/>
-    <path d="M8 10h8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
-    <path d="M8 14h8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
-  </svg>`; 
-}
-function svgReesto(){ 
-  return `<svg class="icon-sm" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M12 5v14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
-    <path d="M5 12h14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
-  </svg>`; 
-}
-function svgView(){ 
-  return `<svg class="icon-sm" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z" stroke="currentColor" stroke-width="1.4" fill="none"/>
-    <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.4" fill="none"/>
-  </svg>`; 
-}
-
-/* ---------------- Resolve target robustly ---------------- */
-async function resolveTargetByAnyId(view, id) {
-  // view: 'students'|'teachers'|'staff'
-  id = String(id || '').trim();
-  if(!id) return null;
-
-  // local caches first (try multiple id fields)
-  const tryFind = (pool) => {
-    if(!pool || !pool.length) return null;
-    return pool.find(x => {
-      const fields = [x.id, x.studentId, x.teacherId, x.staffId, x.uid, x.code, x.regId, x.idNumber, x.documentId];
-      for(const f of fields){
-        if(!f) continue;
-        if(String(f) === id) return true;
-        // try match last digits
-        const s = String(f);
-        if(s.endsWith(id) || s.slice(-4) === id || s.slice(-6) === id) return true;
-      }
-      return false;
-    }) || null;
-  };
-
-  let pool = (view === 'students') ? (studentsCache||[]) : (view === 'teachers' ? (teachersCache||[]) : (window.staffCache||[]));
-  let found = tryFind(pool);
-  if(found) return found;
-
-  // try alternate caches
-  found = tryFind(studentsCache||[]) || tryFind(teachersCache||[]) || tryFind(window.staffCache||[]) || null;
-  if(found) return found;
-
-  // final resort: try Firestore get by id (document id)
-  try {
-    const col = (view==='students'?'students': (view==='teachers'?'teachers':'staff'));
-    const snap = await getDoc(doc(db, col, id));
-    if(snap.exists()) return { id: snap.id, ...snap.data() };
-  } catch(e){ /* ignore */ }
-
-  // not found
-  return null;
-}
-
-/** Put a loader inside a button: returns old content so caller can restore. */
-function putButtonLoader(btn, opts = { colorOnPrimary: true }) {
-  if(!btn) return null;
-  const old = btn.innerHTML;
-  // choose colours carefully: loader dots are white-ish; if button is ghost we add gray border
-  btn.disabled = true;
-  btn.innerHTML = `<span class="btn-loader"><span></span><span></span><span></span></span><span style="margin-left:8px">Saving</span>`;
-  return old;
-}
-function restoreButton(btn, oldHtml){
-  try{ if(btn){ btn.innerHTML = oldHtml; btn.disabled = false; } }catch(e){}
-}
-
-// resolve actor display name (uses usersCache if present, otherwise fetches)
-async function resolveActorName(uid){
-  if(!uid) return '';
-  if(typeof usersCache !== 'undefined'){
-    const u = (usersCache||[]).find(x => x.id === uid || x.uid === uid);
-    if(u) return u.displayName || u.email || uid;
-  }
-  try{
-    const snap = await getDoc(doc(db,'users', uid));
-    if(snap.exists()){
-      const d = snap.data();
-      return d.displayName || d.email || uid;
-    }
-  }catch(e){ /* ignore */ }
-  return uid;
-}
-
-/** small: format month label like "Jan-2026" from "1-2026", "2026-01", "2026-01-05", etc. */
-function formatMonthLabel(m) {
-  if (!m && m !== 0) return '';
-  const s = String(m).trim();
-  const mm1 = s.match(/^(\d{1,2})-(\d{4})$/);
-  if (mm1) {
-    const mon = Number(mm1[1]), yr = mm1[2];
-    const names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    return (mon>=1 && mon<=12) ? `${names[mon-1]}-${yr}` : s;
-  }
-  const mm2 = s.match(/^(\d{4})-(\d{1,2})/);
-  if (mm2) {
-    const yr = mm2[1], mon = Number(mm2[2]);
-    const names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    return (mon>=1 && mon<=12) ? `${names[mon-1]}-${yr}` : s;
-  }
-  const d = new Date(s);
-  if (!isNaN(d.getTime())) {
-    const names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    return `${names[d.getMonth()]}-${d.getFullYear()}`;
-  }
-  return s;
-}
-
-/** display-friendly type label (maps 'adjustment' -> 'Reesto Hore') */
-function displayTypeLabel(type) {
-  if (!type) return '';
-  if (String(type).toLowerCase() === 'adjustment' || String(type).toLowerCase() === 'adjust') return 'Reesto Hore';
-  return capitalize(String(type));
-}
-
-/** get school meta for exports */
-async function getSchoolMeta() {
-  // try to read a 'settings' doc that may contain school info, fallback to static
-  try {
-    const snap = await getDoc(doc(db, 'settings', 'school'));
-    if (snap.exists()) {
-      const d = snap.data();
-      return { name: d.name || 'AL-FATXI PRIMARY AND SECONDARY SCHOOL', logo: d.logo || 'assets/logo.png' };
-    }
-  } catch(e){ /* ignore */ }
-  return { name: 'AL-FATXI PRIMARY AND SECONDARY SCHOOL', logo: 'assets/logo.png' };
-}
-
-async function loadStaff(){
-  try{
-    const snap = await getDocs(collection(db,'staff'));
-    window.staffCache = snap.docs.map(d => ({ id:d.id, ...d.data() }));
-  }catch(err){
-    console.error('loadStaff failed', err);
-    window.staffCache = [];
-  }
-}
-
-
-
-
-
-/* load transactions into local cache */
-async function loadTransactions(){
-  try{
-    const snap = await getDocs(collection(db,'transactions'));
-    transactionsCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-  }catch(err){
-    console.error('loadTransactions failed', err);
-    transactionsCache = [];
-  }
-}
-
-/* generic update of target balance (students/teachers/staff)
-   deltaCents may be positive or negative; positive increases owed balance */
-async function updateTargetBalanceGeneric(targetType, targetId, deltaCents){
-  if(!targetType || !targetId) return;
-  const col = targetType === 'student' ? 'students' : (targetType === 'teacher' ? 'teachers' : (targetType === 'staff' ? 'staff' : null));
-  if(!col) return;
-  try{
-    const ref = doc(db, col, targetId);
-    const snap = await getDoc(ref);
-    if(!snap.exists()){
-      // create with balance_cents
-      await setDoc(ref, { balance_cents: Number(deltaCents || 0) }, { merge: true });
-      return;
-    }
-    const cur = snap.data();
-    const curBalance = Number(cur.balance_cents || 0);
-    const next = curBalance + Number(deltaCents || 0);
-    await updateDoc(ref, { balance_cents: next, updatedAt: Timestamp.now(), updatedBy: (currentUser && currentUser.uid) || null });
-    // also refresh local caches if possible
-    if(targetType === 'student'){
-      const s = (studentsCache||[]).find(x => x.studentId === targetId || x.id === targetId);
-      if(s) s.balance_cents = next;
-    } else if(targetType === 'teacher'){
-      const t = (teachersCache||[]).find(x => x.teacherId === targetId || x.id === targetId);
-      if(t) t.balance_cents = next;
-    } else if(targetType === 'staff' && window.staffCache){
-      const st = (window.staffCache||[]).find(x => x.id === targetId);
-      if(st) st.balance_cents = next;
-    }
-  }catch(err){
-    console.error('updateTargetBalanceGeneric failed', err);
-  }
-}
-
-/* ---------- Fixes & improved Payments/Exports: paste to database.js replacing older functions ---------- */
-
-/** Helper: returns YYYY-MM string for a Date or now */
-function getYYYYMM(d = new Date()){
-  const y = d.getFullYear();
-  const m = String(d.getMonth()+1).padStart(2,'0');
-  return `${y}-${m}`;
-}
-
-/** Sum payments in current month for a target, returns cents (number).
- *  Ignores transactions with type 'adjustment' (Reesto Hore).
- *  Matches by target.id / studentId / teacherId / idNumber and by related_months / related_month / createdAt date.
- */
-function getPaidThisMonthForTarget(targetType, target){
-  if(!target) return 0;
-  const idCandidates = [ String(target.id||''), String(target.studentId||''), String(target.teacherId||''), String(target.idNumber||'' ) ].filter(Boolean);
-  if(!transactionsCache || !transactionsCache.length) return 0;
-  const nowYm = getYYYYMM();
-  const now = new Date();
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
-  const monthEnd = new Date(now.getFullYear(), now.getMonth()+1, 1).getTime();
-
-  let sum = 0;
-  for(const t of (transactionsCache||[])){
-    if(t.is_deleted) continue;
-    if(String(t.target_type) !== String(targetType)) continue;
-
-    // don't count adjustments
-    if(t.type && String(t.type).toLowerCase() === 'adjustment') continue;
-
-    // match id candidates: target_id or legacy target field
-    const tid = String(t.target_id || t.target || '');
-    if(!idCandidates.includes(tid)) continue;
-
-    // related_months
-    if(Array.isArray(t.related_months) && t.related_months.length){
-      if(t.related_months.some(m => String(m).startsWith(nowYm))) { sum += Number(t.amount_cents||0); continue; }
-    }
-    // related_month
-    if(t.related_month && String(t.related_month).startsWith(nowYm)){ sum += Number(t.amount_cents||0); continue; }
-
-    // fallback: createdAt in current month
-    if(t.createdAt && (t.createdAt.seconds || t.createdAt._seconds)){
-      const ts = (t.createdAt.seconds || t.createdAt._seconds) * 1000;
-      if(ts >= monthStart && ts < monthEnd){
-        sum += Number(t.amount_cents||0);
-        continue;
-      }
-    }
-  }
-  return sum;
-}
-
-
-/* ---------- Small modals for Add Staff / Add Expense ---------- */
-async function openAddStaffModal(){
-  showModal('Add Staff', `
-    <div style="display:grid;gap:8px">
-      <input id="newStaffName" placeholder="Full name" />
-      <input id="newStaffPhone" placeholder="Phone" />
-      <input id="newStaffRole" placeholder="Role (e.g. cleaner, secretary)" />
-      <input id="newStaffSalary" placeholder="Salary (e.g. 100.00)" type="number" step="0.01" />
-      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px">
-        <button id="addStaffCancel" class="btn btn-ghost">Cancel</button>
-        <button id="addStaffSave" class="btn btn-primary">Save</button>
-      </div>
-    </div>
-  `);
-  modalBody.querySelector('#addStaffCancel').onclick = closeModal;
-  modalBody.querySelector('#addStaffSave').onclick = async () => {
-    const name = (modalBody.querySelector('#newStaffName').value || '').trim();
-    if(!name) return toast('Name required');
-    const phone = (modalBody.querySelector('#newStaffPhone').value || '').trim();
-    const role = (modalBody.querySelector('#newStaffRole').value || '').trim();
-    const salaryRaw = modalBody.querySelector('#newStaffSalary').value;
-    const salaryCents = salaryRaw ? p2c(salaryRaw) : 0;
-    try{
-      // create with a short staffId (best-effort unique)
-      const staffId = `STF${String(Date.now()).slice(-6)}`;
-      await addDoc(collection(db,'staff'), { fullName: name, phone, role, salary_cents: salaryCents, staffId, createdAt: Timestamp.now(), balance_cents: 0 });
-      toast('Staff added');
-      closeModal();
-      await loadStaff();
-      await renderPaymentsList('staff');
-    }catch(e){ console.error(e); toast('Failed to add staff'); }
-  };
-}
-
-async function openAddExpenseModal(){
-  showModal('New Expense', `
-    <div style="display:grid;gap:8px">
-      <input id="newExpenseName" placeholder="Expense name" />
-      <select id="newExpenseCategory">
-        <option value="">Select category</option>
-        <option>Rent</option>
-        <option>Utilities</option>
-        <option>Stationery</option>
-        <option>Transport</option>
-        <option>Maintenance</option>
-        <option>Other</option>
-      </select>
-      <input id="newExpenseAmount" placeholder="Amount (e.g. 120.00)" type="number" step="0.01" />
-      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px">
-        <button id="addExpenseCancel" class="btn btn-ghost">Cancel</button>
-        <button id="addExpenseSave" class="btn btn-primary">Save</button>
-      </div>
-    </div>
-  `);
-  modalBody.querySelector('#addExpenseCancel').onclick = closeModal;
-  modalBody.querySelector('#addExpenseSave').onclick = async () => {
-    const name = (modalBody.querySelector('#newExpenseName').value || '').trim();
-    const cat = (modalBody.querySelector('#newExpenseCategory').value || '').trim();
-    const amtRaw = modalBody.querySelector('#newExpenseAmount').value;
-    if(!name) return toast('Name required');
-    const amountCents = p2c(amtRaw || 0);
-    try{
-      await addDoc(collection(db,'transactions'), {
-        target_type: 'expense',
-        note: name,
-        subtype: cat,
-        amount_cents: amountCents,
-        createdAt: Timestamp.now()
-      });
-      toast('Expense recorded');
-      closeModal();
-      await loadTransactions();
-      await renderPaymentsList('expenses');
-    }catch(e){ console.error(e); toast('Failed to save expense'); }
-  };
-}
-
-/* ---------- Robust openPay/openAdjustment/openView handlers ----------
-   Accept either the event's currentTarget element or an event. Use dataset.id from the element
-   to avoid nested SVG/span click problems that made earlier code read e.target (wrong).
-*/
-async function openPayModal(btnOrEvent){
-  // normalize to button element
-  const btn = (btnOrEvent && btnOrEvent.dataset) ? btnOrEvent
-            : (btnOrEvent && btnOrEvent.currentTarget) ? btnOrEvent.currentTarget
-            : (btnOrEvent && btnOrEvent.target && btnOrEvent.target.closest && btnOrEvent.target.closest('button')) ? btnOrEvent.target.closest('button')
-            : null;
-  if(!btn) return;
-  const id = btn.dataset.id;
-  const activeTab = document.querySelector('#pagePayments .tab.active');
-  const view = activeTab ? activeTab.textContent.toLowerCase() : 'students';
-  const targetType = view === 'students' ? 'student' : (view === 'teachers' ? 'teacher' : 'staff');
-
-  // resolve target
-  let target = await resolveTargetByAnyId(view, id);
-  if(!target) return toast('Target not found');
-
-  const currentBalance = Number(target.balance_cents || 0);
-  const defaultPhone = target.parentPhone || target.phone || '';
-  const now = new Date();
-  const curMonth = now.getMonth()+1;
-  const curYear = now.getFullYear();
-  const desktop = !isMobileViewport();
-
-  // months horizontal UI (buttons)
-  const monthsShort = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  const monthButtonsHtml = Array.from({length:12}, (_,i) => {
-    const sel = (i+1) === curMonth ? 'month-selected' : '';
-    return `<button type="button" class="month-btn ${sel}" data-month="${i+1}" aria-pressed="${sel? 'true':'false'}" style="padding:6px 8px;border-radius:6px;border:1px solid #e5e7eb;background:${sel? '#0b74de':'#fff'};color:${sel? '#fff':'#111'};cursor:pointer;flex:0 0 auto">${monthsShort[i]}</button>`;
-  }).join('');
-
-  // year list HTML for year picker (2025..2100)
-  const yearOptionsHtml = Array.from({length: (2100-2025+1)}, (_,i) => {
-    const y = 2025 + i;
-    return `<div class="year-item" data-year="${y}" style="padding:8px;border-radius:6px;cursor:pointer;text-align:center;border:1px solid #f1f5f9">${y}</div>`;
-  }).join('');
-
-  const headerTitle = `${(view||'').toUpperCase()} PAYMENTS`;
-
-  // modal HTML: responsive; scrollable content area + sticky footer so buttons remain visible
-  const html = `
-    <div style="display:flex;flex-direction:column;gap:0; font-size:${desktop ? '0.92rem' : '1rem'}; max-width:${desktop? '760px' : '96%'}; height:${desktop? 'auto' : '92vh'}; background:transparent;">
-      <!-- scrollable content -->
-      <div id="payModalScroll" style="overflow:auto; padding:12px; box-sizing:border-box; ${desktop ? '' : 'flex:1 1 auto;'}">
-        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
-          <div style="min-width:0;flex:1 1 auto">
-            <div style="font-size:0.85rem;font-weight:700;color:#374151">${escape(headerTitle)}</div>
-            <div style="font-weight:900;font-size:1.05rem;margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escape(target.fullName || target.teacherName || target.id || '')}</div>
-            <div class="muted" style="font-size:0.85rem;margin-top:4px">ID: ${escape(target.studentId || target.teacherId || target.staffId || target.id || '')}</div>
-          </div>
-          <div style="text-align:right;min-width:0;flex:0 0 auto">
-            <div class="muted" style="font-size:0.85rem">Balance</div>
-            <div style="font-weight:900;color:#b91c1c;font-size:1.05rem">$${c2p(currentBalance)}</div>
-          </div>
-        </div>
-
-        <!-- Amount + Type row (id=amountTypeRow so we can force same-row on mobile) -->
-        <div id="amountTypeRow" style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start">
-          <div style="flex:1 1 160px;min-width:0">
-            <label style="display:block;font-weight:700;margin-bottom:6px">Amount</label>
-            <input id="payAmount" type="number" step="0.01" value="${c2p(Math.max(0,currentBalance))}" style="width:100%;padding:8px;border-radius:6px;border:1px solid #e5e7eb;box-sizing:border-box" />
-          </div>
-
-          <div style="flex:1 1 160px;min-width:0">
-            <label style="display:block;font-weight:700;margin-bottom:6px">Type</label>
-            <select id="payType" style="width:100%;padding:8px;border-radius:6px;border:1px solid #e5e7eb">
-              <option value="monthly">Monthly</option>
-              <option value="id-card">ID Card</option>
-              <option value="registration">Registration</option>
-              ${targetType!=='student'?'<option value="salary">Salary</option>':''}
-              <option value="other">Other</option>
-            </select>
-          </div>
-
-          <div style="flex:0 0 140px;min-width:120px">
-            <label style="display:block;font-weight:700;margin-bottom:6px">Year</label>
-            <div style="display:flex;gap:8px;align-items:center">
-              <input id="payYear" readonly value="${curYear}" style="padding:8px;border-radius:6px;border:1px solid #e5e7eb;width:5.5ch;text-align:center" />
-              <button id="openYearPicker" type="button" class="btn btn-ghost" style="padding:6px 8px">Change</button>
-            </div>
-          </div>
-        </div>
-
-        <!-- Month row (horizontal, wraps) -->
-        <div id="monthPicker" style="margin-top:12px">
-          <label style="display:block;font-weight:700;margin-bottom:6px">Month</label>
-          <div id="monthsRow" style="display:flex;gap:6px;flex-wrap:wrap">${monthButtonsHtml}</div>
-          <input id="payMonth" type="hidden" value="${curMonth}" />
-        </div>
-
-        <!-- Multi-month selector (hidden by default) -->
-        <div id="multiMonthsWrapper" style="display:none;margin-top:10px">
-          <label style="display:block;font-weight:700;margin-bottom:6px">Select months (multi)</label>
-          <div id="monthsRowMulti" style="display:flex;gap:6px;flex-wrap:wrap">${monthButtonsHtml}</div>
-        </div>
-
-        <!-- Payment method / provider / payer phone -->
-        <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start">
-          <div style="flex:1 1 160px;min-width:0">
-            <label style="display:block;font-weight:700;margin-bottom:6px">Payment method</label>
-            <select id="payMethod" style="width:100%;padding:8px;border-radius:6px;border:1px solid #e5e7eb">
-              <option value="mobile" selected>Mobile</option>
-              <option value="cash">Cash</option>
-              <option value="card">Card</option>
-              <option value="other">Other</option>
-            </select>
-          </div>
-
-          <div id="mobileProviderWrapper" style="flex:1 1 160px;min-width:0">
-            <label style="display:block;font-weight:700;margin-bottom:6px">Mobile provider</label>
-            <select id="mobileProvider" style="width:100%;padding:8px;border-radius:6px;border:1px solid #e5e7eb">
-              <option value="Hormuud" selected>Hormuud (EVC)</option>
-              <option value="Somtel">Somtel (Edahab)</option>
-              <option value="Somnet">Somnet (Jeeb)</option>
-              <option value="Telesom">Telesom</option>
-              <option value="Amtel">Amtel</option>
-              <option value="Other">Other</option>
-            </select>
-          </div>
-
-          <div style="flex:1 1 160px;min-width:0">
-            <label style="display:block;font-weight:700;margin-bottom:6px">Payer Phone</label>
-            <input id="payerPhone" value="${escape(defaultPhone)}" style="width:100%;padding:8px;border-radius:6px;border:1px solid #e5e7eb;box-sizing:border-box" />
-          </div>
-        </div>
-
-        <div style="margin-top:12px">
-          <label style="display:block;font-weight:700;margin-bottom:6px">Note</label>
-          <input id="payNote" placeholder="Optional note" style="width:100%;padding:8px;border-radius:6px;border:1px solid #e5e7eb;box-sizing:border-box" />
-        </div>
-      </div>
-
-      <!-- sticky footer: always visible (mobile + desktop). kept outside the scrollable area -->
-      <div id="payModalFooter" style="position:sticky;bottom:0;background:#fff;padding:10px;border-top:1px solid #eef2f7;box-shadow:0 -6px 20px rgba(0,0,0,0.06);display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;z-index:5">
-        <button id="payClose" class="btn btn-ghost">Close</button>
-        <button id="toggleMultiMonths" class="btn btn-ghost">Select multiple months</button>
-        <button id="paySave" class="btn btn-primary">Save</button>
-      </div>
-    </div>
-  `;
-
-  // show modal
-  showModal(`Pay • ${escape(target.fullName||target.teacherName||target.id||'')}`, html);
-
-  // remove extra bottom space under Note on mobile
-// if(!desktop){
-//   const scroll = modalBody.querySelector('#payModalScroll');
-//   if(scroll){
-//     scroll.style.paddingBottom = '6px';
-//   }
-// }
-
-
-  // disable background scroll while modal open (restore when modal closed)
-  if(!window.__modal_close_wrapped){
-    const origClose = window.closeModal || (()=>{});
-    window.closeModal = function(){ try{ origClose(); } finally { document.body.style.overflow = ''; } };
-    window.__modal_close_wrapped = true;
-  }
-  document.body.style.overflow = 'hidden';
-
-  // element refs
-  const payType = modalBody.querySelector('#payType');
-  const amountTypeRow = modalBody.querySelector('#amountTypeRow');
-  const multiWrapper = modalBody.querySelector('#multiMonthsWrapper');
-  const toggleMulti = modalBody.querySelector('#toggleMultiMonths');
-  const payMonthHidden = modalBody.querySelector('#payMonth');
-  const payYearEl = modalBody.querySelector('#payYear');
-  const payNote = modalBody.querySelector('#payNote');
-  const payMethodEl = modalBody.querySelector('#payMethod');
-  const mobileProviderEl = modalBody.querySelector('#mobileProvider');
-  const mobileProviderWrapper = modalBody.querySelector('#mobileProviderWrapper');
-  const monthsRow = modalBody.querySelector('#monthsRow');
-  const monthsRowMulti = modalBody.querySelector('#monthsRowMulti');
-
-  // === UX fixes requested ===
-  // 1) Show mobile provider only when payment method === 'mobile'
-  function updateMobileProviderVisibility(){
-    if(!mobileProviderWrapper) return;
-    if(payMethodEl.value === 'mobile'){
-      mobileProviderWrapper.style.display = 'block';
-    } else {
-      mobileProviderWrapper.style.display = 'none';
-    }
-  }
-  payMethodEl.addEventListener('change', updateMobileProviderVisibility);
-  // initial
-  updateMobileProviderVisibility();
-
-  // 2) Ensure Amount + Payment Type appear same row on mobile: force children widths when on mobile
-  if(!desktop && amountTypeRow){
-    amountTypeRow.style.flexWrap = 'nowrap';
-    // first two children = amount and type; keep them side-by-side
-    const children = Array.from(amountTypeRow.children);
-    // give first two approx 48% each, but still responsive
-    if(children[0]) children[0].style.flex = '1 1 48%';
-    if(children[1]) children[1].style.flex = '1 1 48%';
-    // year column can remain its fixed width
-    if(children[2]) { children[2].style.flex = '0 0 120px'; children[2].style.minWidth = '90px'; }
-  }
-
-  // helpers for months buttons
-  function getMonthButtons(container){ return Array.from(container.querySelectorAll('.month-btn')); }
-  function clearSelected(btns){
-    btns.forEach(b => {
-      b.classList.remove('month-selected');
-      b.style.background = '#fff';
-      b.style.color = '#111';
-      b.setAttribute('aria-pressed','false');
-    });
-  }
-  function setSelectedButton(btn){
-    btn.classList.add('month-selected');
-    btn.style.background = '#0b74de';
-    btn.style.color = '#fff';
-    btn.setAttribute('aria-pressed','true');
-  }
-  function pickSingleMonth(container, month){
-    const btns = getMonthButtons(container);
-    clearSelected(btns);
-    const btn = btns.find(b => String(b.dataset.month) === String(month));
-    if(btn) setSelectedButton(btn);
-    payMonthHidden.value = month;
-  }
-  function getSelectedMonthsFrom(container){
-    return getMonthButtons(container).filter(b => b.classList.contains('month-selected')).map(b => b.dataset.month);
-  }
-
-  // init selection
-  pickSingleMonth(monthsRow, curMonth);
-  pickSingleMonth(monthsRowMulti, curMonth);
-
-  // click handler
-  function monthClickHandler(ev){
-    const btn = ev.currentTarget;
-    const isMulti = (multiWrapper.style.display !== 'none');
-    if(isMulti){
-      // toggle selection for multi
-      if(btn.classList.contains('month-selected')){
-        btn.classList.remove('month-selected');
-        btn.style.background = '#fff';
-        btn.style.color = '#111';
-        btn.setAttribute('aria-pressed','false');
-      } else {
-        setSelectedButton(btn);
-      }
-    } else {
-      // single selection behavior
-      clearSelected(getMonthButtons(monthsRow));
-      setSelectedButton(btn);
-      payMonthHidden.value = btn.dataset.month;
-    }
-    // fillDefaultNote();
-    fillDefaultNote(true);
-
-  }
-
-  getMonthButtons(monthsRow).forEach(b => b.addEventListener('click', monthClickHandler));
-  getMonthButtons(monthsRowMulti).forEach(b => b.addEventListener('click', monthClickHandler));
-
-  // Toggle multi-month UI; change button text to hide/show
-  toggleMulti.addEventListener('click', () => {
-    const showMulti = multiWrapper.style.display === 'none' || multiWrapper.style.display === '';
-    if(showMulti){
-      multiWrapper.style.display = 'block';
-      monthsRow.style.display = 'none';
-      toggleMulti.textContent = 'Hide multiple months';
-      // ensure the same selections carry over
-      const cur = payMonthHidden.value || curMonth;
-      pickSingleMonth(monthsRowMulti, cur);
-    } else {
-      multiWrapper.style.display = 'none';
-      monthsRow.style.display = 'flex';
-      toggleMulti.textContent = 'Select multiple months';
-      // when hiding multi, ensure single row has selection
-      const sel = getSelectedMonthsFrom(monthsRowMulti)[0] || payMonthHidden.value || curMonth;
-      pickSingleMonth(monthsRow, sel);
-      // optionally clear the multi selections
-      clearSelected(getMonthButtons(monthsRowMulti));
-    }
-    fillDefaultNote(true);
-  });
-
-  // Year picker popup (separate overlay, will not replace main modal)
-  function openYearPickerPopup(){
-    const overlay = document.createElement('div');
-    overlay.className = 'year-picker-overlay';
-    overlay.style.position = 'fixed';
-    overlay.style.left = '0';
-    overlay.style.top = '0';
-    overlay.style.width = '100%';
-    overlay.style.height = '100%';
-    overlay.style.display = 'flex';
-    overlay.style.alignItems = 'center';
-    overlay.style.justifyContent = 'center';
-    overlay.style.background = 'rgba(0,0,0,0.35)';
-    overlay.style.zIndex = '99999';
-
-    const box = document.createElement('div');
-    box.style.background = '#fff';
-    box.style.borderRadius = '10px';
-    box.style.padding = '12px';
-    box.style.maxHeight = '70vh';
-    box.style.overflow = 'auto';
-    box.style.width = desktop ? '420px' : '94%';
-    box.style.boxShadow = '0 8px 30px rgba(0,0,0,0.15)';
-    box.innerHTML = `<div style="font-weight:900;margin-bottom:8px">Select Year</div>
-      <div id="yearList" style="display:grid;grid-template-columns:repeat(${desktop?3:2},1fr);gap:8px">${yearOptionsHtml}</div>
-      <div style="display:flex;justify-content:flex-end;margin-top:10px"><button id="closeYearPicker" class="btn btn-ghost">Close</button></div>`;
-
-    overlay.appendChild(box);
-    document.body.appendChild(overlay);
-
-    // wire year items
-    box.querySelectorAll('.year-item').forEach(yEl => {
-      yEl.addEventListener('click', () => {
-        const y = yEl.dataset.year;
-        const py = modalBody.querySelector('#payYear');
-        if(py) py.value = y;
-        fillDefaultNote(true);
-        document.body.removeChild(overlay);
-      });
-    });
-    box.querySelector('#closeYearPicker').addEventListener('click', () => {
-      document.body.removeChild(overlay);
-    });
-  }
-
-  modalBody.querySelector('#openYearPicker').addEventListener('click', openYearPickerPopup);
-
-  // fill default note text using "Lacagta Bisha Jan-2026"
-  function fillDefaultNote(force = false){
-    // do not overwrite if user already typed something (unless forced)
-    if(payNote.value && !force) return;
-  
-    const t = payType.value;
-    const yVal = payYearEl ? payYearEl.value : curYear;
-    const isMulti = (multiWrapper.style.display !== 'none');
-  
-    // collect selected months
-    let months = [];
-    if(t === 'monthly'){
-      if(isMulti){
-        months = getSelectedMonthsFrom(monthsRowMulti);
-      } else {
-        months = [getSelectedMonthsFrom(monthsRow)[0] || payMonthHidden.value || curMonth];
-      }
-    }
-  
-    // convert month numbers → names
-    const monthNames = months
-      .map(m => monthsShort[(Number(m) || curMonth) - 1])
-      .filter(Boolean);
-  
-    let text = '';
-  
-    if(t === 'monthly'){
-      const joined = monthNames.join('/');
-      text = `Lacagta Bisha ${joined}-${yVal}`;
-    }
-    else if(t === 'id-card'){
-      text = 'Lacagta-ID-card';
-    }
-    else if(t === 'registration'){
-      text = 'Lacagta Registeration';
-    }
-    else if(t === 'salary'){
-      text = 'Lacagta mushaar';
-    }
-    else {
-      text = 'Lacagta Kale';
-    }
-  
-    payNote.value = text;
-  }
-  
-  // wire interactions & preserve original logic
-  payType.onchange = () => {
-    modalBody.querySelector('#monthPicker').style.display =
-      payType.value === 'monthly' ? 'block' : 'none';
-    fillDefaultNote(true);
-  };
-  
-  // payType.onchange = () => { modalBody.querySelector('#monthPicker').style.display = payType.value==='monthly' ? 'block' : 'none'; fillDefaultNote(); };
-  // fillDefaultNote();
-
-  modalBody.querySelector('#payClose').onclick = () => { closeModal(); /* closeModal restores overflow */ };
-
-  modalBody.querySelector('#paySave').onclick = async () => {
-    const btnSave = modalBody.querySelector('#paySave');
-    const oldHtml = putButtonLoader(btnSave);
-    try{
-      const raw = modalBody.querySelector('#payAmount').value;
-      if(!raw) { toast('Amount required'); restoreButton(btnSave, oldHtml); return; }
-      const amountCents = p2c(raw);
-      if(amountCents <= 0) { toast('Amount must be > 0'); restoreButton(btnSave, oldHtml); return; }
-      const type = payType.value;
-
-      let relatedMonths = [];
-      if(multiWrapper.style.display !== 'none'){
-        relatedMonths = getSelectedMonthsFrom(monthsRowMulti).map(m => `${payYearEl.value}-${String(m).padStart(2,'0')}`);
-        if(relatedMonths.length === 0){
-          toast('Select at least one month'); restoreButton(btnSave, oldHtml); return;
-        }
-      } else {
-        const sel = getSelectedMonthsFrom(monthsRow)[0] || payMonthHidden.value || curMonth;
-        relatedMonths = [`${payYearEl.value}-${String(sel).padStart(2,'0')}`];
-      }
-
-      const payment_method = payMethodEl.value;
-      const mobile_provider = mobileProviderEl ? mobileProviderEl.value : null;
-      const payer_phone = modalBody.querySelector('#payerPhone').value.trim() || null;
-      const note = modalBody.querySelector('#payNote').value.trim() || null;
-
-      const tx = {
-        actor: currentUser ? currentUser.uid : null,
-        target_type: targetType,
-        target_id: target.id || target.studentId || target.teacherId || target.id,
-        type,
-        amount_cents: amountCents,
-        payment_method,
-        mobile_provider,
-        payer_phone,
-        note,
-        related_months: type === 'monthly' ? relatedMonths : [],
-        createdAt: Timestamp.now(),
-      };
-
-      await addDoc(collection(db,'transactions'), tx);
-
-      // update balances (preserve original logic)
-      if(type === 'monthly' && targetType === 'student'){
-        await updateTargetBalanceGeneric('student', tx.target_id, -amountCents);
-      }
-      if(type === 'salary' && (targetType === 'teacher' || targetType === 'staff')){
-        await updateTargetBalanceGeneric(targetType, tx.target_id, -amountCents);
-      }
-
-      toast('Payment recorded');
-      closeModal();
-      await loadTransactions();
-      const active = document.querySelector('#pagePayments .tab.active');
-      const viewName = active ? active.textContent.toLowerCase() : 'students';
-      await renderPaymentsList(viewName);
-      renderDashboard && renderDashboard();
-    }catch(err){
-      console.error(err); toast('Failed to save payment');
-    } finally {
-      restoreButton(btnSave, oldHtml);
-    }
-  };
-}
-
-
-
-async function openAdjustmentModal(btnOrEvent){
-  const btn = (btnOrEvent && btnOrEvent.dataset) ? btnOrEvent : (btnOrEvent && btnOrEvent.currentTarget) ? btnOrEvent.currentTarget : (btnOrEvent && btnOrEvent.target && btnOrEvent.target.closest && btnOrEvent.target.closest('button')) ? btnOrEvent.target.closest('button') : null;
-  if(!btn) return;
-  const id = btn.dataset.id;
-  const activeTab = document.querySelector('#pagePayments .tab.active');
-  const view = activeTab ? activeTab.textContent.toLowerCase() : 'students';
-  const targetType = view === 'students' ? 'student' : (view === 'teachers' ? 'teacher' : 'staff');
-
-  const target = await resolveTargetByAnyId(view, id);
-  if(!target) return toast('Target not found');
-
-  const html = `
-    <div style="display:grid;grid-template-columns:1fr;gap:8px">
-      <div>
-        <label style="display:block;font-weight:700;margin-bottom:6px">Amount (use negative to decrease balance)</label>
-        <input id="adjAmount" type="number" step="0.01" value="0" style="width:6.5ch;padding:8px;border-radius:6px;border:1px solid #e5e7eb" />
-      </div>
-      <div>
-        <label style="display:block;font-weight:700;margin-bottom:6px">Reason / Note</label>
-        <input id="adjNote" placeholder="e.g., refund, penalty, manual add" style="width:100%;padding:8px;border-radius:6px;border:1px solid #e5e7eb" />
-      </div>
-    </div>
-    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
-      <button id="adjClose" class="btn btn-ghost">Close</button>
-      <button id="adjSave" class="btn btn-primary">Save</button>
-    </div>
-  `;
-  showModal(`Reesto Hore • ${escape(target.fullName || target.id || '')}`, html);
-
-  // prevent background scroll while modal open
-  if(!window.__modal_close_wrapped){
-    const origClose = window.closeModal || (()=>{});
-    window.closeModal = function(){ try{ origClose(); }finally{ document.body.style.overflow = ''; } };
-    window.__modal_close_wrapped = true;
-  }
-  document.body.style.overflow = 'hidden';
-
-  modalBody.querySelector('#adjClose').onclick = () => { closeModal(); };
-  modalBody.querySelector('#adjSave').onclick = async () => {
-    try{
-      const raw = modalBody.querySelector('#adjAmount').value;
-      if(raw === '' || raw === null) return toast('Amount required');
-      const signedCents = Math.round(Number(raw)*100);
-      if(signedCents === 0) return toast('Amount should not be zero');
-      const note = modalBody.querySelector('#adjNote').value.trim() || 'Adjustment';
-      const tx = {
-        actor: currentUser ? currentUser.uid : null,
-        target_type: targetType,
-        target_id: target.id || target.studentId || target.teacherId || target.id,
-        type: 'adjustment',
-        amount_cents: signedCents,
-        payment_method: 'manual',
-        note,
-        related_months: [],
-        createdAt: Timestamp.now()
-      };
-      await addDoc(collection(db,'transactions'), tx);
-      await updateTargetBalanceGeneric(targetType, tx.target_id, signedCents); // signedCents may be negative or positive
-      toast('Adjustment saved');
-      closeModal();
-      await loadTransactions();
-      renderPaymentsList('students');
-      renderPaymentsList('teachers');
-      renderPaymentsList('staff');
-      renderDashboard && renderDashboard();
-    }catch(err){ console.error(err); toast('Failed to save adjustment'); }
-  };
-}
-
-
-async function openViewTransactionsModal(btnOrEvent){
-  const btn = (btnOrEvent && btnOrEvent.dataset) ? btnOrEvent : (btnOrEvent && btnOrEvent.currentTarget) ? btnOrEvent.currentTarget : (btnOrEvent && btnOrEvent.target && btnOrEvent.target.closest && btnOrEvent.target.closest('button')) ? btnOrEvent.target.closest('button') : null;
-  if(!btn) return;
-  const id = btn.dataset.id;
-  const activeTab = document.querySelector('#pagePayments .tab.active');
-  const view = activeTab ? activeTab.textContent.toLowerCase() : 'students';
-  const targetType = view === 'students' ? 'student' : (view === 'teachers' ? 'teacher' : 'staff');
-
-  const target = await resolveTargetByAnyId(view, id);
-  if(!target) return toast('Target not found');
-
-  // fetch transactions for that target
-  const snap = await getDocs(collection(db,'transactions'));
-  let txs = snap.docs.map(d=>({ id:d.id, ...d.data() })).filter(t => t.target_type === targetType && !t.is_deleted);
-  const idCandidates = [ String(target.id||''), String(target.studentId||''), String(target.teacherId||''), String(target.idNumber||'' ) ].filter(Boolean);
-  txs = txs.filter(t => idCandidates.includes(String(t.target_id || '')) || idCandidates.includes(String(t.target || '')) );
-  txs.sort((a,b) => (b.createdAt?.seconds||0) - (a.createdAt?.seconds||0));
-
-  const totalMonthly = txs.filter(t=> (t.type && String(t.type).toLowerCase() !== 'adjustment') && String(t.type).toLowerCase() === 'monthly').reduce((s,t)=>s+(t.amount_cents||0),0);
-  const totalAll = txs.filter(t => String(t.type).toLowerCase() !== 'adjustment').reduce((s,t)=>s+(t.amount_cents||0),0);
-  const totalAdj = txs.filter(t=>String(t.type).toLowerCase() === 'adjustment').reduce((s,t)=>s+(t.amount_cents||0),0);
-
-  // small helper to produce SVG icons using your svg helpers if present
-  const editSvg = (typeof svgEdit === 'function') ? svgEdit() : '✏️';
-  const delSvg = (typeof svgDelete === 'function') ? svgDelete() : '🗑️';
-
-  // build UI - mobile-friendly cards if mobile, else table
-  const smallFont = isMobileViewport() ? 'font-size:0.82rem' : 'font-size:0.9rem';
-  let html = '';
-  // header row
-  html += `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
-    <div>
-      <div style="font-weight:900">${escape(target.fullName || target.teacherName || target.id)}</div>
-      <div class="muted" style="font-size:0.85rem">ID: ${escape(target.studentId||target.teacherId||target.staffId||target.id)}</div>
-    </div>
-    <div style="text-align:right">
-      <div class="muted" style="font-size:0.85rem">Balance</div>
-      <div style="font-weight:900;color:#b91c1c">$${c2p(target.balance_cents||0)}</div>
-    </div>
-  </div>`;
-
-  // totals line - single row (paid green, total blue, reesto orange)
-  html += `<div style="display:flex;gap:12px;justify-content:flex-start;align-items:center;margin-top:10px;flex-wrap:wrap">
-    <div style="font-size:0.85rem">Monthly paid: <span style="color:#059669;font-weight:900">$${c2p(totalMonthly)}</span></div>
-    <div style="font-size:0.85rem">Payments total: <span style="color:#0b74de;font-weight:900">$${c2p(totalAll)}</span></div>
-    <div style="font-size:0.85rem">Reesto Hore total: <span style="color:#f97316;font-weight:900">$${c2p(totalAdj)}</span></div>
-  </div>`;
-
-  // body list
-  if(isMobileViewport()){
-    // cards
-    html += `<div style="display:flex;flex-direction:column;gap:8px;margin-top:10px;max-height:55vh;overflow:auto;padding-right:8px">`;
-    txs.forEach(tx => {
-      const dateStr = tx.createdAt ? new Date((tx.createdAt.seconds||tx.createdAt._seconds)*1000).toLocaleString() : '';
-      const amt = c2p(tx.amount_cents||0);
-      const ttype = String(tx.type||'').toLowerCase();
-      let color = '#111';
-      if(ttype.includes('adjust')) color = '#f97316';
-      else if(ttype.includes('payment') || ttype.includes('monthly')) color = '#059669';
-      else if(ttype.includes('assigned') || ttype.includes('fee') || ttype.includes('total')) color = '#0b74de';
-      else if(ttype.includes('balance')) color = '#b91c1c';
-      const monthsLabel = (tx.related_months && tx.related_months.length) ? tx.related_months.map(m => formatMonthLabel(m)).join(', ') : (tx.related_month ? formatMonthLabel(tx.related_month) : '');
-
-      html += `<div class="tx-card" style="padding:10px;border-radius:8px;border:1px solid #f1f5f9;display:flex;justify-content:space-between;gap:8px;align-items:flex-start;${smallFont}">
-        <div style="flex:1 1 60%;min-width:0">
-          <div style="font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escape(tx.note || tx.title || displayTypeLabel(tx.type) || 'Transaction')}</div>
-          <div class="muted" style="font-size:0.78rem;margin-top:6px">${escape(monthsLabel)} • ${escape(dateStr)}</div>
-          <div style="font-size:0.78rem;margin-top:6px;color:#374151">${escape(tx.payment_method||'')}${tx.mobile_provider ? ' / ' + escape(tx.mobile_provider) : ''}</div>
-        </div>
-        <div style="flex:0 0 auto;text-align:right;min-width:6.5ch;font-weight:900;color:${color}">
-          $${escape(amt)}
-          <div style="margin-top:8px;display:flex;gap:6px;justify-content:flex-end">
-            <button class="btn-icon edit-tx" data-id="${tx.id}" style="border:0;background:transparent;padding:4px">${editSvg}</button>
-            <button class="btn-icon del-tx" data-id="${tx.id}" style="border:0;background:transparent;padding:4px">${delSvg}</button>
-          </div>
-        </div>
-      </div>`;
-    });
-    html += `</div>`;
-  } else {
-    // desktop: keep table (unchanged structure but include SVG icons)
-    html += `<div style="overflow:auto;margin-top:12px"><table style="width:100%;border-collapse:collapse"><thead><tr>
-      <th>Date</th><th>Type</th><th>Months</th><th style="text-align:right">Amount</th><th>Method</th><th>Note</th><th>Actions</th>
-    </tr></thead><tbody>`;
-    txs.forEach((tx) => {
-      const defaultNote = tx.note || (tx.type==='monthly' ? (formatMonthLabel((tx.related_months||[])[0]||'')) : '');
-      const monthsLabel = (tx.related_months && tx.related_months.length) ? tx.related_months.map(m => formatMonthLabel(m)).join(', ') : (tx.related_month ? formatMonthLabel(tx.related_month) : '');
-      html += `<tr style="border-bottom:1px solid #f1f5f9">
-        <td style="padding:8px">${tx.createdAt ? new Date((tx.createdAt.seconds||tx.createdAt._seconds)*1000).toLocaleString() : ''}</td>
-        <td style="padding:8px">${escape(displayTypeLabel(tx.type))}</td>
-        <td style="padding:8px">${escape(monthsLabel)}</td>
-        <td style="padding:8px;text-align:right">${c2p(tx.amount_cents||0)}</td>
-        <td style="padding:8px">${escape(tx.payment_method||'')}${tx.mobile_provider ? ' / ' + escape(tx.mobile_provider) : ''}</td>
-        <td style="padding:8px">${escape(defaultNote)}</td>
-        <td style="padding:8px">
-          <button title="Edit" class="icon edit-tx" data-id="${tx.id}" style="border:0;background:transparent">${editSvg}</button>
-          <button title="Delete" class="icon del-tx" data-id="${tx.id}" style="border:0;background:transparent">${delSvg}</button>
-        </td>
-      </tr>`;
-    });
-    html += `</tbody></table></div>`;
-  }
-
-  html += `<div style="display:flex;justify-content:flex-end;margin-top:12px"><button id="closeTxView" class="btn btn-ghost">Close</button></div>`;
-
-  showModal('Transactions', html);
-
-  // prevent background scroll while modal open (restored by wrapped closeModal)
-  if(!window.__modal_close_wrapped){
-    const origClose = window.closeModal || (()=>{});
-    window.closeModal = function(){ try{ origClose(); } finally { document.body.style.overflow = ''; } };
-    window.__modal_close_wrapped = true;
-  }
-  document.body.style.overflow = 'hidden';
-
-  modalBody.querySelector('#closeTxView').onclick = () => { closeModal(); };
-
-  // wire actions (edit/delete)
-  modalBody.querySelectorAll('.edit-tx').forEach(b => b.addEventListener('click', ev => openEditTransactionModal(ev.currentTarget)));
-  modalBody.querySelectorAll('.del-tx').forEach(b => b.addEventListener('click', ev => deleteTransaction(ev.currentTarget)));
-}
-
-
-/* ---------- Inline SVG helpers: edit/delete icons ---------- */
-function svgEdit(){
-  return `<svg class="icon-sm" viewBox="0 0 24 24" width="16" height="16" fill="none" xmlns="http://www.w3.org/2000/svg" style="vertical-align:middle">
-    <path d="M3 21v-3.6L16.3 4.1a1 1 0 0 1 1.4 0l1.2 1.2a1 1 0 0 1 0 1.4L5.6 20.9H3z" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M14.5 5.5l4 4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
-  </svg>`;
-}
-function svgDelete(){
-  return `<svg class="icon-sm" viewBox="0 0 24 24" width="16" height="16" fill="none" xmlns="http://www.w3.org/2000/svg" style="vertical-align:middle">
-    <path d="M3 6h18" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
-    <path d="M8 6v12a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2V6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M10 11v4M14 11v4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
-  </svg>`;
-}
-
-/* ---------- Improved ID-search helper (supports last-6 matching) ---------- */
-function searchableFieldsFor(item){
-  // returns combined string to search across, plus explicit ID fields
-  const idCandidates = [
-    String(item.studentId || item.id || ''),
-    String(item.teacherId || item.id || ''),
-    String(item.staffId || item.id || '')
-  ].filter(Boolean);
-  const rest = [
-    String(item.fullName || item.full_name || ''),
-    String(item.parentPhone || item.phone || item.contact || ''),
-    String(item.className || item.class || '')
-  ].filter(Boolean).join(' ').toLowerCase();
-  return { idCandidates, rest };
-}
-function matchesSearchTerm(item, q){
-  if(!q) return true;
-  const qRaw = String(q).trim();
-  const qLower = qRaw.toLowerCase();
-
-  // if the query is numeric and length <= 6, check last N digits on IDs
-  const digitsOnly = /^\d+$/.test(qRaw);
-  const { idCandidates, rest } = searchableFieldsFor(item);
-
-  if(digitsOnly && qRaw.length <= 6){
-    // match if any candidate's last-6 includes the query
-    for(const id of idCandidates){
-      if(!id) continue;
-      const last6 = id.slice(-6);
-      if(last6.includes(qRaw)) return true;
-      // also allow matching anywhere in id
-      if(id.includes(qRaw)) return true;
-    }
-  }
-
-  // generic substring match across ids + other fields
-  for(const id of idCandidates){
-    if(id && id.toLowerCase().includes(qLower)) return true;
-  }
-  if(rest && rest.includes(qLower)) return true;
-
-  // fallback numeric matching inside id text
-  return false;
-}
-
-/* ---------------------- SMALL HELPERS ---------------------- */
-
-
-/* Salary display unchanged (keeps supporting salary_cents and salary) */
-function salaryDisplay(item){
-  if(!item) return '—';
-  if(typeof item.salary_cents !== 'undefined' && item.salary_cents !== null){
-    return c2p(item.salary_cents);
-  }
-  if(typeof item.salary !== 'undefined' && item.salary !== null && item.salary !== ''){
-    if(!isNaN(Number(item.salary))) return Number(item.salary).toFixed(2);
-    return String(item.salary);
-  }
-  if(typeof item.salaryCents !== 'undefined' && item.salaryCents !== null) return c2p(item.salaryCents);
-  return '—';
-}
-
-/* resolveClassName extended to handle teacher.classes array and other variants */
-function resolveClassName(item){
-  if(!item) return '';
-  const tryVal = v => (v && String(v).trim()) ? String(v).trim() : null;
-
-  // direct, simple fields
-  const direct = tryVal(item.className) || tryVal(item.class) || tryVal(item.class_name) || tryVal(item.classTitle) || tryVal(item.class_title);
-  if(direct) return direct;
-
-  // if item has classes array (teachers sometimes store classes array)
-  if(Array.isArray(item.classes) && item.classes.length){
-    const names = item.classes.map(cid => {
-      const cls = (classesCache||[]).find(c => String(c.id) === String(cid) || String(c.classId||'') === String(cid) || String(c.name||'') === String(cid));
-      return cls ? (cls.name || cls.displayName || cls.id) : String(cid);
-    }).filter(Boolean);
-    if(names.length) return names.join(', ');
-  }
-
-  // classId -> lookup
-  const cid = item.classId || item.class_id || item.classIdRef || (item.class && typeof item.class === 'object' && item.class.id) || (item.record && item.record.classId);
-  if(cid){
-    const cls = (classesCache||[]).find(c => String(c.id) === String(cid) || String(c.classId||'') === String(cid) || String(c.name||'') === String(cid));
-    if(cls) return cls.name || cls.displayName || String(cls.id);
-  }
-
-  // nested object examples
-  if(item.record && (item.record.className || item.record.class)) return tryVal(item.record.className) || tryVal(item.record.class);
-  if(item.meta && (item.meta.className || item.meta.class)) return tryVal(item.meta.className) || tryVal(item.meta.class);
-
-  // fuzzy match fallback
-  if(item.class){
-    const rawClass = String(item.class).trim().toLowerCase();
-    if(rawClass){
-      const maybe = (classesCache||[]).find(c => (String(c.id||'') === rawClass) || (String(c.name||'').toLowerCase() === rawClass) || (String(c.displayName||'').toLowerCase() === rawClass));
-      if(maybe) return maybe.name || maybe.displayName || maybe.id;
-      return item.class;
-    }
-  }
-
-  return '';
-}
-
-/* simplified: return last-6 match helper used in search (keeps earlier behavior) */
-function last6Id(id){
-  if(!id) return '';
-  id = String(id);
-  return id.slice(-6);
-}
-
-
-/*
-  Updated functions (mobile-friendly layout) for payments UI.
-  Replace the existing `mobileIdDisplay`, `renderPayments` and `renderPaymentsList`
-  implementations in your database.js with the three functions below.
-
-  Key changes:
-  - Students & Teachers: compact 2-line mobile card (Line1: No | Name | Balance, Line2: ID | Class | More)
-  - Staff & Expenses: single-line mobile row (Name | Role/Category | Amount | More)
-  - Name uses single-line ellipsis and reserves ~40 characters space (max-width:40ch)
-  - All sizing for mobile uses rem-friendly units and simple inline styles for quick drop-in
-  - Desktop/table views are left unchanged (function preserves existing desktop markup)
-  - Adds a small `svgMore()` helper for a proper "more" icon button
-*/
-
-function mobileIdDisplay(id, opts = { hideOnMobile: false, forceFullOnMobile: false }){
-  if(!id) return '';
-  id = String(id);
-  if(isMobileViewport()){
-    if(opts.hideOnMobile) return '';          // user requested no staff/expense id on mobile
-    if(opts.forceFullOnMobile) return id;     // show full id when caller requests it (students/teachers)
-    if(id.length <= 6) return id;
-    return '...' + id.slice(-6);              // show last 6 as default
-  }
-  return id; // full on desktop
-}
-
-function svgMore(){
-  return `<svg class="icon-sm" viewBox="0 0 24 24" width="18" height="18" fill="none" xmlns="http://www.w3.org/2000/svg" style="vertical-align:middle">
-    <circle cx="5" cy="12" r="1.6" fill="currentColor" />
-    <circle cx="12" cy="12" r="1.6" fill="currentColor" />
-    <circle cx="19" cy="12" r="1.6" fill="currentColor" />
-  </svg>`;
-}
-
-async function renderPayments(){
-  // keep most of the existing wiring, but ensure we call the updated renderPaymentsList
-  await Promise.all([ loadClasses && loadClasses(), loadSubjects && loadSubjects(), loadStudents && loadStudents(), loadTeachers && loadTeachers(), loadStaff && loadStaff(), loadTransactions && loadTransactions() ]);
-
-  let page = document.getElementById('pagePayments');
-  if(!page){
-    page = document.createElement('section');
-    page.id = 'pagePayments';
-    page.className = 'page';
-    const main = document.querySelector('main') || document.body;
-    main.appendChild(page);
-  }
-
-  page.innerHTML = `
-  <div class="page-header" style="display:flex;flex-direction:column;gap:0.5rem">
-    <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">
-      <div style="display:flex;gap:0.5rem;align-items:center">
-        <button id="paymentsTabStudents" class="tab active">Students</button>
-        <button id="paymentsTabTeachers" class="tab">Teachers</button>
-        <button id="paymentsTabStaff" class="tab">Staff</button>
-        <button id="paymentsTabExpenses" class="tab">Expenses</button>
-      </div>
-      <div style="margin-left:0.75rem;display:flex;gap:0.5rem;align-items:center">
-        <button id="openAddStaffBtn" class="btn btn-ghost">+ Add Staff</button>
-        <button id="openAddExpenseBtn" class="btn btn-ghost">+ New Expense</button>
-      </div>
-    </div>
-
-    <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">
-      <input id="paymentsSearch" placeholder="Search name / ID / phone (or last 6 digits)" style="flex:1;min-width:10rem;padding:0.5rem" />
-    </div>
-
-    <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">
-      <select id="paymentsClassFilter" style="min-width:8.5rem"></select>
-      <select id="paymentsStatusFilter" style="min-width:7.5rem"><option value="all">All</option><option value="unpaid">Unpaid</option><option value="paid">Paid</option><option value="free">Free</option></select>
-      <select id="paymentsTeacherSubjectFilter" style="min-width:10rem"></select>
-      <button id="paymentsRefresh" class="btn btn-ghost" title="Refresh list" style="margin-left:auto">↻</button>
-      <button id="paymentsExport" class="btn btn-ghost">Export</button>
-    </div>
-  </div>
-
-  <div id="paymentsList" style="margin-top:0.6rem"></div>
-  `;
-
-  // wiring
-  document.getElementById('openAddStaffBtn').onclick = openAddStaffModal;
-  document.getElementById('openAddExpenseBtn').onclick = openAddExpenseModal;
-
-  // populate class filter
-  const sel = document.getElementById('paymentsClassFilter');
-  if(sel){
-    sel.innerHTML = '<option value="">All classes</option>' + (classesCache || []).map(c => `<option value="${escape(c.id||c.classId||c.name)}">${escape(c.name||c.displayName||c.id)}</option>`).join('');
-  }
-
-  // populate subjects
-  const subjSel = document.getElementById('paymentsTeacherSubjectFilter');
-  subjSel.innerHTML = '<option value="">All subjects</option>' + (window.subjectsCache||[]).map(s => `<option value="${escape(s.id)}">${escape(s.name||s.id)}</option>`).join('');
-
-  ['students','teachers','staff','expenses'].forEach(v => {
-    const btn = document.getElementById('paymentsTab' + v[0].toUpperCase() + v.slice(1));
-    if(btn){
-      btn.onclick = () => {
-        document.querySelectorAll('#pagePayments .tab').forEach(t=>t.classList.remove('active'));
-        btn.classList.add('active');
-        renderPaymentsList(v);
-      };
-    }
-  });
-
-  const search = document.getElementById('paymentsSearch');
-  const classFilterEl = document.getElementById('paymentsClassFilter');
-  const statusFilterEl = document.getElementById('paymentsStatusFilter');
-  const teacherSubjectFilterEl = document.getElementById('paymentsTeacherSubjectFilter');
-  [search, classFilterEl, statusFilterEl, teacherSubjectFilterEl].forEach(el => {
-    if(!el) return;
-    el.oninput = el.onchange = () => {
-      const active = document.querySelector('#pagePayments .tab.active');
-      renderPaymentsList(active ? active.textContent.toLowerCase() : 'students');
-    };
-  });
-
-  document.getElementById('paymentsExport').onclick = exportCurrentPaymentsView;
-
-  const refreshBtn = document.getElementById('paymentsRefresh');
-  if(refreshBtn) refreshBtn.onclick = async () => {
-    try{
-      refreshBtn.disabled = true;
-      await Promise.all([ loadClasses && loadClasses(), loadSubjects && loadSubjects(), loadStudents && loadStudents(), loadTeachers && loadTeachers(), loadStaff && loadStaff(), loadTransactions && loadTransactions() ]);
-      // re-populate filters
-      const sel2 = document.getElementById('paymentsClassFilter');
-      if(sel2) sel2.innerHTML = '<option value="">All classes</option>' + (classesCache || []).map(c => `<option value="${escape(c.id||c.classId||c.name)}">${escape(c.name||c.displayName||c.id)}</option>`).join('');
-      const subjSel2 = document.getElementById('paymentsTeacherSubjectFilter');
-      if(subjSel2) subjSel2.innerHTML = '<option value="">All subjects</option>' + (window.subjectsCache||[]).map(s => `<option value="${escape(s.id)}">${escape(s.name||s.id)}</option>`).join('');
-      const active = document.querySelector('#pagePayments .tab.active');
-      await renderPaymentsList(active ? active.textContent.toLowerCase() : 'students');
-      toast('Refreshed');
-    }catch(e){ console.error('refresh failed', e); toast('Refresh failed'); }
-    finally { refreshBtn.disabled = false; }
-  };
-
-  // initial view
-  await renderPaymentsList('students');
-}
-
-/* ---------- renderPaymentsList (mobile-first, updated layout) ---------- */
-async function renderPaymentsList(view = 'students'){
-  await Promise.all([ loadClasses && loadClasses(), loadSubjects && loadSubjects(), loadStudents && loadStudents(), loadTeachers && loadTeachers(), loadStaff && loadStaff(), loadTransactions && loadTransactions() ]);
-
-  const listRoot = document.getElementById('paymentsList');
-  if(!listRoot) return;
-
-  const rawQ = (document.getElementById('paymentsSearch') && document.getElementById('paymentsSearch').value || '').trim();
-  const q = rawQ.toLowerCase();
-  const classFilter = (document.getElementById('paymentsClassFilter') && document.getElementById('paymentsClassFilter').value) || '';
-  const statusFilter = (document.getElementById('paymentsStatusFilter') && document.getElementById('paymentsStatusFilter').value) || 'all';
-  const subjectFilter = (document.getElementById('paymentsTeacherSubjectFilter') && document.getElementById('paymentsTeacherSubjectFilter').value) || '';
-
-  function matchesClassFilter(item, val){
-    if(!val) return true;
-    const cf = String(val);
-    const itemClassIds = [ item.classId, item.class, item.className, item.class_id, (item.record && item.record.classId) ].filter(Boolean).map(x => String(x));
-    if(itemClassIds.includes(cf)) return true;
-    const found = (classesCache||[]).find(c => String(c.id) === cf || String(c.name) === cf || String(c.displayName||'') === cf);
-    if(found) return itemClassIds.includes(String(found.id)) || itemClassIds.includes(String(found.name));
-    return itemClassIds.some(x => x.toLowerCase() === cf.toLowerCase());
-  }
-
-  /* ---------- STUDENTS ---------- */
-  if(view === 'students'){
-    let list = (studentsCache || []).slice();
-    if(classFilter) list = list.filter(s => matchesClassFilter(s, classFilter));
-    if(rawQ) list = list.filter(s => matchesSearchTerm(s, rawQ));
-    list = list.filter(s => {
-      const balance = Number(s.balance_cents || 0);
-      const fee = (s.fee != null && !isNaN(Number(s.fee))) ? Number(s.fee) : 0;
-      if(statusFilter === 'free') return fee === 0;
-      if(statusFilter === 'paid') return fee > 0 && balance === 0;
-      if(statusFilter === 'unpaid') return balance > 0;
-      return true;
-    });
-
-    list.sort((a,b) => (b.balance_cents||0) - (a.balance_cents||0));
-
-    // totals (unchanged)
-    let totalAssignedCents = 0, totalBalanceCents = 0, totalPaidThisMonthCents = 0;
-    list.forEach(s => {
-      const assigned = (s.fee != null && !isNaN(Number(s.fee))) ? Math.round(Number(s.fee)*100) : 0;
-      totalAssignedCents += assigned;
-      totalBalanceCents += Number(s.balance_cents || 0);
-      totalPaidThisMonthCents += getPaidThisMonthForTarget('student', s);
-    });
-
-    if(isMobileViewport()){
-      // Mobile two-line cards per user's spec
-      let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem">
-        <strong>Students — ${list.length}</strong>
-        <div class="muted" style="font-size:0.8rem">Tap "more" for actions</div>
-      </div><div style="display:flex;flex-direction:column;gap:0.5rem">`;
-
-      list.forEach((s, idx) => {
-        const idFull = String(s.studentId||s.id||'');
-        const idMobile = mobileIdDisplay(idFull, { forceFullOnMobile: true });
-        const balanceDisplay = c2p(s.balance_cents || 0);
-        const className = resolveClassName(s) || '—';
-
-        html += `
-        <div class="card" style="padding:0.5rem;display:flex;flex-direction:column;gap:0.35rem">
-          <!-- Line 1: No | Name (single-line) | Balance (right) -->
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem">
-            <div style="display:flex;align-items:center;gap:0.5rem;min-width:0">
-              <div style="font-weight:800;flex:0 0 1.6rem">${idx+1}</div>
-              <div style="flex:1 1 auto;min-width:0;max-width:40ch;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:900;font-size:1rem">${escape(s.fullName||'')}</div>
-            </div>
-            <div style="flex:0 0 auto;text-align:right;font-weight:900;font-size:0.95rem;color:#b91c1c">${escape(balanceDisplay)}</div>
-          </div>
-
-          <!-- Line 2: ID | Class | More (more is placed to the far right under balance) -->
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem;font-size:0.85rem;color:#444">
-            <div style="min-width:0;flex:0 0 auto;opacity:0.9">${escape(idMobile)}</div>
-            <div style="flex:1 1 auto;min-width:0;text-overflow:ellipsis;overflow:hidden;white-space:nowrap;color:#0b74de">${escape(className)}</div>
-            <div style="flex:0 0 auto;margin-left:0.5rem">
-              <button class="btn btn-ghost more-student" data-id="${escape(idFull)}" title="More" style="padding:0.35rem;border-radius:6px">${svgMore()}</button>
-            </div>
-          </div>
-        </div>`;
-      });
-
-      html += `</div>
-      <div class="card" style="margin-top:0.5rem;display:flex;gap:0.75rem;justify-content:space-around;align-items:center">
-        <div style="text-align:center"><div style="font-weight:900;color:#059669">${c2p(totalPaidThisMonthCents)}</div><div class="muted" style="font-size:0.8rem">Paid (this month)</div></div>
-        <div style="text-align:center"><div style="font-weight:900;color:#0b74de">${c2p(totalAssignedCents)}</div><div class="muted" style="font-size:0.8rem">Assigned Fee</div></div>
-        <div style="text-align:center"><div style="font-weight:900;color:#b91c1c">${c2p(totalBalanceCents)}</div><div class="muted" style="font-size:0.8rem">Current Balance</div></div>
-      </div>`;
-
-      listRoot.innerHTML = html;
-
-      // wiring for more buttons
-      listRoot.querySelectorAll('.more-student').forEach(b => b.addEventListener('click', ev => {
-        const id = ev.currentTarget.dataset.id;
-        const st = (studentsCache||[]).find(x => (String(x.studentId)===String(id) || String(x.id)===String(id)));
-        if(!st) return;
-        const className2 = resolveClassName(st) || '—';
-        const body = `<div style="font-weight:900">${escape(st.fullName||'')}</div>
-          <div class="muted">ID: ${escape(st.studentId||st.id||'')}</div>
-          <div style="margin-top:8px">Phone: ${escape(st.parentPhone||st.phone||'—')}</div>
-          <div>Class: <span class="class-blue">${escape(className2)}</span></div>
-          <div>Balance: <span style="font-weight:900;color:#b91c1c">${c2p(st.balance_cents||0)}</span></div>
-          <div>Paid this month: <span style="font-weight:700;color:#059669">${c2p(getPaidThisMonthForTarget('student', st))}</span></div>
-          <div>Fee: <span style="font-weight:700;color:#0b74de">${(st.fee!=null && !isNaN(Number(st.fee)))?Number(st.fee).toFixed(2):'0.00'}</span></div>
-          <div class="modal-more-actions" style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
-            <button class="btn btn-primary pay-btn" data-id="${escape(st.studentId||st.id||'')}">${svgPay()} Pay</button>
-            <button class="btn btn-secondary adj-btn" data-id="${escape(st.studentId||st.id||'')}">${svgReesto()} Reesto Hore</button>
-            <button class="btn btn-ghost view-trans-btn" data-id="${escape(st.studentId||st.id||'')}">${svgView()} View</button>
-          </div>`;
-        showModal('Student details', body);
-        modalBody.querySelectorAll('.pay-btn').forEach(bb => bb.addEventListener('click', ev => openPayModal(ev.currentTarget)));
-        modalBody.querySelectorAll('.adj-btn').forEach(bb => bb.addEventListener('click', ev => openAdjustmentModal(ev.currentTarget)));
-        modalBody.querySelectorAll('.view-trans-btn').forEach(bb => bb.addEventListener('click', ev => openViewTransactionsModal(ev.currentTarget)));
-      }));
-
-      return;
-    }
-
-    // Desktop fall back (unchanged behaviour) - reuse previous table HTML
-    // (the existing desktop markup in your file remains compatible; keep it)
-    let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-      <strong>Students — ${list.length}</strong><div class="muted">Columns: No, ID, Name, Phone, Class, Assigned Fee, Current Balance, Paid (this month), Actions</div></div>`;
-    html += `<div style="overflow:auto"><table style="width:100%;border-collapse:collapse"><thead><tr>
-      <th style="padding:8px">No</th>
-      <th style="padding:8px">ID</th>
-      <th style="padding:8px">Name</th>
-      <th style="padding:8px">Phone</th>
-      <th style="padding:8px">Class</th>
-      <th style="padding:8px;text-align:right">Assigned Fee</th>
-      <th style="padding:8px;text-align:right">Current Balance</th>
-      <th style="padding:8px;text-align:right">Paid (this month)</th>
-      <th style="padding:8px">Actions</th>
-    </tr></thead><tbody>`;
-
-    list.forEach((s, idx) => {
-      const assignedFeeCents = (s.fee != null && !isNaN(Number(s.fee))) ? Math.round(Number(s.fee)*100) : 0;
-      const balanceCents = Number(s.balance_cents || 0);
-      const paidThisMonthCents = getPaidThisMonthForTarget('student', s);
-      const className = resolveClassName(s) || '—';
-
-      html += `<tr style="border-bottom:1px solid #f1f5f9">
-        <td style="padding:8px">${idx+1}</td>
-        <td style="padding:8px">${escape(s.studentId||s.id||'')}</td>
-        <td style="padding:8px">${escape(s.fullName||'')}</td>
-        <td style="padding:8px">${escape(s.parentPhone||s.phone||'—')}</td>
-        <td style="padding:8px">${escape(className||'')}</td>
-        <td style="padding:8px;text-align:right"><span style="color:#0b74de;font-weight:700">${c2p(assignedFeeCents)}</span></td>
-        <td style="padding:8px;text-align:right"><span style="color:#b91c1c;font-weight:900">${c2p(balanceCents)}</span></td>
-        <td style="padding:8px;text-align:right"><span style="color:#059669;font-weight:700">${c2p(paidThisMonthCents)}</span></td>
-        <td style="padding:8px">
-          <button class="btn btn-primary btn-sm pay-btn" data-id="${escape(s.studentId||s.id||'')}">${svgPay()}</button>
-          <button class="btn btn-secondary btn-sm adj-btn" data-id="${escape(s.studentId||s.id||'')}">${svgReesto()}</button>
-          <button class="btn btn-ghost btn-sm view-trans-btn" data-id="${escape(s.studentId||s.id||'')}">${svgView()}</button>
-        </td>
-      </tr>`;
-    });
-
-    html += `</tbody></table></div>`;
-
-    const totalsHtml = `
-      <div class="totals-card card" style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">
-        <div style="font-weight:900">Totals</div>
-        <div style="display:flex;gap:18px;align-items:center">
-          <div style="min-width:140px">Assigned fee total: <span style="color:#0b74de;font-weight:900">${c2p(totalAssignedCents)}</span></div>
-          <div style="min-width:140px">Current balance total: <span style="color:#b91c1c;font-weight:900">${c2p(totalBalanceCents)}</span></div>
-          <div style="min-width:140px">Total Paid (this month): <span style="color:#059669;font-weight:900">${c2p(totalPaidThisMonthCents)}</span></div>
-        </div>
-      </div>
-    `;
-    listRoot.innerHTML = html + totalsHtml;
-
-    listRoot.querySelectorAll('.pay-btn').forEach(b => b.addEventListener('click', ev => openPayModal(ev.currentTarget)));
-    listRoot.querySelectorAll('.adj-btn').forEach(b => b.addEventListener('click', ev => openAdjustmentModal(ev.currentTarget)));
-    listRoot.querySelectorAll('.view-trans-btn').forEach(b => b.addEventListener('click', ev => openViewTransactionsModal(ev.currentTarget)));
-
-    return;
-  }
-
-  /* ---------- TEACHERS ---------- */
-  if(view === 'teachers'){
-    const pool = teachersCache || [];
-    let list = pool.slice();
-    if(subjectFilter){
-      list = list.filter(t => {
-        if(!t.subjects && !t.subjectId && !t.subjectName) return false;
-        if(Array.isArray(t.subjects)) return t.subjects.includes(subjectFilter) || t.subjects.some(x => String(x).toLowerCase() === String(subjectFilter).toLowerCase());
-        if(t.subjectId && String(t.subjectId) === String(subjectFilter)) return true;
-        if(t.subjectName && String(t.subjectName).toLowerCase() === String(subjectFilter).toLowerCase()) return true;
-        return false;
-      });
-    }
-    if(rawQ) list = list.filter(t => matchesSearchTerm(t, rawQ));
-    list.sort((a,b) => (b.balance_cents||0) - (a.balance_cents||0));
-
-    // totals
-    let totBalance = 0, totPaid = 0, totSalaryAssigned = 0;
-    list.forEach(t => {
-      totBalance += Number(t.balance_cents || 0);
-      totPaid += getPaidThisMonthForTarget('teacher', t);
-      if(t.salary != null && !isNaN(Number(t.salary))) totSalaryAssigned += Math.round(Number(t.salary)*100);
-      if(typeof t.salary_cents !== 'undefined') totSalaryAssigned += Number(t.salary_cents||0);
-    });
-
-    if(isMobileViewport()){
-      // Similar two-line layout for teachers
-      let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem"><strong>Teachers — ${list.length}</strong><div class="muted" style="font-size:0.8rem">Tap "more" for actions</div></div><div style="display:flex;flex-direction:column;gap:0.5rem">`;
-      list.forEach((t, idx) => {
-        const idFull = String(t.teacherId||t.id||'');
-        const idMobile = mobileIdDisplay(idFull, { forceFullOnMobile: true });
-        const balance = c2p(t.balance_cents||0);
-        const classLine = resolveClassName(t) || '—';
-
-        html += `
-        <div class="card" style="padding:0.5rem;display:flex;flex-direction:column;gap:0.35rem">
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem">
-            <div style="display:flex;align-items:center;gap:0.5rem;min-width:0">
-              <div style="font-weight:800;flex:0 0 1.6rem">${idx+1}</div>
-              <div style="flex:1 1 auto;min-width:0;max-width:40ch;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:900;font-size:1rem">${escape(t.fullName||'')}</div>
-            </div>
-            <div style="flex:0 0 auto;text-align:right;font-weight:900;font-size:0.95rem;color:#b91c1c">${escape(balance)}</div>
-          </div>
-
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem;font-size:0.85rem;color:#444">
-            <div style="min-width:0;flex:0 0 auto;opacity:0.9">${escape(idMobile)}</div>
-            <div style="flex:1 1 auto;min-width:0;text-overflow:ellipsis;overflow:hidden;white-space:nowrap;color:#0b74de">${escape(classLine)}</div>
-            <div style="flex:0 0 auto;margin-left:0.5rem">
-              <button class="btn btn-ghost more-teacher" data-id="${escape(idFull)}" title="More" style="padding:0.35rem;border-radius:6px">${svgMore()}</button>
-            </div>
-          </div>
-        </div>`;
-      });
-      html += `</div>`;
-      listRoot.innerHTML = html;
-
-      listRoot.querySelectorAll('.more-teacher').forEach(b => b.addEventListener('click', ev => {
-        const id = ev.currentTarget.dataset.id;
-        const item = (teachersCache||[]).find(x => (String(x.teacherId) === String(id) || String(x.id) === String(id))) || null;
-        if(!item) return;
-        const classLine2 = resolveClassName(item) || '—';
-        const body = `<div style="font-weight:900">${escape(item.fullName||'')}</div>
-          <div class="muted">ID: ${escape(item.teacherId||item.id||'')}</div>
-          <div style="margin-top:8px">Classes: <span class="muted">${escape(classLine2)}</span></div>
-          <div>Phone: ${escape(item.phone||'—')}</div>
-          <div style="margin-top:8px">Balance: <span style="font-weight:900;color:#b91c1c">${c2p(item.balance_cents||0)}</span></div>
-          <div>Paid this month: <span style="font-weight:700;color:#059669">${c2p(getPaidThisMonthForTarget('teacher', item))}</span></div>
-          <div>Salary: <span style="font-weight:700;color:#0b74de">${salaryDisplay(item)}</span></div>
-          <div class="modal-more-actions" style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
-            <button class="btn btn-primary pay-btn" data-id="${escape(item.teacherId||item.id||'')}">${svgPay()} Pay</button>
-            <button class="btn btn-secondary adj-btn" data-id="${escape(item.teacherId||item.id||'')}">${svgReesto()} Reesto Hore</button>
-            <button class="btn btn-ghost view-trans-btn" data-id="${escape(item.teacherId||item.id||'')}">${svgView()} View</button>
-          </div>`;
-        showModal('Teacher details', body);
-        modalBody.querySelectorAll('.pay-btn').forEach(bb => bb.addEventListener('click', ev => openPayModal(ev.currentTarget)));
-        modalBody.querySelectorAll('.adj-btn').forEach(bb => bb.addEventListener('click', ev => openAdjustmentModal(ev.currentTarget)));
-        modalBody.querySelectorAll('.view-trans-btn').forEach(bb => bb.addEventListener('click', ev => openViewTransactionsModal(ev.currentTarget)));
-      }));
-
-      return;
-    }
-
-    // desktop unchanged (reuse prior desktop code path)
-    // DESKTOP teacher table (unchanged; full IDs & salary column)
-    if(view=='teachers'){
-      let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><strong>Teachers — ${list.length}</strong><div class="muted">Columns: No, ID, Name, Subject, Class, Salary, Balance, Paid(this month), Actions</div></div>`;
-      html += `<div style="overflow:auto"><table style="width:100%;border-collapse:collapse"><thead><tr>
-        <th>No</th><th>ID</th><th>Name</th><th>Subject</th><th>Class</th><th style="text-align:right">Salary</th><th style="text-align:right">Balance</th><th style="text-align:right">Paid (this month)</th><th>Actions</th>
-      </tr></thead><tbody>`;
-      list.forEach((t, idx) => {
-        const salaryVal = t.salary != null && !isNaN(Number(t.salary)) ? Math.round(Number(t.salary)*100) : (t.salary_cents||0);
-        const balance = Number(t.balance_cents||0);
-        const paidThisMonth = getPaidThisMonthForTarget('teacher', t);
-        const className = resolveClassName(t) || '—';
-        html += `<tr style="border-bottom:1px solid #f1f5f9">
-          <td style="padding:8px">${idx+1}</td>
-          <td style="padding:8px">${escape(t.teacherId||t.id||'')}</td>
-          <td style="padding:8px">${escape(t.fullName||'')}</td>
-          <td style="padding:8px">${escape(t.subjectName||t.subject||'')}</td>
-          <td style="padding:8px">${escape(className||'')}</td>
-          <td style="padding:8px;text-align:right">${salaryVal? c2p(salaryVal): '—'}</td>
-          <td style="padding:8px;text-align:right;color:#b91c1c;font-weight:700">${c2p(balance)}</td>
-          <td style="padding:8px;text-align:right;color:#059669;font-weight:700">${c2p(paidThisMonth)}</td>
-          <td style="padding:8px">
-            <button class="btn btn-primary btn-sm pay-btn" data-id="${escape(t.teacherId||t.id||'')}" title="Pay">${svgPay()}</button>
-            <button class="btn btn-secondary btn-sm adj-btn" data-id="${escape(t.teacherId||t.id||'')}" title="Reesto Hore">${svgReesto()}</button>
-            <button class="btn btn-ghost btn-sm view-trans-btn" data-id="${escape(t.teacherId||t.id||'')}" title="View">${svgView()}</button>
-          </td>
-        </tr>`;
-      });
-      html += `</tbody></table></div>`;
-      html += `<div class="totals-card card" style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">
-        <div style="font-weight:900">Totals</div>
-        <div style="display:flex;gap:18px;align-items:center">
-          <div style="min-width:140px">Assigned salary (sum): <span style="color:#0b74de;font-weight:900">${c2p(totSalaryAssigned)}</span></div>
-          <div style="min-width:140px">Current balance total: <span style="color:#b91c1c;font-weight:900">${c2p(totBalance)}</span></div>
-          <div style="min-width:140px">Total Paid (this month): <span style="color:#059669;font-weight:900">${c2p(totPaid)}</span></div>
-        </div>
-      </div>`;
-      listRoot.innerHTML = html;
-      listRoot.querySelectorAll('.pay-btn').forEach(b => b.addEventListener('click', ev => openPayModal(ev.currentTarget)));
-      listRoot.querySelectorAll('.adj-btn').forEach(b => b.addEventListener('click', ev => openAdjustmentModal(ev.currentTarget)));
-      listRoot.querySelectorAll('.view-trans-btn').forEach(b => b.addEventListener('click', ev => openViewTransactionsModal(ev.currentTarget)));
-      return;
-    } else  {
-      // STAFF: desktop table with salary column & edit/delete buttons
-      let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><strong>Staff — ${list.length}</strong></div>`;
-      html += `<div style="overflow:auto"><table style="width:100%;border-collapse:collapse"><thead><tr>
-        <th>No</th><th>ID</th><th>Name</th><th>Phone</th><th>Role</th><th style="text-align:right">Salary</th><th style="text-align:right">Balance</th><th>Actions</th>
-      </tr></thead><tbody>`;
-      list.forEach((s, idx) => {
-        const salaryVal = s.salary != null && !isNaN(Number(s.salary)) ? Math.round(Number(s.salary)*100) : (s.salary_cents||0);
-        html += `<tr style="border-bottom:1px solid #f1f5f9">
-          <td style="padding:8px">${idx+1}</td>
-          <td style="padding:8px">${escape(s.staffId||s.id||'')}</td>
-          <td style="padding:8px">${escape(s.fullName||'')}</td>
-          <td style="padding:8px">${escape(s.phone||'—')}</td>
-          <td style="padding:8px">${escape(s.role||'')}</td>
-          <td style="padding:8px;text-align:right">${salaryVal? c2p(salaryVal) : '—'}</td>
-          <td style="padding:8px;text-align:right;color:#b91c1c;font-weight:700">${c2p(s.balance_cents||0)}</td>
-          <td style="padding:8px">
-            <button class="btn btn-primary btn-sm pay-btn" data-id="${escape(s.staffId||s.id||'')}" title="Pay">${svgPay()}</button>
-            <button class="btn btn-secondary btn-sm adj-btn" data-id="${escape(s.staffId||s.id||'')}" title="Reesto Hore">${svgReesto()}</button>
-            <button class="btn btn-ghost btn-sm view-trans-btn" data-id="${escape(s.staffId||s.id||'')}" title="View">${svgView()}</button>
-            <button class="btn btn-ghost btn-sm edit-staff" data-id="${escape(s.id||'')}" title="Edit">${svgEdit()}</button>
-            <button class="btn btn-danger btn-sm del-staff" data-id="${escape(s.id||'')}" title="Delete">${svgDelete()}</button>
-          </td>
-        </tr>`;
-      });
-      html += `</tbody></table></div>`;
-      listRoot.innerHTML = html;
-
-      listRoot.querySelectorAll('.pay-btn').forEach(b => b.addEventListener('click', ev => openPayModal(ev.currentTarget)));
-      listRoot.querySelectorAll('.adj-btn').forEach(b => b.addEventListener('click', ev => openAdjustmentModal(ev.currentTarget)));
-      listRoot.querySelectorAll('.view-trans-btn').forEach(b => b.addEventListener('click', ev => openViewTransactionsModal(ev.currentTarget)));
-      listRoot.querySelectorAll('.edit-staff').forEach(b => b.addEventListener('click', ev => toast('Edit staff not implemented - tell me if you want it')));
-      listRoot.querySelectorAll('.del-staff').forEach(b => b.addEventListener('click', async (e)=> {
-        const id = e.currentTarget.dataset.id;
-        if(!confirm('Delete staff?')) return;
-        try{ await deleteDoc(doc(db,'staff', id)); toast('Staff deleted'); await loadStaff(); renderPaymentsList('staff'); }catch(err){ console.error(err); toast('Failed to delete'); }
-      }));
-      return;
-    }
-    }
-
-  /* ---------- STAFF ---------- */
-  if(view === 'staff'){
-    const pool = window.staffCache || [];
-    let list = pool.slice();
-    if(rawQ) list = list.filter(t => matchesSearchTerm(t, rawQ));
-    list.sort((a,b) => (b.balance_cents||0) - (a.balance_cents||0));
-
-    if(isMobileViewport()){
-      // Single-line rows for staff (Name | Role | Balance | More)
-      let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem"><strong>Staff — ${list.length}</strong></div><div style="display:flex;flex-direction:column;gap:0.4rem">`;
-      list.forEach((s, idx) => {
-        const balance = c2p(s.balance_cents||0);
-        html += `<div class="card" style="padding:0.5rem;display:flex;align-items:center;justify-content:space-between;gap:0.5rem">
-          <div style="display:flex;align-items:center;gap:0.5rem;min-width:0">
-            <div style="font-weight:800;flex:0 0 1.6rem">${idx+1}</div>
-            <div style="flex:1 1 auto;min-width:0;max-width:40ch;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:900">${escape(s.fullName||'')}</div>
-          </div>
-          <div style="flex:0 0 auto;min-width:6rem;text-align:right;font-size:0.85rem;color:#666">${escape(s.role||'')}</div>
-          <div style="flex:0 0 auto;text-align:right;font-weight:900;color:#b91c1c">${escape(balance)}</div>
-          <div style="flex:0 0 auto;margin-left:0.5rem"><button class="btn btn-ghost more-staff" data-id="${escape(s.id||s.staffId||'')}" title="More" style="padding:0.35rem;border-radius:6px">${svgMore()}</button></div>
-        </div>`;
-      });
-      html += `</div>`;
-      listRoot.innerHTML = html;
-
-      listRoot.querySelectorAll('.more-staff').forEach(b => b.addEventListener('click', ev => {
-        const id = ev.currentTarget.dataset.id;
-        const item = (window.staffCache||[]).find(x => (String(x.id) === String(id) || String(x.staffId) === String(id)));
-        if(!item) return;
-        const body = `
-        <div style="font-weight:900">${escape(item.fullName||'')}</div>
-        <div class="muted">Role: ${escape(item.role||'')}</div>
-        <div style="margin-top:6px">Phone: ${escape(item.phone||'—')}</div>
-      
-        <div style="margin-top:6px">
-          Balance:
-          <strong style="color:#b91c1c">${c2p(item.balance_cents||0)}</strong>
-        </div>
-      
-        <div class="modal-more-actions"
-             style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
-      
-          <button class="btn btn-primary pay-btn"
-                  data-id="${escape(item.staffId||item.id||'')}">
-            ${svgPay()} Pay
-          </button>
-      
-          <button class="btn btn-secondary adj-btn"
-                  data-id="${escape(item.staffId||item.id||'')}">
-            ${svgReesto()} Reesto Hore
-          </button>
-      
-          <button class="btn btn-ghost view-trans-btn"
-                  data-id="${escape(item.staffId||item.id||'')}">
-            ${svgView()} View
-          </button>
-      
-          <button class="btn btn-ghost edit-staff"
-                  data-id="${escape(item.id||'')}">
-            ${svgEdit()} Edit
-          </button>
-      
-          <button class="btn btn-danger del-staff"
-                  data-id="${escape(item.id||'')}">
-            ${svgDelete()} Delete
-          </button>
-        </div>
-      `;
-      
-        showModal('Staff', body);
-
-        modalBody.querySelectorAll('.pay-btn')
-  .forEach(b => b.addEventListener('click', e => openPayModal(e.currentTarget)));
-
-modalBody.querySelectorAll('.adj-btn')
-  .forEach(b => b.addEventListener('click', e => openAdjustmentModal(e.currentTarget)));
-
-modalBody.querySelectorAll('.view-trans-btn')
-  .forEach(b => b.addEventListener('click', e => openViewTransactionsModal(e.currentTarget)));
-
-
-
-        modalBody.querySelectorAll('.edit-staff').forEach(bb => bb.addEventListener('click', ev => toast('Edit staff not implemented - tell me if you want it')));
-        modalBody.querySelectorAll('.del-staff').forEach(bb => bb.addEventListener('click', async ev => {
-          const sid = ev.currentTarget.dataset.id;
-          if(!confirm('Delete staff?')) return;
-          try{ await deleteDoc(doc(db,'staff', sid)); toast('Staff deleted'); await loadStaff(); renderPaymentsList('staff'); }catch(err){ console.error(err); toast('Failed to delete'); }
-        }));
-      }));
-
-      return;
-    }
-
-   // DESKTOP teacher table (unchanged; full IDs & salary column)
-   
-  // STAFF: desktop table with salary column & edit/delete buttons
-  let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><strong>Staff — ${list.length}</strong></div>`;
-  html += `<div style="overflow:auto"><table style="width:100%;border-collapse:collapse"><thead><tr>
-    <th>No</th><th>ID</th><th>Name</th><th>Phone</th><th>Role</th><th style="text-align:right">Salary</th><th style="text-align:right">Balance</th><th>Actions</th>
-  </tr></thead><tbody>`;
-  list.forEach((s, idx) => {
-    const salaryVal = s.salary != null && !isNaN(Number(s.salary)) ? Math.round(Number(s.salary)*100) : (s.salary_cents||0);
-    html += `<tr style="border-bottom:1px solid #f1f5f9">
-      <td style="padding:8px">${idx+1}</td>
-      <td style="padding:8px">${escape(s.staffId||s.id||'')}</td>
-      <td style="padding:8px">${escape(s.fullName||'')}</td>
-      <td style="padding:8px">${escape(s.phone||'—')}</td>
-      <td style="padding:8px">${escape(s.role||'')}</td>
-      <td style="padding:8px;text-align:right">${salaryVal? c2p(salaryVal) : '—'}</td>
-      <td style="padding:8px;text-align:right;color:#b91c1c;font-weight:700">${c2p(s.balance_cents||0)}</td>
-      <td style="padding:8px">
-        <button class="btn btn-primary btn-sm pay-btn" data-id="${escape(s.staffId||s.id||'')}" title="Pay">${svgPay()}</button>
-        <button class="btn btn-secondary btn-sm adj-btn" data-id="${escape(s.staffId||s.id||'')}" title="Reesto Hore">${svgReesto()}</button>
-        <button class="btn btn-ghost btn-sm view-trans-btn" data-id="${escape(s.staffId||s.id||'')}" title="View">${svgView()}</button>
-        <button class="btn btn-ghost btn-sm edit-staff" data-id="${escape(s.id||'')}" title="Edit">${svgEdit()}</button>
-        <button class="btn btn-danger btn-sm del-staff" data-id="${escape(s.id||'')}" title="Delete">${svgDelete()}</button>
-      </td>
-    </tr>`;
-  });
-  html += `</tbody></table></div>`;
-  listRoot.innerHTML = html;
-
-  listRoot.querySelectorAll('.pay-btn').forEach(b => b.addEventListener('click', ev => openPayModal(ev.currentTarget)));
-  listRoot.querySelectorAll('.adj-btn').forEach(b => b.addEventListener('click', ev => openAdjustmentModal(ev.currentTarget)));
-  listRoot.querySelectorAll('.view-trans-btn').forEach(b => b.addEventListener('click', ev => openViewTransactionsModal(ev.currentTarget)));
-  listRoot.querySelectorAll('.edit-staff').forEach(b => b.addEventListener('click', ev => toast('Edit staff not implemented - tell me if you want it')));
-  listRoot.querySelectorAll('.del-staff').forEach(b => b.addEventListener('click', async (e)=> {
-    const id = e.currentTarget.dataset.id;
-    if(!confirm('Delete staff?')) return;
-    try{ await deleteDoc(doc(db,'staff', id)); toast('Staff deleted'); await loadStaff(); renderPaymentsList('staff'); }catch(err){ console.error(err); toast('Failed to delete'); }
-  }));
-  return;
-
-  }
-
-  /* ---------- EXPENSES ---------- */
-  if(view === 'expenses'){
-    const rows = (transactionsCache || []).filter(t => t.target_type === 'expense' && !t.is_deleted).sort((a,b) => (b.createdAt?.seconds||0) - (a.createdAt?.seconds||0));
-
-    if(isMobileViewport()){
-      // single-line expense rows
-      let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem"><strong>Expenses — ${rows.length}</strong></div><div style="display:flex;flex-direction:column;gap:0.4rem">`;
-      rows.forEach((tx, idx) => {
-        const amount = c2p(tx.amount_cents || 0);
-        const category = tx.subtype || '';
-        html += `<div class="card" style="padding:0.45rem;display:flex;align-items:center;justify-content:space-between;gap:0.5rem">
-          <div style="display:flex;align-items:center;gap:0.5rem;min-width:0">
-            <div style="font-weight:800;flex:0 0 1.6rem">${idx+1}</div>
-            <div style="flex:1 1 auto;min-width:0;max-width:40ch;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:700">${escape(tx.note || tx.expense_name || 'Expense')}</div>
-          </div>
-          <div style="flex:0 0 auto;min-width:6rem;text-align:right;font-size:0.85rem;color:#666">${escape(category)}</div>
-          <div style="flex:0 0 auto;text-align:right;font-weight:900;color:#b91c1c">${escape(amount)}</div>
-          <div style="flex:0 0 auto;margin-left:0.5rem"><button class="btn btn-ghost more-expense" data-id="${escape(tx.id||'')}" title="More" style="padding:0.35rem;border-radius:6px">${svgMore()}</button></div>
-        </div>`;
-      });
-      html += `</div>`;
-      listRoot.innerHTML = html;
-
-      listRoot.querySelectorAll('.more-expense').forEach(b => b.addEventListener('click', ev => {
-        const id = ev.currentTarget.dataset.id;
-        const tx = (rows||[]).find(r => r.id === id);
-        if(!tx) return;
-        const body = `<div style="font-weight:900">${escape(tx.note || tx.expense_name || 'Expense')}</div>
-          <div class="muted">Category: ${escape(tx.subtype||'')}</div>
-          <div style="margin-top:8px">Amount: <strong>${c2p(tx.amount_cents||0)}</strong></div>
-          <div>Date: ${tx.createdAt ? new Date((tx.createdAt.seconds||tx.createdAt._seconds)*1000).toLocaleString() : ''}</div>
-          <div style="margin-top:10px;display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">
-            <button class="btn btn-primary pay-expense" data-id="${escape(id)}">${svgPay()} Pay</button>
-            <button class="btn btn-secondary reesto-expense" data-id="${escape(id)}">${svgReesto()} Reesto Hore</button>
-            <button class="btn btn-ghost view-expense" data-id="${escape(id)}">${svgView()} View</button>
-            <button class="btn btn-ghost edit-expense" data-id="${escape(id)}">${svgEdit()} Edit</button>
-            <button class="btn btn-danger del-expense" data-id="${escape(id)}">${svgDelete()} Delete</button>
-          </div>`;
-        showModal('Expense', body);
-        modalBody.querySelectorAll('.pay-expense').forEach(bb => bb.addEventListener('click', ev => openPayModal(ev.currentTarget)));
-        modalBody.querySelectorAll('.reesto-expense').forEach(bb => bb.addEventListener('click', ev => openAdjustmentModal(ev.currentTarget)));
-        modalBody.querySelectorAll('.view-expense').forEach(bb => bb.addEventListener('click', ev => openViewTransactionsModal(ev.currentTarget)));
-        modalBody.querySelectorAll('.edit-expense').forEach(bb => bb.addEventListener('click', ev => openEditTransactionModal(ev.currentTarget)));
-        modalBody.querySelectorAll('.del-expense').forEach(bb => bb.addEventListener('click', ev => deleteTransaction(ev.currentTarget)));
-      }));
-
-      return;
-    }
-
-// DESKTOP expenses table (unchanged)
-let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><strong>Expenses — ${rows.length}</strong><div class="muted">Columns: No, Name, Category, Amount, Date, Actions</div></div>`;
-html += `<div style="overflow:auto"><table style="width:100%;border-collapse:collapse"><thead><tr><th>No</th><th>Name</th><th>Category</th><th>Amount</th><th>Date</th><th>Actions</th></tr></thead><tbody>`;
-rows.forEach((tx, idx) => {
-  html += `<tr style="border-bottom:1px solid #f1f5f9">
-    <td style="padding:8px">${idx+1}</td>
-    <td style="padding:8px">${escape(tx.note || tx.expense_name || 'Expense')}</td>
-    <td style="padding:8px">${escape(tx.subtype || '')}</td>
-    <td style="padding:8px;color:#b91c1c;font-weight:700">${c2p(tx.amount_cents || 0)}</td>
-    <td style="padding:8px">${tx.createdAt ? new Date((tx.createdAt.seconds||tx.createdAt._seconds)*1000).toLocaleString() : ''}</td>
-    <td style="padding:8px">
-      <button class="btn btn-primary btn-sm pay-expense" data-id="${tx.id}" title="Pay">${svgPay()}</button>
-      <button class="btn btn-secondary btn-sm reesto-expense" data-id="${tx.id}" title="Reesto">${svgReesto()}</button>
-      <button class="btn btn-ghost btn-sm view-expense" data-id="${tx.id}" title="View">${svgView()}</button>
-      <button class="btn btn-ghost btn-sm edit-expense" data-id="${tx.id}" title="Edit">${svgEdit()}</button>
-      <button class="btn btn-danger btn-sm del-expense" data-id="${tx.id}" title="Delete">${svgDelete()}</button>
-    </td>
-  </tr>`;
-});
-html += `</tbody></table></div>`;
-listRoot.innerHTML = html;
-
-listRoot.querySelectorAll('.pay-expense').forEach(b => b.addEventListener('click', ev => openPayModal(ev.currentTarget)));
-listRoot.querySelectorAll('.reesto-expense').forEach(b => b.addEventListener('click', ev => openAdjustmentModal(ev.currentTarget)));
-listRoot.querySelectorAll('.view-expense').forEach(b => b.addEventListener('click', ev => openViewTransactionsModal(ev.currentTarget)));
-listRoot.querySelectorAll('.edit-expense').forEach(b => b.addEventListener('click', ev => openEditTransactionModal(ev.currentTarget)));
-listRoot.querySelectorAll('.del-expense').forEach(b => b.addEventListener('click', ev => deleteTransaction(ev.currentTarget)));
-return;  }
-}
-
-
-/* ---- Export modal + worker (doExport updated) ---- */
-async function exportCurrentPaymentsView(){
-  showModal('Export', `<div style="padding:8px">Choose format</div>
-    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
-      <button id="exportCsv" class="btn btn-ghost">CSV</button>
-      <button id="exportPdf" class="btn btn-primary">PDF</button>
-    </div>`);
-  modalBody.querySelector('#exportCsv').onclick = () => { closeModal(); doExport('csv'); };
-  modalBody.querySelector('#exportPdf').onclick = () => { closeModal(); doExport('pdf'); };
-}
-
-async function doExport(format){
-  const active = document.querySelector('#pagePayments .tab.active');
-  const view = active ? active.textContent.toLowerCase() : 'students';
-  const classFilter = (document.getElementById('paymentsClassFilter') && document.getElementById('paymentsClassFilter').value) || '';
-  const statusFilter = (document.getElementById('paymentsStatusFilter') && document.getElementById('paymentsStatusFilter').value) || 'all';
-  const school = await getSchoolMeta();
-  const titleParts = [school.name];
-  if(classFilter){
-    const cls = (classesCache||[]).find(c => c.id === classFilter || c.name === classFilter);
-    titleParts.push(cls ? `Class: ${cls.name}` : `Class: ${classFilter}`);
-  }
-  if(statusFilter && statusFilter !== 'all') titleParts.push(capitalize(statusFilter));
-  const title = titleParts.join(' • ');
-
-  const rows = [];
-  if(view === 'students'){
-    rows.push(['No','ID','Name','Phone','Class','AssignedFee','CurrentBalance','Paid (this month)']);
-    let idx = 0;
-    let totalAssignedCents = 0, totalBalanceCents = 0, totalPaidCents = 0;
-    (studentsCache||[]).forEach(s => {
-      idx++;
-      const className = resolveClassName(s);
-      const assignedCents = (s.fee != null && !isNaN(Number(s.fee))) ? Math.round(Number(s.fee)*100) : 0;
-      const balanceCents = Number(s.balance_cents || 0);
-      const paidCents = getPaidThisMonthForTarget('student', s);
-      totalAssignedCents += assignedCents;
-      totalBalanceCents += balanceCents;
-      totalPaidCents += paidCents;
-      rows.push([idx, s.studentId||s.id, s.fullName||'', s.parentPhone||'', className, c2p(assignedCents), c2p(balanceCents), c2p(paidCents)]);
-    });
-    rows.push([]);
-    rows.push(['Totals','','','','', c2p(totalAssignedCents), c2p(totalBalanceCents), c2p(totalPaidCents)]);
-  } else if(view === 'teachers'){
-    rows.push(['No','ID','Name','Subject','Phone','Salary','CurrentBalance','Paid (this month)']);
-    let i = 0;
-    (teachersCache||[]).forEach(t => {
-      i++;
-      const paidCents = getPaidThisMonthForTarget('teacher', t);
-      rows.push([i, t.teacherId||t.id, t.fullName||'', t.subjectName||t.subjectId||'', t.phone||'', (t.salary!=null?String(t.salary):''), c2p(t.balance_cents||0), c2p(paidCents)]);
-    });
-  } else if(view === 'staff'){
-    rows.push(['No','ID','Name','Phone','Role','CurrentBalance']);
-    let i = 0;
-    (window.staffCache||[]).forEach(s => { i++; rows.push([i, s.staffId||s.id, s.fullName||'', s.phone||'', s.role||'', c2p(s.balance_cents||0)]); });
-  } else {
-    rows.push(['TransactionID','Note','Category','Amount','Date']);
-    (transactionsCache||[]).filter(t=> t.target_type === 'expense' && !t.is_deleted).forEach(t => {
-      rows.push([t.id, t.note||'', t.subtype||'', c2p(t.amount_cents||0), t.createdAt ? new Date((t.createdAt.seconds||t.createdAt._seconds)*1000).toISOString() : '']);
-    });
-  }
-
-  if(format === 'csv'){
-    const csvrows = [[title], [ `Generated by ${school.name} on ${new Date().toLocaleString()}` ], [], ...rows];
-    const csv = csvrows.map(r => r.map(c => '"' + String(c||'').replace(/"/g,'""') + '"').join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url; a.download = `export-${view}.csv`; a.click(); URL.revokeObjectURL(url);
-    return;
-  }
-
-  if(format === 'pdf'){
-    const JsPDF = getJsPDFConstructor();
-    if (JsPDF) {
-      try {
-        const doc = new JsPDF({ orientation: 'landscape' });
-        const marginTop = 20;
-        try{
-          if (school.logo) {
-            const resp = await fetch(school.logo);
-            const blob = await resp.blob();
-            const reader = new FileReader();
-            const imgData = await new Promise((res, rej) => { reader.onload = () => res(reader.result); reader.onerror = rej; reader.readAsDataURL(blob); });
-            doc.addImage(imgData, 'PNG', 20, marginTop, 36, 36); // smaller logo
-            doc.setFontSize(12);
-            doc.text(String(title), 70, marginTop + 22);
-          } else {
-            doc.text(String(title), 20, marginTop + 12);
-          }
-        }catch(e){ doc.text(String(title), 20, marginTop + 12); console.warn('logo embed fail', e); }
-
-        if (doc.autoTable) {
-          const head = [ rows[0] ];
-          const body = rows.slice(1);
-          doc.autoTable({
-            startY: marginTop + 56,
-            head,
-            body,
-            styles: { fontSize: 8, cellPadding: 4 },
-            headStyles: { fillColor: [240,240,240], textColor: [20,20,20], fontStyle: 'bold' },
-            margin: { left: 14, right: 14 }
-          });
-          // footer
-          doc.setFontSize(9);
-          doc.text(`Generated by ${school.name} on ${new Date().toLocaleString()}`, 14, doc.internal.pageSize.getHeight() - 12);
-          doc.save(`export-${view}.pdf`);
-          return;
-        }
-      } catch (e) {
-        console.warn('jsPDF/autoTable failed, fallback', e);
-      }
-    }
-
-    // fallback to html2canvas rendering
-    try {
-      const container = document.createElement('div');
-      container.style.padding = '18px';
-      container.style.background = '#fff';
-      container.style.position = 'relative';
-      // watermark
-      const watermark = document.createElement('div');
-      watermark.style.position = 'absolute';
-      watermark.style.left = '50%';
-      watermark.style.top = '45%';
-      watermark.style.transform = 'translate(-50%,-50%) rotate(-18deg)';
-      watermark.style.opacity = '0.06';
-      watermark.style.fontSize = '72px';
-      watermark.style.fontWeight = '900';
-      watermark.style.pointerEvents = 'none';
-      watermark.textContent = school.name || '';
-      container.appendChild(watermark);
-
-      const header = document.createElement('div');
-      header.style.display = 'flex';
-      header.style.alignItems = 'center';
-      header.style.gap = '12px';
-      const logo = document.createElement('img');
-      logo.src = school.logo || 'assets/logo.png';
-      logo.style.maxHeight = '36px';
-      logo.style.display = 'block';
-      logo.style.opacity = '0.95';
-      header.appendChild(logo);
-      const h = document.createElement('div');
-      h.innerHTML = `<div style="font-weight:900">${escape(String(title))}</div><div style="font-size:11px;color:#666">Generated by ${escape(school.name)} on ${new Date().toLocaleString()}</div>`;
-      header.appendChild(h);
-      container.appendChild(header);
-
-      const table = document.createElement('table');
-      table.style.borderCollapse = 'collapse';
-      table.style.width = '100%';
-      table.style.marginTop = '12px';
-      const thead = document.createElement('thead');
-      const trh = document.createElement('tr');
-      rows[0].forEach(col => {
-        const th = document.createElement('th');
-        th.textContent = col;
-        th.style.border = '1px solid #ddd';
-        th.style.padding = '6px';
-        th.style.fontWeight = '800';
-        trh.appendChild(th);
-      });
-      thead.appendChild(trh);
-      table.appendChild(thead);
-      const tbody = document.createElement('tbody');
-      rows.slice(1).forEach(r => {
-        const tr = document.createElement('tr');
-        r.forEach(cell => {
-          const td = document.createElement('td');
-          td.textContent = String(cell||'');
-          td.style.border = '1px solid #eee';
-          td.style.padding = '6px';
-          tr.appendChild(td);
-        });
-        tbody.appendChild(tr);
-      });
-      table.appendChild(tbody);
-      container.appendChild(table);
-      document.body.appendChild(container);
-      const ok = await exportElementToPdfFallback(`export-${view}.pdf`, container);
-      container.remove();
-      if(!ok) alert('PDF export not available');
-      return;
-    } catch(e){
-      console.error('PDF fallback failed', e);
-      alert('PDF export failed');
-    }
-  }
-}
-
-
-
-
-/* --- Edit transaction modal --- */
-async function openEditTransactionModal(e){
-  const txId = e.target.dataset.id;
-  if(!txId) return;
-  const txSnap = await getDoc(doc(db,'transactions', txId));
-  if(!txSnap.exists()) return toast('Transaction not found');
-  const tx = { id: txSnap.id, ...txSnap.data() };
-
-  // modal fields
-  const monthsOptions = Array.from({length:12}, (_,i)=>`<option value="${i+1}">${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][i]}</option>`).join('');
-  const html = `
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-      <div><label>Amount</label><input id="editAmount" type="number" step="0.01" value="${c2p(tx.amount_cents||0)}" /></div>
-      <div><label>Type</label><input id="editType" value="${escape(tx.type||'')}" /></div>
-      <div><label>Months (multi)</label><select id="editMonths" multiple size="6">${monthsOptions}</select></div>
-      <div><label>Payment Method</label><input id="editMethod" value="${escape(tx.payment_method||'')}" /></div>
-      <div><label>Mobile Provider</label><input id="editProvider" value="${escape(tx.mobile_provider||'')}" /></div>
-      <div><label>Payer Phone</label><input id="editPayer" value="${escape(tx.payer_phone||'')}" /></div>
-      <div style="grid-column:1 / -1"><label>Note</label><input id="editNote" value="${escape(tx.note||'')}" /></div>
-    </div>
-    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
-      <button id="editClose" class="btn btn-ghost">Close</button>
-      <button id="editSave" class="btn btn-primary">Save</button>
-    </div>
-  `;
-  showModal('Edit Transaction', html);
-
-  // pre-select related months if present (format 'YYYY-MM')
-  const selectMonths = modalBody.querySelector('#editMonths');
-  (tx.related_months || []).forEach(m => {
-    const parts = String(m).split('-'); // YYYY-MM
-    if(parts.length === 2){
-      const monthNum = Number(parts[1]);
-      const opt = Array.from(selectMonths.options).find(o => Number(o.value) === monthNum);
-      if(opt) opt.selected = true;
-    }
-  });
-
-  modalBody.querySelector('#editClose').onclick = closeModal;
-  modalBody.querySelector('#editSave').onclick = async () => {
-    try{
-      const newAmountCents = p2c(modalBody.querySelector('#editAmount').value);
-      const newType = modalBody.querySelector('#editType').value.trim();
-      const newMonths = Array.from(selectMonths.selectedOptions).map(o => o.value);
-      const newMethod = modalBody.querySelector('#editMethod').value.trim();
-      const newProvider = modalBody.querySelector('#editProvider').value.trim();
-      const newPayer = modalBody.querySelector('#editPayer').value.trim();
-      const newNote = modalBody.querySelector('#editNote').value.trim();
-
-      // if type affects balance (monthly or salary) we must compute delta and apply
-      const affectsBalance = (tx.type === 'monthly' || tx.type === 'salary') && (newType === tx.type); // only if type remains one that affects balance
-      if(affectsBalance){
-        // original amount was tx.amount_cents; previously we applied effect (e.g., subtracted from balance). We need to apply difference: delta = old - new (we add delta to balance because old was applied)
-        const delta = (tx.amount_cents || 0) - newAmountCents; // if positive -> add to balance; if negative -> subtract
-        await updateTargetBalanceGeneric(tx.target_type, tx.target_id, delta);
-      } else {
-        // also handle case where original affected but new doesn't: we must reverse original effect
-        if(tx.type === 'monthly' || tx.type === 'salary'){
-          // reverse original effect completely
-          await updateTargetBalanceGeneric(tx.target_type, tx.target_id, (tx.amount_cents || 0));
-        }
-        // if original not affecting but new type affects, apply new effect (subtract)
-        if(newType === 'monthly' || newType === 'salary'){
-          await updateTargetBalanceGeneric(tx.target_type, tx.target_id, -newAmountCents);
-        }
-      }
-
-      // save transaction edits and audit fields
-      await updateDoc(doc(db,'transactions', tx.id), {
-        amount_cents: newAmountCents,
-        type: newType,
-        payment_method: newMethod || null,
-        mobile_provider: newProvider || null,
-        payer_phone: newPayer || null,
-        note: newNote || null,
-        related_months: (newType === 'monthly') ? newMonths.map(m => `${new Date().getFullYear()}-${String(Number(m)).padStart(2,'0')}`) : [],
-        edited_by: currentUser ? currentUser.uid : null,
-        edited_at: Timestamp.now()
-      });
-
-      await toast('Transaction updated');
-      closeModal();
-      await loadTransactions();
-      renderPaymentsList('students');
-      renderPaymentsList('teachers');
-      renderPaymentsList('staff');
-      renderDashboard && renderDashboard();
-    }catch(err){
-      console.error('edit transaction failed', err);
-      toast('Failed to update transaction');
-    }
-  };
-}
-
-/* --- Delete/soft-delete transaction --- */
-async function deleteTransaction(e){
-  const id = e.target.dataset.id;
-  if(!id) return;
-  if(!confirm('Delete Transaction? This will reverse balance effects if applicable. Proceed?')) return;
-  try{
-    const snap = await getDoc(doc(db,'transactions', id));
-    if(!snap.exists()) return toast('Transaction not found');
-    const tx = { id: snap.id, ...snap.data() };
-    // reverse effect if affected balance (monthly or salary)
-    if(tx.type === 'monthly' || tx.type === 'salary'){
-      // original subtract was applied when created -> add it back
-      await updateTargetBalanceGeneric(tx.target_type, tx.target_id, (tx.amount_cents || 0));
-    }
-    // soft-delete
-    await updateDoc(doc(db,'transactions', id), { is_deleted: true, deleted_by: currentUser ? currentUser.uid : null, deleted_at: Timestamp.now() });
-    await toast('Transaction deleted');
-    await loadTransactions();
-    renderPaymentsList('students');
-    renderPaymentsList('teachers');
-    renderPaymentsList('staff');
-    renderDashboard && renderDashboard();
-  }catch(err){
-    console.error('delete transaction failed', err);
-    toast('Failed to delete transaction');
-  }
-}
-
-/* ---------- renderDashboard (rich admin dashboard) ---------- */
-
-
-async function renderDashboard(opts = {}) {
-  // opts may contain: defaultFilter, forceRefresh
-  // Ensure caches loaded (best-effort)
-  await Promise.all([
-    typeof loadStudents === 'function' ? loadStudents() : Promise.resolve(),
-    typeof loadTeachers === 'function' ? loadTeachers() : Promise.resolve(),
-    typeof loadStaff === 'function' ? loadStaff() : Promise.resolve(),
-    typeof loadTransactions === 'function' ? loadTransactions() : Promise.resolve(),
-    typeof loadExams === 'function' ? loadExams() : Promise.resolve(),
-    typeof loadExamResults === 'function' ? loadExamResults() : Promise.resolve()
-  ]);
- 
-  // ---------- helpers ----------
-  function tsToMs(t) {
-    if (!t) return 0;
-    if (typeof t === 'number') return t * 1000;
-    if (t.seconds) return (t.seconds * 1000) + (t.nanoseconds ? Math.floor(t.nanoseconds / 1000000) : 0);
-    if (t._seconds) return (t._seconds * 1000);
-    const d = new Date(t);
-    return isNaN(d.getTime()) ? 0 : d.getTime();
-  }
-  function startOfDayMs(d) { const x = new Date(d); x.setHours(0,0,0,0); return x.getTime(); }
-  function endOfDayMs(d) { const x = new Date(d); x.setHours(23,59,59,999); return x.getTime(); }
- 
-  // robust money formatter (uses global c2p if present)
-  function formatMoney(cents) {
-    try {
-      if (typeof c2p === 'function') return c2p(Number(cents || 0));
-    } catch(e){}
-    // fallback: cents -> units with two decimals
-    const n = Number(cents || 0) / 100;
-    return n.toFixed(2);
-  }
- 
-  // robust balance normalization -> cents
-  function getBalanceCents(record) {
-    if (!record) return 0;
-    if (typeof record.balance_cents !== 'undefined' && record.balance_cents !== null) return Number(record.balance_cents) || 0;
-    if (typeof record.balance !== 'undefined' && record.balance !== null) {
-      const v = Number(record.balance);
-      if (!isNaN(v)) {
-        // if it looks like integer > 1000 treat as cents already
-        if (Number.isInteger(v) && Math.abs(v) > 1000) return v;
-        return Math.round(v * 100);
-      }
-    }
-    if (typeof record.outstanding !== 'undefined') {
-      const v = Number(record.outstanding) || 0; return Math.round(v * 100);
-    }
-    if (typeof record.amount_due !== 'undefined') { const v = Number(record.amount_due)||0; return Math.round(v*100); }
-    if (typeof record.due_amount !== 'undefined') { const v = Number(record.due_amount)||0; return Math.round(v*100); }
-    return 0;
-  }
- 
-  // robust student finder
-  function findStudentByRef(refId) {
-    if (!refId) return null;
-    const list = (studentsCache || []);
-    const sRef = String(refId);
-    for (const s of list) {
-      const ids = [s.id, s.studentId, s.student_id, s.uid, s._id];
-      for (const id of ids) if (typeof id !== 'undefined' && id !== null && String(id) === sRef) return s;
-      if (s.phone && String(s.phone) === sRef) return s;
-      if (s.regNo && String(s.regNo) === sRef) return s;
-    }
-    return null;
-  }
- 
-  // months & school-year config
-  const monthsShort = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  const schoolYearConfig = (() => {
-    try { const raw = localStorage.getItem('schoolYearConfig'); if (raw) return JSON.parse(raw); } catch(e) {}
-    return { startMonth: 8, endMonth: 6 };
-  })();
- 
-  // compute range per filter
-  function computeRangeForFilter(filterName) {
-    const now = new Date();
-    if (filterName === 'Today') return { start: startOfDayMs(now), end: endOfDayMs(now), label: `Showing: ${new Date(startOfDayMs(now)).toLocaleDateString()} — ${new Date(endOfDayMs(now)).toLocaleDateString()}` };
-    if (filterName === 'This Week') {
-      const d = new Date(now); const sat = new Date(d);
-      while (sat.getDay() !== 6) sat.setDate(sat.getDate() - 1); // back to Saturday
-      const wed = new Date(sat); wed.setDate(sat.getDate() + 4); // Saturday -> Wednesday
-      return { start: startOfDayMs(sat), end: endOfDayMs(wed), label: `Showing: ${new Date(startOfDayMs(sat)).toLocaleDateString()} — ${new Date(endOfDayMs(wed)).toLocaleDateString()}` };
-    }
-    if (filterName === 'This Month') {
-      const s = new Date(now.getFullYear(), now.getMonth(), 1);
-      const e = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23,59,59,999);
-      return { start: startOfDayMs(s), end: endOfDayMs(e), label: `Showing: ${s.toLocaleDateString()} — ${e.toLocaleDateString()}` };
-    }
-    if (filterName === 'This Year') {
-      const s = new Date(now.getFullYear(),0,1); const e = new Date(now.getFullYear(),11,31,23,59,59,999);
-      return { start: startOfDayMs(s), end: endOfDayMs(e), label: `Showing: ${s.toLocaleDateString()} — ${e.toLocaleDateString()}` };
-    }
-    if (filterName === 'Sanad dugsiyeed') {
-      const sm = Number(schoolYearConfig.startMonth) || 8;
-      const em = Number(schoolYearConfig.endMonth) || 6;
-      const y = now.getFullYear(); let yearStart, yearEnd;
-      if (sm <= em) {
-        yearStart = new Date(y, sm-1, 1);
-        yearEnd = new Date(y, em, 0, 23,59,59,999);
-        if (now < yearStart) { yearStart = new Date(y-1, sm-1,1); yearEnd = new Date(y-1, em, 0, 23,59,59,999); }
-      } else {
-        const candStart = new Date(y, sm-1, 1);
-        const candEnd = new Date(y+1, em, 0, 23,59,59,999);
-        if (now >= candStart) { yearStart = candStart; yearEnd = candEnd; } else { yearStart = new Date(y-1, sm-1,1); yearEnd = new Date(y, em, 0, 23,59,59,999); }
-      }
-      return { start: startOfDayMs(yearStart), end: endOfDayMs(yearEnd), label: `Showing: ${yearStart.toLocaleDateString()} — ${yearEnd.toLocaleDateString()}` };
-    }
-    // All
-    return { start: 0, end: Date.now(), label: 'Showing: All time' };
-  }
- 
-  // ---------- DOM skeleton & refs ----------
-  const containerId = 'pageDashboard';
-  let page = document.getElementById(containerId);
-  if (!page) {
-    page = document.createElement('section');
-    page.id = containerId;
-    page.className = 'page';
-    const main = document.querySelector('main');
-    main && main.insertBefore(page, main.firstChild);
-  }
- 
-  // initial state
-  let activeFilter = opts.defaultFilter || 'This Month';
-  let totalBalanceMode = localStorage.getItem('dashboard_total_balance_mode') || 'students';
-  let currentRange = computeRangeForFilter(activeFilter);
- 
-  // skeleton HTML (keeps your layout)
-  page.innerHTML = `
-    <div class="page-header" style="align-items:center;justify-content:space-between">
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <div style="display:flex;gap:6px" role="tablist" aria-label="Date filters">
-          <button class="tab filter-btn" data-filter="Today">Today</button>
-          <button class="tab filter-btn active" data-filter="This Month">This Month</button>
-          <button class="tab filter-btn" data-filter="This Week">This Week</button>
-          <button class="tab filter-btn" data-filter="This Year">This Year</button>
-          <button class="tab filter-btn" data-filter="Sanad dugsiyeed">Sanad dugsiyeed</button>
-          <button class="tab filter-btn" data-filter="All">All</button>
-        </div>
-        <div id="filterInfo" class="muted" style="margin-left:12px"></div>
-      </div>
- 
-      <div style="display:flex;gap:8px;align-items:center">
-        <div style="display:flex;gap:8px;align-items:center">
-          <button id="dashboardRefresh" class="btn btn-ghost" title="Refresh">↻</button>
-          <div id="dashboardLastRef" class="muted" style="font-size:0.85rem"></div>
-        </div>
-        <div style="display:flex;gap:8px;align-items:center">
-          <button id="dashboardExportPdf" class="btn btn-ghost">Export PDF</button>
-          <button id="dashboardExportCsv" class="btn btn-ghost">Export CSV</button>
-          <button id="dashboardSettings" class="btn btn-ghost">⚙</button>
-          <button id="dashboardNotifications" class="btn btn-ghost" title="Notifications">🔔 <span id="notifBadge" style="display:none;">0</span></button>
-        </div>
-      </div>
-    </div>
- 
-    <div id="kpis" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-top:12px"></div>
- 
-    <div id="chartsRow" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
-      <div class="card" style="padding:12px">
-        <div style="display:flex;justify-content:space-between;align-items:center">
-          <div><strong>Student Payments</strong><div class="muted" style="font-size:0.85rem" id="chartPaymentsInfo"></div></div>
-          <div style="display:flex;gap:8px;align-items:center">
-            <select id="chartPaymentsGranularity" style="padding:6px;border-radius:8px"><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly" selected>Monthly</option></select>
-            <button id="exportChartPayments" class="btn btn-ghost">Export CSV</button>
-          </div>
-        </div>
-        <canvas id="chartPayments" height="220"></canvas>
-      </div>
- 
-      <div class="card" style="padding:12px">
-        <div style="display:flex;justify-content:space-between;align-items:center">
-          <div><strong>Teacher Payments (paid)</strong><div class="muted" id="chartTeachersInfo" style="font-size:0.85rem"></div></div>
-          <div style="display:flex;gap:8px;align-items:center">
-            <select id="chartTeachersGranularity" style="padding:6px;border-radius:8px"><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly" selected>Monthly</option></select>
-            <button id="exportChartTeachers" class="btn btn-ghost">Export CSV</button>
-          </div>
-        </div>
-        <canvas id="chartTeachers" height="220"></canvas>
-      </div>
-    </div>
- 
-    <div style="display:grid;grid-template-columns:2fr 1fr;gap:12px;margin-top:12px">
-      <div class="card" id="outstandingCard" style="padding:12px">
-        // <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-        //   <div><strong>Top 10 Outstanding Student Payments</strong><div class="muted" id="outstandingRange"></div></div>
-        //   <div style="display:flex;gap:8px;align-items:center">
-        //     <input id="outstandingSearch" placeholder="Search name / ID" style="padding:6px;border-radius:8px;border:1px solid #eef2f9" />
-        //     <button id="outstandingExport" class="btn btn-ghost">Export CSV</button>
-        //     <button id="outstandingBulkReminder" class="btn btn-primary">Send Reminder</button>
-        //   </div>
-        // </div>
-        <div id="outstandingTable"></div>
-      </div>
- 
-      <div class="card" id="leaderboardCard" style="padding:12px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-          <div><strong>Top-10 Students (Exam leaderboard)</strong><div class="muted" id="leaderboardExamInfo"></div></div>
-          <div style="display:flex;gap:8px;align-items:center">
-            <select id="leaderboardKind"><option value="school">Top 10 — School</option><option value="class">Top 10 — Class</option></select>
-            <select id="leaderboardExam"></select>
-            <select id="leaderboardClass" style="display:none"></select>
-            <button id="leaderboardExport" class="btn btn-ghost">Export</button>
-          </div>
-        </div>
-        <div id="leaderboardList"></div>
-      </div>
-    </div>
- 
-    <div id="dashFooter" style="margin-top:12px;display:flex;justify-content:space-between;align-items:center">
-      <div class="muted" id="dashSources">Data source: local cache (transactions / students / teachers)</div>
-      <div class="muted" id="dashStatus"></div>
-    </div>
-  `;
- 
-
-  function hideDesktopHeadersOnMobile() {
-  if (!isMobileViewport || !isMobileViewport()) return;
-
-  const outstandingCard = page.querySelector('#outstandingCard');
-  const leaderboardCard = page.querySelector('#leaderboardCard');
-
-  if (outstandingCard && outstandingCard.firstElementChild) {
-    outstandingCard.firstElementChild.style.display = 'none';
-  }
-
-  if (leaderboardCard && leaderboardCard.firstElementChild) {
-    leaderboardCard.firstElementChild.style.display = 'none';
-  }
-}
-
-// call once after render
-hideDesktopHeadersOnMobile();
-
-  // shared header refs (used by mobile + desktop)
-let filterInfo = null;
-let lastRefEl = null;
-
-  // --- Header replacement for mobile-friendly controls + export dropdown ---
- (function replaceHeaderControls() {
-   const hdr = page.querySelector('.page-header');
-   if (!hdr) return;
-   hdr.innerHTML = `
-     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;width:100%;justify-content:space-between">
-       <div style="display:flex;gap:8px;align-items:center;min-width:0">
-         <select id="dashboardFilterSelect" style="padding:8px;border-radius:8px;border:1px solid #e6eef9;background:#fff;min-width:160px">
-           <option value="Today">Today</option>
-           <option value="This Month" selected>This Month</option>
-           <option value="This Week">This Week</option>
-           <option value="This Year">This Year</option>
-           <option value="Sanad dugsiyeed">Sanad dugsiyeed</option>
-           <option value="All">All</option>
-         </select>
-         <div id="filterInfoMobile" class="muted" style="font-size:0.9rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
-       </div>
- 
-       <div style="display:flex;gap:8px;align-items:center">
-         <div style="position:relative">
-           <button id="dashboardExportBtn" class="btn btn-ghost" style="display:flex;gap:8px;align-items:center;padding:8px 10px;border-radius:8px">Export ▾</button>
-           <div id="dashboardExportMenu" style="display:none;position:absolute;right:0;top:calc(100% + 6px);background:#fff;border:1px solid #eef2f9;border-radius:8px;box-shadow:0 6px 20px rgba(10,20,40,0.06);z-index:999;padding:6px">
-             <button id="exportPdfOpt" class="btn btn-ghost" style="display:block;width:180px;text-align:left;padding:8px">Export PDF</button>
-             <button id="exportCsvOpt" class="btn btn-ghost" style="display:block;width:180px;text-align:left;padding:8px">Export CSV</button>
-           </div>
-         </div>
- 
-         <button id="dashboardRefresh" class="btn btn-ghost" title="Refresh" style="padding:8px;border-radius:8px">↻</button>
-         <button id="dashboardSettings" class="btn btn-ghost" style="padding:8px;border-radius:8px" title="Settings">⚙</button>
-         <button id="dashboardNotifications" class="btn btn-ghost" style="padding:8px;border-radius:8px" title="Notifications">🔔 <span id="notifBadge" style="display:none;margin-left:6px;background:#ef4444;color:#fff;font-size:0.7rem;padding:2px 6px;border-radius:999px"></span></button>
-       </div>
-     </div>
-     <div style="margin-top:6px;display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap">
-       <div id="filterMeta" style="display:flex;flex-direction:column;gap:4px">
-         <div id="filterShowing" class="muted" style="font-size:0.92rem"></div>
-         <div id="lastRefWrapper" class="muted" style="font-size:0.82rem"></div>
-       </div>
-       <div id="headerRightMeta" class="muted" style="font-size:0.9rem"></div>
-     </div>
-   `;
- 
-   // refs
-   const sel = page.querySelector('#dashboardFilterSelect');
-   const filterInfoMobile = page.querySelector('#filterInfoMobile');
-   const filterShowing = page.querySelector('#filterShowing');
-   const lastRefWrapper = page.querySelector('#lastRefWrapper');
-   const exportBtn = page.querySelector('#dashboardExportBtn');
-   const exportMenu = page.querySelector('#dashboardExportMenu');
-   const exportPdfOpt = page.querySelector('#exportPdfOpt');
-   const exportCsvOpt = page.querySelector('#exportCsvOpt');
- 
-   // initialize values
-   sel.value = activeFilter || 'This Month';
-   filterInfoMobile.textContent = (currentRange && currentRange.label) ? '' : '';
-   filterShowing.textContent = currentRange && currentRange.label ? currentRange.label : '';
- 
-   // wire select -> same behavior as old filter buttons
-   sel.addEventListener('change', () => {
-     activeFilter = sel.value;
-     setActiveFilterButton(activeFilter); // uses existing function (see patch below)
-     currentRange = computeRangeForFilter(activeFilter);
-     refreshDashboard();
-   });
- 
-   // export dropdown toggle
-   exportBtn.addEventListener('click', (ev) => {
-     ev.stopPropagation();
-     exportMenu.style.display = exportMenu.style.display === 'none' ? 'block' : 'none';
-   });
-   // close menu on outside click
-   document.addEventListener('click', (ev) => {
-     if (!exportMenu) return;
-     if (!exportMenu.contains(ev.target) && !exportBtn.contains(ev.target)) exportMenu.style.display = 'none';
-   });
- 
-   // hook export options
-   if (exportPdfOpt) exportPdfOpt.addEventListener('click', () => { exportMenu.style.display='none'; exportPdfFromDashboard(); });
-   if (exportCsvOpt) exportCsvOpt.addEventListener('click', () => { exportMenu.style.display='none'; exportCsvFromDashboard(); });
- 
-   // wire refresh / settings / notifications to existing handlers if present
-   const refBtn = page.querySelector('#dashboardRefresh');
-   if (refBtn) {
-     refBtn.addEventListener('click', () => {
-       refreshDashboard();
-     });
-   }
-   
-   // show last refreshed
-   lastRefWrapper.textContent = `↻ Last refreshed: ${new Date().toLocaleString()}`;
- 
-
- })();
- 
-  // refs
-  // const filterButtons = page.querySelectorAll('.filter-btn');
-  // // support either the original '#filterInfo' or the new mobile '#filterInfoMobile' or '#filterShowing'
-  // const filterInfo = page.querySelector('#filterInfo') || page.querySelector('#filterInfoMobile') || page.querySelector('#filterShowing');
-  // // support either the original '#dashboardLastRef' or the new '#lastRefWrapper'
-  // const lastRefEl = page.querySelector('#lastRefWrapper') || page.querySelector('#dashboardLastRef');
-
-  const filterButtons = page.querySelectorAll('.filter-btn');
-
-// reuse shared refs, fallback for desktop
-filterInfo =
-  filterInfo ||
-  page.querySelector('#filterInfo') ||
-  page.querySelector('#filterInfoMobile') ||
-  page.querySelector('#filterShowing');
-
-lastRefEl =
-  lastRefEl ||
-  page.querySelector('#lastRefWrapper') ||
-  page.querySelector('#dashboardLastRef');
-
-
-  
-  const kpisRoot = page.querySelector('#kpis');
-  const dashSources = page.querySelector('#dashSources');
-  const dashStatus = page.querySelector('#dashStatus');
-  const chartPaymentsCanvas = page.querySelector('#chartPayments');
-  const chartTeachersCanvas = page.querySelector('#chartTeachers');
-  const outstandingTableRoot = page.querySelector('#outstandingTable');
-  const outstandingRange = page.querySelector('#outstandingRange');
-  const outstandingSearch = page.querySelector('#outstandingSearch');
-  const leaderboardExamSel = page.querySelector('#leaderboardExam');
-  const leaderboardListRoot = page.querySelector('#leaderboardList');
-  const leaderboardKind = page.querySelector('#leaderboardKind');
-  const leaderboardClassSel = page.querySelector('#leaderboardClass');
-  const leaderboardExamInfo = page.querySelector('#leaderboardExamInfo');
- 
- // Replace existing setActiveFilterButton(name) with this version:
- function setActiveFilterButton(name) {
-   // update filter buttons if present (desktop)
-   filterButtons.forEach(b => b.classList.toggle('active', b.dataset.filter === name));
-   // update mobile select if present
-   const mobileSel = page.querySelector('#dashboardFilterSelect');
-   if (mobileSel) {
-     try { mobileSel.value = name; } catch(e){ /* ignore */ }
-   }
-   // update the "Showing:" text
-   const range = computeRangeForFilter(name);
-   const metaEl = page.querySelector('#filterShowing') || filterInfo;
-   if (metaEl) metaEl.textContent = range.label;
-   // keep previous behavior (if any other UI must refresh)
-   filterInfo && (filterInfo.textContent = range.label);
- }
- 
-  setActiveFilterButton(activeFilter);
- 
-  // ---------- KPI computation ----------
-  function txInRange(tx, start, end) {
-    const ms = tsToMs(tx.createdAt);
-    return ms >= start && ms <= end;
-  }
- 
-  function computeKPIs(range) {
-    const txs = (transactionsCache || []).filter(t => !t.is_deleted && txInRange(t, range.start, range.end));
-    const students = studentsCache || [];
-    const teachers = teachersCache || [];
-    const staff = window.staffCache || [];
- 
-    const totalStudents = students.length;
-    const totalTeachers = teachers.length;
-    const totalStaff = staff.length || 0;
-    const totalClasses = (classesCache || []).length;
-    const totalSubjects = (window.subjectsCache || []).length;
- 
-    const totalExpenseCents = txs.filter(t => String(t.target_type).toLowerCase() === 'expense').reduce((s,t)=> s + (Number(t.amount_cents||0)), 0);
-    const staffPaymentsCents = txs.filter(t => String(t.target_type).toLowerCase() === 'staff' && Number(t.amount_cents||0) > 0).reduce((s,t)=> s + (Number(t.amount_cents||0)), 0);
-    const teacherPaymentsCents = txs.filter(t => String(t.target_type).toLowerCase() === 'teacher' && Number(t.amount_cents||0) > 0).reduce((s,t)=> s + (Number(t.amount_cents||0)), 0);
-    const totalExpensesPlusCents = totalExpenseCents + staffPaymentsCents + teacherPaymentsCents;
-    const totalRevenueCents = txs.filter(t => String(t.target_type).toLowerCase() === 'student' || t.type === 'monthly' || String(t.type).toLowerCase() === 'payment').reduce((s,t)=> s + (Number(t.amount_cents||0)), 0);
- 
-    const totalStudentsBalanceCents = (students || []).reduce((s,st) => s + getBalanceCents(st), 0);
-    const totalTeachersBalanceCents = (teachers || []).reduce((s,tch) => s + getBalanceCents(tch), 0);
- 
-    const profitCents = totalRevenueCents - totalExpensesPlusCents;
- 
-    const periodLen = Math.max(1, range.end - range.start);
-    const prevStart = range.start - periodLen;
-    const prevEnd = range.start - 1;
-    const txsPrev = (transactionsCache || []).filter(t => !t.is_deleted && tsToMs(t.createdAt) >= prevStart && tsToMs(t.createdAt) <= prevEnd);
-    const prevRevenueCents = txsPrev.filter(t => String(t.target_type).toLowerCase() === 'student').reduce((s,t)=> s + (Number(t.amount_cents||0)), 0);
- 
-    return {
-      totalStudents, totalTeachers, totalStaff, totalClasses, totalSubjects,
-      totalExpenseCents, staffPaymentsCents, teacherPaymentsCents, totalExpensesPlusCents,
-      totalRevenueCents, totalStudentsBalanceCents, totalTeachersBalanceCents, profitCents, prevRevenueCents
-    };
-  }
- 
-  // ---------- KPI rendering ----------
-  function iconToSvg(name, size = 18) {
-    const common = `width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false"`;
-    const svgs = {
-      'mdi-school': `<svg ${common}><path d="M12 3L2 9l10 6 10-6-10-6z" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/><path d="M6 10v6a6 6 0 006 6 6 6 0 006-6v-6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
-      'mdi-teacher': `<svg ${common}><circle cx="12" cy="8" r="2.25" stroke="currentColor" stroke-width="1.2"/><path d="M5 20c1-3 4-5 7-5s6 2 7 5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
-      'mdi-account-group': `<svg ${common}><path d="M16 11c1.657 0 3-1.343 3-3S17.657 5 16 5s-3 1.343-3 3 1.343 3 3 3zM8 11c1.657 0 3-1.343 3-3S9.657 5 8 5 5 6.343 5 8s1.343 3 3 3zM2 19c0-2.761 3.582-5 8-5s8 2.239 8 5" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
-      'mdi-domain': `<svg ${common}><rect x="3" y="6" width="18" height="12" rx="2" stroke="currentColor" stroke-width="1.2"/><path d="M7 10h3M7 14h3M14 10h3M14 14h3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>`,
-      'mdi-book-open-page-variant': `<svg ${common}><path d="M3 6.5C3 5.119 4.12 4 5.5 4h0C7.46 4 9.02 5.06 12 6.5c2.98-1.44 4.54-2.5 6.5-2.5h0c1.38 0 2.5 1.12 2.5 2.5V19c0 .55-.45 1-1 1H5c-.55 0-1-.45-1-1V6.5z" stroke="currentColor" stroke-width="1.1" fill="none"/></svg>`,
-      'mdi-file-cabinet': `<svg ${common}><rect x="3.5" y="3.5" width="17" height="17" rx="1.2" stroke="currentColor" stroke-width="1.1"/><path d="M7 8h10M7 13h10" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg>`,
-      'mdi-cash-multiple': `<svg ${common}><rect x="2.5" y="6" width="19" height="12" rx="1.2" stroke="currentColor" stroke-width="1.1"/><circle cx="12" cy="12" r="2.1" stroke="currentColor" stroke-width="1.1"/><path d="M7 9v6M17 9v6" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg>`,
-      'mdi-currency-usd': `<svg ${common}><path d="M12 8v8M10 6h4M9 18h6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
-      'mdi-chart-line': `<svg ${common}><path d="M3 17h18M6 12l4 3 6-8 5 5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
-      'mdi-scale': `<svg ${common}><path d="M12 3v3M5 21h14M7 21a5 5 0 0 1 10 0M4 10h16" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
-      'mdi-bell': `<svg ${common}><path d="M15 17H9a3 3 0 0 1-3-3V11c0-3 2-5 5-6V4a1 1 0 0 1 2 0v1c3 1 5 3 5 6v3a3 3 0 0 1-3 3zM8 19a4 4 0 0 0 8 0" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/></svg>`
-    };
-    return svgs[name] || svgs['mdi-school'];
-  }
- 
- 
- 
-    // --------- KPI tile rendering with colors ---------
-  // color palette (tweak hexes as you like)
-  const KPI_PALETTE = {
-    green: { accent: '#059669', lightBg: 'rgba(5,150,105,0.08)', text: '#065f46' }, // revenue/profit
-    red:   { accent: '#ef4444', lightBg: 'rgba(239,68,68,0.06)', text: '#7f1d1d' },   // students/teachers/classes (strong)
-    orange:{ accent: '#f59e0b', lightBg: 'rgba(245,158,11,0.06)', text: '#92400e' },  // expenses/warnings
-    blue:  { accent: '#2563eb', lightBg: 'rgba(11,116,255,0.06)', text: '#0b4fcf' }   // neutral / others
-  };
- 
-  // default mapping KPI key -> palette
-  const KPI_COLOR_MAP = {
-    students: 'red',
-    teachers: 'red',
-    staff: 'red',
-    classes: 'red',
-    subjects: 'red',
-    expense: 'orange',
-    expenses_plus: 'orange',
-    revenue: 'green',
-    profit: 'green',
-    total_balance: 'orange' // toggles between students/teachers, keep orange to highlight
-  };
- 
-  // small helper to ensure a palette object
-  function paletteForKey(key){
-    const k = KPI_COLOR_MAP[key] || 'blue';
-    return KPI_PALETTE[k] || KPI_PALETTE.blue;
-  }
- 
-  // tileHtml now accepts an optional color palette
-  function tileHtml(icon,label,value,key,tooltip,showChange, palette){
-    const pal = palette || paletteForKey(key);
-    const iconBg = pal.lightBg;
-    const accent = pal.accent;
-    const valueColor = pal.text;
-    return `
-      <div class="card kpi-tile" data-key="${key}" title="${tooltip||''}" style="padding:12px;cursor:pointer;transition:transform .12s ease,box-shadow .12s ease;border-left:4px solid ${accent};box-shadow: 0 6px 18px rgba(15,23,42,0.04);">
-        <div style="display:flex;justify-content:space-between;align-items:center">
-          <div style="display:flex;gap:12px;align-items:center;min-width:0">
-            <div style="width:46px;height:46px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-weight:900;color:${accent};background:${iconBg};flex:0 0 46px">
-              ${iconToSvg(icon,18)}
-            </div>
-            <div style="min-width:0">
-              <div style="font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${label}</div>
-              <div style="font-weight:900;font-size:1.05rem;margin-top:6px;color:${valueColor}">${value}</div>
-            </div>
-          </div>
-          <div style="text-align:right">${showChange?`<div class="muted" style="font-size:0.85rem">vs prev</div><div class="muted" style="font-size:0.85rem">—</div>`:''}</div>
-        </div>
-      </div>
-    `;
-  }
- 
-  // balance tile uses palette depending on mode
-  function tileHtmlToggleBalance(kpis, mode) {
-    const studentsVal = formatMoney(kpis.totalStudentsBalanceCents);
-    const teachersVal = formatMoney(kpis.totalTeachersBalanceCents);
-    const shown = mode === 'students' ? studentsVal : teachersVal;
-    const label = `Total Balance: ${mode === 'students' ? 'Students' : 'Teachers'}`;
-    // choose palette: students -> red (owing), teachers -> blue (neutral)
-    const pal = mode === 'students' ? KPI_PALETTE.red : KPI_PALETTE.blue;
-    const iconBg = pal.lightBg;
-    const accent = pal.accent;
-    const valueColor = pal.text;
-    return `
-      <div class="card kpi-tile" data-key="total_balance" style="padding:12px;cursor:pointer;border-left:4px solid ${accent};box-shadow: 0 6px 18px rgba(15,23,42,0.04);">
-        <div style="display:flex;justify-content:space-between;align-items:center">
-          <div style="display:flex;gap:12px;align-items:center">
-            <div style="width:46px;height:46px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-weight:900;color:${accent};background:${iconBg}">
-              ${iconToSvg('mdi-scale',18)}
-            </div>
-            <div>
-              <div style="font-weight:800">${label}</div>
-              <div style="font-weight:900;font-size:1.05rem;margin-top:6px;color:${valueColor}">${shown}</div>
-              <div style="margin-top:6px"><button id="kpi-balance-toggle" class="btn btn-ghost" style="padding:6px 8px">${mode === 'students' ? 'Switch to Teachers' : 'Switch to Students'}</button></div>
-            </div>
-          </div>
-        </div>
-      </div>
-    `;
-  }
- 
-  // renderKPIs now injects palette into each tile and adds hover behaviour wiring
-  function renderKPIs(kpis) {
-    kpisRoot.innerHTML = `
-      ${tileHtml('mdi-school','Total Students', kpis.totalStudents, 'students', `Count of registered students`, false)}
-      ${tileHtml('mdi-teacher','Total Teachers', kpis.totalTeachers, 'teachers', `Count of registered teachers`, false)}
-      ${tileHtml('mdi-account-group','Total Staff', kpis.totalStaff, 'staff', `Count of registered staff`, false)}
-      ${tileHtml('mdi-domain','Total Classes', kpis.totalClasses, 'classes', `Count of classes`, false)}
-      ${tileHtml('mdi-book-open-page-variant','Total Subjects', kpis.totalSubjects, 'subjects', `Count of subjects`, false)}
- 
-      ${tileHtml('mdi-file-cabinet','Total Expense', formatMoney(kpis.totalExpenseCents), 'expense', `Total recorded non-payroll expenses between selected dates. Source: transactions (target_type='expense')`, true)}
-      ${tileHtml('mdi-cash-multiple','Total Expenses+', formatMoney(kpis.totalExpensesPlusCents), 'expenses_plus', `Total Expenses+ = recorded expenses + staff payments + teacher payouts.`, true)}
-      ${tileHtml('mdi-currency-usd','Total Revenue', formatMoney(kpis.totalRevenueCents), 'revenue', `Total Revenue = sum of student payments recorded in selected date range. Source: Payments/transactions`, true)}
-      ${tileHtmlToggleBalance(kpis, totalBalanceMode)}
-      ${tileHtml('mdi-chart-line','Total Profit', formatMoney(kpis.profitCents), 'profit', `Total Profit = Total Revenue − Total Expenses+`, true)}
-    `;
- 
-    // small UX: subtle scale on hover for all tiles
-    kpisRoot.querySelectorAll('.kpi-tile').forEach(tile => {
-      tile.style.transition = 'transform .12s ease, box-shadow .12s ease';
-      tile.addEventListener('mouseenter', () => { tile.style.transform = 'translateY(-4px)'; tile.style.boxShadow = '0 10px 30px rgba(15,23,42,0.08)'; });
-      tile.addEventListener('mouseleave', () => { tile.style.transform = 'translateY(0)'; tile.style.boxShadow = '0 6px 18px rgba(15,23,42,0.04)'; });
-    });
- 
-    // wire tile clicks
-    kpisRoot.querySelectorAll('.kpi-tile').forEach(tile => tile.addEventListener('click', e => {
-      const key = tile.dataset.key;
-      openKpiDrillDown(key);
-    }));
- 
-    // wire balance toggle preserved
-    const toggleBtn = kpisRoot.querySelector('#kpi-balance-toggle');
-    if (toggleBtn) {
-      toggleBtn.addEventListener('click', (ev) => {
-        ev.stopPropagation();
-        totalBalanceMode = totalBalanceMode === 'students' ? 'teachers' : 'students';
-        localStorage.setItem('dashboard_total_balance_mode', totalBalanceMode);
-        renderKPIs(computeKPIs(currentRange));
-      });
-    }
-  }
- 
- 
- 
- 
- 
- 
- 
-  // ---------- drilldowns ----------
-  function openKpiDrillDown(key) {
-    if (key === 'students') { showPage && showPage('students'); }
-    else if (key === 'teachers') { showPage && showPage('teachers'); }
-    else if (key === 'staff') { renderPayments && renderPayments(); showPage && showPage('payments'); setTimeout(() => { const btn = document.getElementById('paymentsTabStaff'); if (btn) btn.click(); renderPaymentsList && renderPaymentsList('staff'); }, 200); }
-    else if (key === 'classes') { showPage && showPage('classes'); }
-    else if (key === 'subjects') { showPage && showPage('subjects'); }
-    else if (key === 'expense' || key === 'expenses_plus') { renderPayments && renderPayments(); showPage && showPage('payments'); setTimeout(()=>{ const btn = document.getElementById('paymentsTabExpenses'); if (btn) btn.click(); renderPaymentsList && renderPaymentsList('expenses'); },200); }
-    else if (key === 'revenue') { renderPayments && renderPayments(); showPage && showPage('payments'); setTimeout(()=>{ const btn = document.getElementById('paymentsTabStudents'); if (btn) btn.click(); renderPaymentsList && renderPaymentsList('students'); },200); }
-    else if (key === 'total_balance') { if (totalBalanceMode === 'students') openOutstandingDrillDown('students'); else openOutstandingDrillDown('teachers'); }
-    else if (key === 'profit') {
-      const range = currentRange; const k = computeKPIs(range);
-      const html = `
-        <div><strong>Profit breakdown</strong></div>
-        <div style="margin-top:8px">Total Revenue: <strong>${formatMoney(k.totalRevenueCents)}</strong></div>
-        <div>Total Expense: <strong>${formatMoney(k.totalExpenseCents)}</strong></div>
-        <div>Staff payments: <strong>${formatMoney(k.staffPaymentsCents)}</strong></div>
-        <div>Teacher payouts: <strong>${formatMoney(k.teacherPaymentsCents)}</strong></div>
-        <div style="margin-top:10px">Profit: <strong>${formatMoney(k.profitCents)}</strong></div>
-        <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
-          <button id="profitGoPayments" class="btn btn-ghost">Go to Payments (Students)</button>
-          <button id="profitClose" class="btn btn-primary">Close</button>
-        </div>
-      `;
-      showModal('Profit breakdown', html);
-      modalBody.querySelector('#profitGoPayments').addEventListener('click', () => {
-        closeModal();
-        renderPayments && renderPayments();
-        showPage && showPage('payments');
-        setTimeout(()=>{ const btn = document.getElementById('paymentsTabStudents'); if (btn) btn.click(); renderPaymentsList && renderPaymentsList('students'); },200);
-      });
-      modalBody.querySelector('#profitClose').addEventListener('click', closeModal);
-    }
-  }
- 
-  function openOutstandingDrillDown(kind) {
-    const rows = (kind === 'students' ? (studentsCache || []) : (teachersCache || [])).map((r) => ({
-      id: r.studentId || r.id || r.uid || r._id,
-      name: r.fullName || r.name || r.displayName || '—',
-      balance_cents: getBalanceCents(r),
-      className: typeof resolveClassName === 'function' ? resolveClassName(r) : (r.class || r.className || '—')
-    })).filter(x => Number(x.balance_cents || 0) > 0).sort((a,b) => b.balance_cents - a.balance_cents);
- 
-    const body = document.createElement('div');
-    body.innerHTML = `<div style="font-weight:900">${kind === 'students' ? 'Students' : 'Teachers'} outstanding</div>`;
-    const table = document.createElement('div');
-    table.style.marginTop = '8px';
-    table.innerHTML = `<div style="max-height:60vh;overflow:auto"><table style="width:100%;border-collapse:collapse"><thead><tr><th>No</th><th>Name / ID</th><th>Balance</th><th>Action</th></tr></thead><tbody>${
-      rows.map((r, idx) => `<tr style="border-bottom:1px solid #f1f5f9"><td>${idx+1}</td><td>${escape(r.name)}<div class="muted">${escape(r.id||'')}</div></td><td>${formatMoney(r.balance_cents)}</td><td><button class="btn btn-primary record-pay" data-id="${escape(r.id)}">Record Payment</button> <button class="btn btn-ghost view-tx" data-id="${escape(r.id)}">View</button></td></tr>`).join('')
-    }</tbody></table></div>`;
-    body.appendChild(table);
-    showModal(`${kind === 'students' ? 'Students' : 'Teachers'} Outstanding`, body.innerHTML);
-    modalBody.querySelectorAll('.record-pay').forEach(b => b.addEventListener('click', ev => openPayModal(ev.currentTarget)));
-    modalBody.querySelectorAll('.view-tx').forEach(b => b.addEventListener('click', ev => { const id = ev.currentTarget.dataset.id; if (typeof openViewTransactionsModal === 'function') openViewTransactionsModal(id); else if (typeof openViewTransactions === 'function') openViewTransactions(id); }));
-  }
- 
-  // ---------- Charts ----------
-  let paymentsChart = page._paymentsChart || null;
-  let teachersChart = page._teachersChart || null;
- 
-  function aggregateTransactionsForChart(txs, range, granularity) {
-    const buckets = {};
-    const toKey = (ms) => {
-      const d = new Date(ms);
-      if (granularity === 'daily') return d.toISOString().slice(0,10);
-      if (granularity === 'weekly') { const sat = new Date(d); while (sat.getDay() !== 6) sat.setDate(sat.getDate() - 1); return sat.toISOString().slice(0,10); }
-      return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
-    };
- 
-    const labelsSet = new Set();
-    const cursor = new Date(range.start);
-    while (cursor.getTime() <= range.end) {
-      labelsSet.add(toKey(cursor.getTime()));
-      if (granularity === 'daily') cursor.setDate(cursor.getDate() + 1);
-      else if (granularity === 'weekly') cursor.setDate(cursor.getDate() + 7);
-      else cursor.setMonth(cursor.getMonth() + 1);
-    }
- 
-    (txs || []).forEach(t => {
-      const ms = tsToMs(t.createdAt);
-      if (ms < range.start || ms > range.end) return;
-      const k = toKey(ms);
-      buckets[k] = (buckets[k] || 0) + Number(t.amount_cents || 0);
-    });
- 
-    const labels = Array.from(labelsSet).sort();
-    const series = labels.map(l => buckets[l] || 0);
-    return { labels, series };
-  }
- 
-  function renderCharts(range) {
-    const allTxs = (transactionsCache || []).filter(t => !t.is_deleted);
-    const payments = allTxs.filter(t => String(t.target_type).toLowerCase() === 'student' || t.type === 'monthly');
-    const granPayments = page.querySelector('#chartPaymentsGranularity').value || 'monthly';
-    const aggPayments = aggregateTransactionsForChart(payments, range, granPayments);
- 
-    const teachers = allTxs.filter(t => String(t.target_type).toLowerCase() === 'teacher' || String(t.type).toLowerCase() === 'salary' || String(t.target_type).toLowerCase() === 'staff');
-    const granTeach = page.querySelector('#chartTeachersGranularity').value || 'monthly';
-    const aggTeachers = aggregateTransactionsForChart(teachers, range, granTeach);
- 
-    if (typeof Chart === 'undefined') {
-      if (chartPaymentsCanvas && chartPaymentsCanvas.getContext) chartPaymentsCanvas.getContext('2d').fillText('Chart.js not loaded', 10, 20);
-      return;
-    }
- 
-    chartPaymentsCanvas.style.height = '220px';
-    if (paymentsChart) try { paymentsChart.destroy(); } catch(e) {}
-    paymentsChart = new Chart(chartPaymentsCanvas.getContext('2d'), {
-      type: 'bar',
-      data: {
-        labels: aggPayments.labels,
-        datasets: [{
-          label: 'Student payments',
-          data: aggPayments.series.map(v => v/100),
-          borderWidth: 0,
-          backgroundColor: 'rgba(11,116,255,0.9)'
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: true,
-        plugins: {
-          tooltip: {
-            callbacks: {
-              label: ctx => `${ctx.dataset.label}: ${formatMoney(Math.round(ctx.raw*100))}`
-            }
-          }
-        },
-        scales: { y: { beginAtZero: true } }
-      }
-    });
-    page._paymentsChart = paymentsChart;
- 
-    chartTeachersCanvas.style.height = '220px';
-    if (teachersChart) try { teachersChart.destroy(); } catch(e) {}
-    teachersChart = new Chart(chartTeachersCanvas.getContext('2d'), {
-      type: 'line',
-      data: {
-        labels: aggTeachers.labels,
-        datasets: [{
-          label: 'Teacher payouts',
-          data: aggTeachers.series.map(v => v/100),
-          borderWidth: 2,
-          tension: 0.2,
-          fill: false,
-          borderColor: 'rgba(255,99,71,0.9)'
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: true,
-        plugins: {
-          tooltip: {
-            callbacks: {
-              label: ctx => `${ctx.dataset.label}: ${formatMoney(Math.round(ctx.raw*100))}`
-            }
-          }
-        },
-        scales: { y: { beginAtZero: true } }
-      }
-    });
-    page._teachersChart = teachersChart;
- 
-    if (lastRefEl) {
-      lastRefEl.textContent = `Last refreshed: ${new Date().toLocaleString()}`;
-    }
-        adjustChartsLayoutForViewport();
-  }
- 
-  // Call this inside renderCharts (at the end) or after renderCharts(currentRange)
- function adjustChartsLayoutForViewport() {
-   const chartsRow = page.querySelector('#chartsRow');
-   if (!chartsRow) return;
-   if (isMobileViewport && isMobileViewport()) {
-     // stack vertically on mobile
-     chartsRow.style.gridTemplateColumns = '1fr';
-     // ensure Student Payments card comes before Teacher Payments
-     const paymentsCard = chartsRow.querySelector('#chartPayments') ? chartsRow.querySelector('#chartPayments').closest('.card') : null;
-     const teachersCard = chartsRow.querySelector('#chartTeachers') ? chartsRow.querySelector('#chartTeachers').closest('.card') : null;
-     if (paymentsCard && teachersCard) {
-       chartsRow.appendChild(paymentsCard); // append in order: payments first
-       chartsRow.appendChild(teachersCard);
-     }
-   } else {
-     // restore two-column desktop layout
-     chartsRow.style.gridTemplateColumns = '1fr 1fr';
-   }
- }
- // usage: call adjustChartsLayoutForViewport() at end of renderCharts(currentRange)
- 
- 
- function renderOutstandingTable(range){
-  // helpers (keep same logic as your original)
-  function monthsCountBetween(startMs, endMs){
-    if(!startMs || !endMs) return 0;
-    const s = new Date(startMs); s.setDate(1); s.setHours(0,0,0,0);
-    const e = new Date(endMs);   e.setDate(1); e.setHours(0,0,0,0);
-    let count = 0;
-    while(s.getTime() <= e.getTime()){
-      count++;
-      s.setMonth(s.getMonth() + 1);
-    }
-    return count;
-  }
-  function txMatchesStudent(tx, student){
-    if(!tx || !student) return false;
-    const candidates = [ String(student.studentId||''), String(student.id||''), String(student.uid||''), String(student._id||'') ].filter(Boolean);
-    const targetId = String(tx.target_id||tx.target||'');
-    return candidates.includes(targetId);
-  }
-
-  const monthsInRange = monthsCountBetween(range.start, range.end) || 1;
-  const students = (studentsCache || []);
-
-  // build normalized rows (and filter conservatively to student-like records only)
-  const rows = students.map(s => {
-    let feeVal = 0;
-    if (s.fee != null && s.fee !== '') feeVal = Number(s.fee) || 0;
-    else if (s.monthlyFee != null) feeVal = Number(s.monthlyFee) || 0;
-    const feeCents = Math.round(feeVal * 100);
-    const assignedForRange = feeCents * monthsInRange;
-
-    const payments = (transactionsCache || []).filter(tx => {
-      if(tx.is_deleted) return false;
-      const ms = (tx.createdAt && (tx.createdAt.seconds || tx.createdAt._seconds)) ? ((tx.createdAt.seconds || tx.createdAt._seconds) * 1000) : (tsToMs(tx.createdAt) || 0);
-      if(ms < range.start || ms > range.end) return false;
-      const ttype = String(tx.type || '').toLowerCase();
-      const isPaymentType = ttype === 'monthly' || ttype === 'payment' || String(tx.target_type||'').toLowerCase()==='student';
-      if(!isPaymentType) return false;
-      return txMatchesStudent(tx, s);
-    });
-    const paymentsReceivedCents = payments.reduce((sum,tx)=> sum + (Number(tx.amount_cents || 0)), 0);
-
-    let outstandingCents = Math.max(0, Math.round(assignedForRange || 0) - Math.round(paymentsReceivedCents || 0));
-    if (outstandingCents === 0) {
-      const bal = getBalanceCents(s);
-      if (Number(bal) !== 0) outstandingCents = Math.abs(Number(bal) || 0);
-    }
-
-    return {
-      id: s.studentId || s.id || s.uid || s._id || '',
-      name: s.fullName || s.name || s.displayName || '—',
-      className: (typeof resolveClassName === 'function') ? resolveClassName(s) : (s.class || s.className || '—'),
-      owing_cents: outstandingCents,
-      rawAssignedCents: assignedForRange,
-      rawPaymentsReceivedCents: paymentsReceivedCents,
-      phone: s.parentPhone || s.phone || '—',
-      sourceRecord: s
-    };
-  }).filter(r => {
-    // Conservative student filter: require at least one student-identifying field.
-    const sr = r.sourceRecord || {};
-    const isStudentLike = Boolean(r.id) || Boolean(sr.class) || Boolean(sr.monthlyFee) || Boolean(sr.fee) || Boolean(sr.parentPhone);
-    return isStudentLike;
-  });
-
-  // Top 10 owe rows
-  const oweRows = rows.filter(r => Number(r.owing_cents || 0) > 0).sort((a,b)=> b.owing_cents - a.owing_cents);
-  const top10 = oweRows.slice(0,10);
-
-  // update range display if present
-  if (typeof outstandingRange !== 'undefined' && outstandingRange) outstandingRange.textContent = `${new Date(range.start).toLocaleDateString()} — ${new Date(range.end).toLocaleDateString()}`;
-
-  if(!top10.length){
-    outstandingTableRoot.innerHTML = `<div class="muted" style="padding:12px">No outstanding student payments found for the selected period.</div>`;
-    return;
-  }
-
-  // Build mobile header (mobile-only)
-  const headerHtml = `
-<div class="mobile-top10-header mobile-only">
-  <div class="h-title">Top 10 Outstanding Student Payments</div>
-  <div class="h-sub">${new Date(range.start).toLocaleDateString()} — ${new Date(range.end).toLocaleDateString()}</div>
-
-  <div class="h-row">
-    <input id="outstandingSearch" type="search" placeholder="Search name / ID" />
-  </div>
-
-  <div class="h-actions">
-    <button id="exportOutstandingCsv" class="btn btn-ghost">Export CSV</button>
-    <button id="sendOutstandingReminder" class="btn btn-primary">Send Reminder</button>
-  </div>
-</div>
-`;
-
-  // Build mobile rows (using classes so CSS rules apply)
-  let mobileListHtml = `<div class="mobile-only" style="display:flex;flex-direction:column;gap:8px">`;
-  top10.forEach((r, idx) => {
-    mobileListHtml += `
-      <div class="list-row" data-name="${escape(String(r.name||'').toLowerCase())}" data-id="${escape(String(r.id||'').toLowerCase())}">
-        <div class="row-left">
-          <div class="no-badge">${idx+1}</div>
-          <div style="min-width:0">
-            <div class="title">${escape(r.name)}</div>
-            <div class="sub id">ID: ${escape(String(r.id))} • ${escape(r.className)}</div>
-          </div>
-        </div>
-
-        <div class="amount">${formatMoney(r.owing_cents)}</div>
-
-        <div class="row-actions" aria-hidden="false">
-          <button class="btn record-pay btn-primary" data-id="${escape(r.id)}" title="Record payment">${svgPay()}</button>
-          <button class="btn view-trans" data-id="${escape(r.id)}" title="View transactions">${svgView()}</button>
-        </div>
-      </div>
-    `;
-  });
-  mobileListHtml += `</div>`;
-
-  // Build desktop table (kept separate)
-  let desktopHtml = `<div class="desktop-only"><div style="overflow:auto"><table style="width:100%;border-collapse:collapse"><thead><tr>
-      <th>No</th><th>Name (ID)</th><th>Class</th><th style="text-align:right">Outstanding</th><th>Assigned</th><th>Paid (period)</th><th>Actions</th>
-    </tr></thead><tbody>`;
-  top10.forEach((r, idx) => {
-    desktopHtml += `<tr style="border-bottom:1px solid #f1f5f9">
-      <td style="padding:8px">${idx+1}</td>
-      <td style="padding:8px">
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
-          <div style="min-width:0">
-            <div style="font-weight:900">${escape(r.name)}</div>
-            <div class="muted">${escape(r.id)}</div>
-          </div>
-          <div style="text-align:right;font-weight:900;color:#b91c1c">${formatMoney(r.owing_cents)}</div>
-        </div>
-      </td>
-      <td style="padding:8px;text-align:right">${formatMoney(r.rawAssignedCents)}</td>
-      <td style="padding:8px;text-align:right;color:#059669">${formatMoney(r.rawPaymentsReceivedCents)}</td>
-      <td style="padding:8px">
-        <button class="btn btn-primary btn-sm record-pay" data-id="${escape(r.id)}" title="Record payment">${svgPay()}</button>
-        <button class="btn btn-ghost btn-sm view-trans" data-id="${escape(r.id)}" title="View transactions">${svgView()}</button>
-      </td>
-    </tr>`;
-  });
-  desktopHtml += `</tbody></table></div></div>`;
-
-  // Inject into DOM
-  outstandingTableRoot.innerHTML = headerHtml + mobileListHtml + desktopHtml;
-
-  // Wire actions for record-pay & view-trans (both mobile & desktop)
-  outstandingTableRoot.querySelectorAll('.record-pay').forEach(b => {
-    b.addEventListener('click', ev => {
-      const id = ev.currentTarget.dataset.id;
-      openPayModal({ dataset: { id } });
-    });
-  });
-  outstandingTableRoot.querySelectorAll('.view-trans').forEach(b => {
-    b.addEventListener('click', ev => {
-      const id = ev.currentTarget.dataset.id;
-      if (typeof openViewTransactionsModal === 'function') openViewTransactionsModal({ dataset: { id } });
-      else if (typeof openViewTransactions === 'function') openViewTransactions(id);
-    });
-  });
-
-  // Live search filter for mobile rows (no re-render)
-  const searchInput = outstandingTableRoot.querySelector('#outstandingSearch');
-  if (searchInput) {
-    searchInput.value = ''; // reset
-    searchInput.addEventListener('input', (ev) => {
-      const q = String(ev.target.value || '').trim().toLowerCase();
-      outstandingTableRoot.querySelectorAll('.mobile-only .list-row').forEach(row => {
-        const name = row.dataset.name || '';
-        const idv = row.dataset.id || '';
-        if (!q || name.includes(q) || idv.includes(q)) row.style.display = '';
-        else row.style.display = 'none';
-      });
-    });
-  }
-
-  // Export / reminder hooks (if you have handlers)
-  const expBtn = outstandingTableRoot.querySelector('#exportOutstandingCsv');
-  if (expBtn) expBtn.onclick = () => { if (typeof exportOutstandingCsv === 'function') exportOutstandingCsv(); else if (typeof exportCsvFromDashboard === 'function') exportCsvFromDashboard(); else toast && toast('Export not implemented'); };
-  const remBtn = outstandingTableRoot.querySelector('#sendOutstandingReminder');
-  if (remBtn) remBtn.onclick = () => { if (typeof sendOutstandingReminder === 'function') sendOutstandingReminder(); else toast && toast('Reminder not implemented'); };
-}
-
- 
- 
- // New helper: show full marks for a student + exam with exam picker + ranks/summary
- async function getStudentExamResults(studentId, examId){
-   // 1️⃣ Prefer examTotals cache (finalized results)
-   if(typeof examTotalsCache !== 'undefined'
-      && examTotalsCache
-      && examTotalsCache[examId]
-      && examTotalsCache[examId][studentId]){
- 
-     const r = examTotalsCache[examId][studentId];
- 
-     return {
-       subjects: (r.subjects || []).map(s => ({
-         subject: s.subject || s.name,
-         components: s.components || {},
-         exam: Number(s.exam || 0),
-         total: Number(s.total || s.score || 0),
-         max: Number(s.max || 0)
-       })),
-       average: Number(r.average || r.total || 0)
-     };
-   }
- 
-   // 2️⃣ Fallback: examResultsCache (draft/manual entries)
-   const list = (typeof examResultsCache !== 'undefined'
-     ? examResultsCache
-     : window.examResultsCache) || [];
- 
-   const found = list.find(r =>
-     String(r.examId) === String(examId) &&
-     String(r.studentId) === String(studentId)
-   );
- 
-   if(found){
-     return {
-       subjects: (found.subjects || []).map(s => ({
-         subject: s.subject,
-         components: s.components || {},
-         exam: Number(s.exam || 0),
-         total: Number(s.total || 0),
-         max: Number(s.max || 0)
-       })),
-       average: Number(found.average || found.total || 0)
-     };
-   }
- 
-   // 3️⃣ Nothing found
-   return null;
- }
- 
- async function openStudentMarksModal(studentId, examIdInput){
-   const student = findStudentByRef(studentId) || {};
-   const allExams = (examsCache || []).slice();
-   const publishedExams = allExams.filter(e => e.status === 'published');
-   let selectedExamId = examIdInput || (publishedExams[0] && publishedExams[0].id) || (allExams[0] && allExams[0].id) || '';
- 
-   const mobile = (typeof isMobileViewport === 'function') ? isMobileViewport() : (window.matchMedia && window.matchMedia('(max-width:768px)').matches);
- 
-   const compPretty = { assignment:'Assignment', quiz:'Quiz', monthly:'Monthly', cw1:'CW1', cw2:'CW2', exam:'Exam', linked:'Linked' };
- 
-   function gradeColor(pct){
-     if (pct >= 90) return { color:'#064e3b', bg:'rgba(5,150,105,0.08)', letter:'A' };
-     if (pct >= 75) return { color:'#1e3a8a', bg:'rgba(37,99,235,0.06)', letter:'B' };
-     if (pct >= 60) return { color:'#92400e', bg:'rgba(245,158,11,0.06)', letter:'C' };
-     return { color:'#7f1d1d', bg:'rgba(239,68,68,0.06)', letter:'D' };
-   }
- 
-   // normalize single subject item -> { subject, components, exam, compSum, linked, total, max }
-   function normalizeSubjectEntry(s){
-     const subjName = s.subject || s.name || s.title || '—';
-     let components = {};
-     if (s.components && typeof s.components === 'object') {
-       Object.keys(s.components).forEach(k => {
-         const v = s.components[k];
-         if (v == null) components[k] = 0;
-         else if (typeof v === 'object') components[k] = Number(v.total ?? v.mark ?? v.value ?? v.amount ?? 0);
-         else components[k] = Number(v || 0);
-       });
-     }
-     if (s.marks && typeof s.marks === 'object') {
-       Object.keys(s.marks).forEach(k => { if (!(k in components)) components[k] = Number(s.marks[k] || 0); });
-     }
- 
-     const topExam = (typeof s.exam !== 'undefined' && s.exam !== null && s.exam !== '') ? Number(s.exam) : 0;
-     const examPart = Math.round(Number(components.exam ?? topExam ?? 0)) || 0;
- 
-     let linkedPart = 0;
-     if (typeof components.linked !== 'undefined') {
-       const l = components.linked;
-       linkedPart = (typeof l === 'object') ? Number(l.total ?? l.mark ?? l.value ?? 0) : Number(l || 0);
-     } else if (s.linked && typeof s.linked === 'object') {
-       linkedPart = Number(s.linked.total ?? s.linked.mark ?? 0);
-     }
- 
-     const compKeys = ['assignment','quiz','monthly','cw1','cw2'];
-     let compSum = 0;
-     compKeys.forEach(k => { compSum += Number(components[k] || 0); });
- 
-     // enforce total = exam + components (non-exam) + linked
-     const computedTotal = Math.round(examPart + compSum + (linkedPart || 0));
-     const maxVal = Math.round(Number(s.max ?? s.maximum ?? s.max_mark ?? 0) || 0);
- 
-     return {
-       subject: subjName,
-       components,
-       exam: examPart,
-       compSum,
-       linked: Math.round(linkedPart || 0),
-       total: computedTotal,
-       max: maxVal
-     };
-   }
- 
-   
-   // compute ranks (preferred: examTotalsCache -> examResultsCache). returns object.
-   async function computeRanksForStudent(examId, studentId){
-     try {
-       const buildFromMap = mapObj => {
-         const arr = Object.keys(mapObj).map(sid => {
-           const r = mapObj[sid] || {};
-           const total = Number(r.total ?? r.average ?? r.score ?? r.totalScore ?? 0);
-           const sc = findStudentByRef(sid) || (studentsCache||[]).find(st => String(st.studentId||st.id||st.uid||st._id) === String(sid));
-           const className = sc ? (sc.classId || sc.class || sc.className || '') : (r.classId || r.className || r.class || '');
-           return { studentId: sid, total: Number(total || 0), className: String(className || '—') };
-         }).filter(x => !isNaN(x.total));
-         return arr;
-       };
- 
-       if (typeof examTotalsCache !== 'undefined' && examTotalsCache && examTotalsCache[examId]){
-         const mapObj = examTotalsCache[examId];
-         const arr = buildFromMap(mapObj);
-         if (arr.length){
-           arr.sort((a,b)=> b.total - a.total);
-           const schoolCount = arr.length;
-           const schoolRankMap = {}; arr.forEach((it,i)=> schoolRankMap[it.studentId] = i+1);
-           const classGroups = {};
-           arr.forEach(it => { (classGroups[it.className] = classGroups[it.className] || []).push(it); });
-           const classRankMap = {}; const classCountMap = {};
-           Object.keys(classGroups).forEach(cn => {
-             classGroups[cn].sort((a,b)=> b.total - a.total);
-             classCountMap[cn] = classGroups[cn].length;
-             classGroups[cn].forEach((it,i) => classRankMap[it.studentId] = i+1);
-           });
-           const sRank = schoolRankMap[studentId] || null;
-           const cRank = classRankMap[studentId] || null;
-           const studRec = findStudentByRef(studentId) || (studentsCache||[]).find(st => String(st.studentId||st.id||st.uid||st._id) === String(studentId)) || {};
-           const studClass = String(studRec.classId || studRec.class || studRec.className || '');
-           const classCount = classCountMap[studClass] || classCountMap['—'] || 0;
-           return { classRank: cRank, schoolRank: sRank, classCount: classCount || 0, schoolCount };
-         }
-       }
- 
-       const examResultsList = (typeof examResultsCache !== 'undefined' && examResultsCache) ? examResultsCache : (window.examResultsCache || []);
-       const filtered = examResultsList.filter(rr => String(rr.examId) === String(examId));
-       if (filtered.length){
-         const arr = filtered.map(r => {
-           const sid = String(r.studentId || r.student || r.sid || '');
-           const total = Number(r.total ?? r.average ?? r.score ?? 0) || 0;
-           const sc = findStudentByRef(sid) || (studentsCache||[]).find(st => String(st.studentId||st.id||st.uid||st._id) === String(sid));
-           const className = sc ? (sc.classId || sc.class || sc.className || '') : (r.classId || r.className || r.class || '');
-           return { studentId: sid, total, className: String(className || '—') };
-         }).filter(x => x.studentId);
-         if (arr.length){
-           arr.sort((a,b)=> b.total - a.total);
-           const schoolCount = arr.length;
-           const schoolRankMap = {}; arr.forEach((it,i)=> schoolRankMap[it.studentId] = i+1);
-           const classGroups = {};
-           arr.forEach(it => { (classGroups[it.className] = classGroups[it.className] || []).push(it); });
-           const classRankMap = {}; const classCountMap = {};
-           Object.keys(classGroups).forEach(cn => {
-             classGroups[cn].sort((a,b)=> b.total - a.total);
-             classCountMap[cn] = classGroups[cn].length;
-             classGroups[cn].forEach((it,i) => classRankMap[it.studentId] = i+1);
-           });
-           const sRank = schoolRankMap[studentId] || null;
-           const cRank = classRankMap[studentId] || null;
-           const studRec = findStudentByRef(studentId) || (studentsCache||[]).find(st => String(st.studentId||st.id||st.uid||st._id) === String(studentId)) || {};
-           const studClass = String(studRec.classId || studRec.class || studRec.className || '');
-           const classCount = classCountMap[studClass] || 0;
-           return { classRank: cRank, schoolRank: sRank, classCount: classCount || 0, schoolCount };
-         }
-       }
- 
-       return { classRank: null, schoolRank: null, classCount: 0, schoolCount: 0 };
-     } catch(e){
-       console.warn('computeRanksForStudent error', e);
-       return { classRank: null, schoolRank: null, classCount: 0, schoolCount: 0 };
-     }
-   }
- 
-   // render for a chosen exam; tries to reload caches if no results initially
-   async function renderForExam(examId){
-     // ensure examTotals/examResults loaded if available
-     try {
-       if (typeof loadExamTotalsForExam === 'function') await loadExamTotalsForExam(examId);
-       if (typeof loadExamResults === 'function') await loadExamResults(examId);
-     } catch(e){ /* ignore */ }
- 
-     // inside renderForExam(examId), add this near the top before using `exam`
- const exam = (examsCache || []).find(e => String(e.id) === String(examId)) || (allExams.find(e => String(e.id) === String(examId)) || {});
- 
-     // fetch results (helper)
-     let results = await getStudentExamResults(studentId, examId);
-     // if nothing, try an additional cache refresh and retry once
-     if ((!results || !Array.isArray(results.subjects) || results.subjects.length === 0) && typeof loadExamTotalsForExam === 'function'){
-       try {
-         await loadExamTotalsForExam(examId);
-         results = await getStudentExamResults(studentId, examId);
-       } catch(e){ /* ignore */ }
-     }
- 
-     if(!results || !Array.isArray(results.subjects) || results.subjects.length === 0){
-       modalBody.innerHTML = `<div class="muted" style="padding:12px">No results found for this student / exam.</div>`;
-       return;
-     }
- 
-     const normalized = results.subjects.map(normalizeSubjectEntry);
- 
-     // find top subject
-     let topTotal = -Infinity, topIndex = -1;
-     normalized.forEach((s,i) => { if ((s.total || 0) > topTotal){ topTotal = s.total || 0; topIndex = i; } });
- 
-     // ranks — prefer values in results, else compute
-     let classRankVal = results.classRank ?? results.class_rank ?? null;
-     let schoolRankVal = results.schoolRank ?? results.school_rank ?? null;
-     let classCount = 0, schoolCount = 0;
-     if (classRankVal == null || schoolRankVal == null){
-       const ranks = await computeRanksForStudent(examId, String(studentId));
-       classRankVal = classRankVal ?? ranks.classRank;
-       schoolRankVal = schoolRankVal ?? ranks.schoolRank;
-       classCount = classCount || ranks.classCount;
-       schoolCount = schoolCount || ranks.schoolCount;
-     }
- 
-     // fallback counts from studentsCache
-     if (!classCount || !schoolCount){
-       try {
-         const students = (studentsCache || []).filter(st => !(st.status === 'deleted'));
-         schoolCount = schoolCount || students.length;
-         const targetClassId = String(student.classId || student.class || student.className || '');
-         classCount = classCount || students.filter(st => String(st.classId || st.class || st.className || '') === targetClassId).length || 0;
-       } catch(e){}
-     }
- 
-     // build rows + compute totals
-     let grandTotal = 0, grandMax = 0;
-     const rows = normalized.map((s, idx) => {
-       const assignedParts = [];
-       ['assignment','quiz','monthly','cw1','cw2'].forEach(k => {
-         const v = Number(s.components?.[k] || 0);
-         if (v > 0) assignedParts.push(`${compPretty[k] || k}: ${v}`);
-       });
-       const lval = Number(s.linked || 0);
-       if (lval > 0) assignedParts.push(`${compPretty.linked}: ${lval}`);
-       const assignedDisplay = assignedParts.length ? assignedParts.join(' • ') : '—';
- 
-       grandTotal += Number(s.total || 0);
-       grandMax += Number(s.max || 0);
- 
-       const subjPct = (s.max && s.max > 0) ? ((s.total || 0) / s.max) * 100 : 0;
-       const gc = gradeColor(subjPct);
-       const highlight = (idx === topIndex);
- 
-       return { idx, s, assignedDisplay, subjPct, gc, highlight };
-     });
- 
-     const totalObtained = grandTotal;
-     const totalMax = grandMax || 0;
-     const avgPercent = totalMax ? (totalObtained / totalMax) * 100 : 0;
-     const avgGrade = gradeColor(avgPercent).letter;
- 
-     // exam options
-     const examOptionsHtml = (allExams.length ? allExams.map(e => `<option value="${escape(e.id)}" ${String(e.id)===String(examId)?'selected':''}>${escape(e.name||e.id)}${e.status? ' • ' + escape(e.status):''}</option>`).join('') : `<option value="">No exams</option>`);
- 
-     // prepare modal HTML (same as before) but we include grade letter in header
-     let html = `
-       <div style="display:flex;flex-direction:${mobile ? 'column' : 'row'};gap:8px;align-items:${mobile ? 'stretch' : 'center'};justify-content:space-between;margin-bottom:10px">
-         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-           <div style="font-weight:800">${escape(student.fullName || student.name || '—')}</div>
-           <div class="muted">ID: ${escape(studentId)} • Class: ${escape(student.classId || student.class || '—')}</div>
-         </div>
-         <div style="display:flex;gap:8px;align-items:center">
-           <select id="marksExamSelect" style="padding:6px;border-radius:8px">${examOptionsHtml}</select>
-           <button id="exportMarksPdf" class="btn btn-ghost">Export PDF</button>
-           <button id="printMarks" class="btn btn-ghost">Print</button>
-           <button id="closeMarks" class="btn btn-ghost">Close</button>
-         </div>
-       </div>
- 
-       <div style="display:flex;gap:12px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
-         <div style="font-weight:800">${escape(exam.name || examId || 'Exam')}</div>
-         <div class="muted">Class Rank: <strong>${escape(classRankVal ? String(classRankVal) : '—')}/${escape(classCount || '—')}</strong> • School Rank: <strong>${escape(schoolRankVal ? String(schoolRankVal) : '—')}/${escape(schoolCount || '—')}</strong></div>
-         <div style="margin-left:auto" class="muted">Total: <strong id="marksTotalBadge">${escape(String(totalObtained))} / ${escape(String(totalMax))}</strong> • Avg: <strong id="marksAvgBadge">${Number(avgPercent).toFixed(1)}%</strong> • Grade: <strong>${escape(String(avgGrade))}</strong></div>
-       </div>
- 
-       <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
-         <div style="font-size:0.9rem;color:#064e3b;background:rgba(5,150,105,0.06);padding:6px;border-radius:6px">A ≥ 90%</div>
-         <div style="font-size:0.9rem;color:#1e3a8a;background:rgba(37,99,235,0.06);padding:6px;border-radius:6px">B ≥ 75%</div>
-         <div style="font-size:0.9rem;color:#92400e;background:rgba(245,158,11,0.06);padding:6px;border-radius:6px">C ≥ 60%</div>
-         <div style="font-size:0.9rem;color:#7f1d1d;background:rgba(239,68,68,0.06);padding:6px;border-radius:6px">D &lt; 60%</div>
-       </div>
-     `;
- 
-     // desktop or mobile representation
-     if (!mobile){
-       html += `
-         <div style="overflow:auto">
-           <table id="marksTable" style="width:100%;border-collapse:collapse;font-size:14px">
-             <thead>
-               <tr style="background:#f1f5f9">
-                 <th style="padding:8px;text-align:left">Subject</th>
-                 <th style="padding:8px;text-align:left">Components Assigned</th>
-                 <th style="padding:8px;text-align:center">Exam</th>
-                 <th style="padding:8px;text-align:center">Total</th>
-                 <th style="padding:8px;text-align:center">Max</th>
-                 <th style="padding:8px;text-align:center">Grade</th>
-               </tr>
-             </thead>
-             <tbody>
-               ${rows.map(r => {
-                 const s = r.s;
-                 const colorStyle = `color:${r.gc.color};background:${r.gc.bg};border-radius:6px;padding:6px 8px;display:inline-block;font-weight:700`;
-                 const rowBg = r.highlight ? 'background:linear-gradient(90deg, rgba(255,250,230,0.6), transparent);' : '';
-                 return `<tr style="${rowBg}"><td style="padding:8px;vertical-align:top">${escape(s.subject)}</td><td style="padding:8px;vertical-align:top" class="muted">${escape(r.assignedDisplay)}</td><td style="padding:8px;text-align:center;vertical-align:top">${escape(String(Math.round(s.exam || 0)))}</td><td style="padding:8px;text-align:center;vertical-align:top;font-weight:800">${escape(String(Math.round(s.total || 0)))}</td><td style="padding:8px;text-align:center;vertical-align:top">${escape(String(Math.round(s.max || 0)))}</td><td style="padding:8px;text-align:center;vertical-align:top"><span style="${colorStyle}">${escape(r.gc.letter)}</span></td></tr>`; 
-               }).join('')}
-             </tbody>
-           </table>
-         </div>
-       `;
-     } else {
-       html += `<div id="marksMobileList" style="display:flex;flex-direction:column;gap:10px">`;
-       rows.forEach(r=>{
-         const s = r.s;
-         const colorStyle = `color:${r.gc.color};background:${r.gc.bg};border-radius:6px;padding:6px 8px;font-weight:700`;
-         const highlightStyle = r.highlight ? 'box-shadow:0 6px 18px rgba(0,0,0,0.06);' : '';
-         html += `
-           <div style="border:1px solid #f1f5f9;padding:10px;border-radius:8px;${highlightStyle}">
-             <div style="display:flex;justify-content:space-between;align-items:center">
-               <div style="font-weight:800">${escape(s.subject)}</div>
-               <div style="${colorStyle}">${escape(r.gc.letter)}</div>
-             </div>
-             <div style="margin-top:6px" class="muted">${escape(r.assignedDisplay)}</div>
-             <div style="display:flex;gap:12px;margin-top:8px;align-items:center">
-               <div style="flex:1">Exam: <strong>${escape(String(Math.round(s.exam||0)))}</strong></div>
-               <div style="flex:1;text-align:center">Total: <strong>${escape(String(Math.round(s.total||0)))}</strong></div>
-               <div style="flex:1;text-align:right">Max: <strong>${escape(String(Math.round(s.max||0)))}</strong></div>
-             </div>
-           </div>
-         `;
-       });
-       html += `</div>`;
-     }
- 
-     // set modal content
-     modalBody.innerHTML = html;
- 
-     // --- wiring ---
- 
-     // exam select change: try to re-render selected exam (retry loads inside renderForExam)
-     const sel = modalBody.querySelector('#marksExamSelect');
-     if (sel){
-       sel.onchange = async (ev) => {
-         selectedExamId = ev.target.value;
-         // ensure selectedExamId is used for PDF/print
-         await renderForExam(selectedExamId);
-       };
-     }
- 
-     // Build a clean report HTML for export/print (no buttons)
-     function buildPrintableReportHtml(){
-       const header = `
-         <div style="font-family:Inter,system-ui,-apple-system,Segoe UI,Arial,sans-serif;padding:12px">
-           <h2 style="margin:0">${escape(student.fullName || student.name || '')}</h2>
-           <div style="margin-top:6px">ID: ${escape(studentId)} • Class: ${escape(student.classId || student.class || '—')}</div>
-           <div style="margin-top:6px">Exam: ${escape(exam.name || selectedExamId || '')}</div>
-           <div style="margin-top:6px">Class Rank: ${escape(classRankVal ? String(classRankVal) : '—')}/${escape(classCount || '—')} • School Rank: ${escape(schoolRankVal ? String(schoolRankVal) : '—')}/${escape(schoolCount || '—')}</div>
-           <div style="margin-top:6px">Total: ${escape(String(totalObtained))} / ${escape(String(totalMax))} • Avg: ${Number(avgPercent).toFixed(1)}% • Grade: ${escape(String(avgGrade))}</div>
-         </div>
-       `;
-       // table rows
-       const rowsHtml = normalized.map(s => {
-         const assignedParts = [];
-         ['assignment','quiz','monthly','cw1','cw2'].forEach(k => {
-           const v = Number(s.components?.[k] || 0);
-           if (v > 0) assignedParts.push(`${compPretty[k] || k}: ${v}`);
-         });
-         const l = Number(s.linked || 0);
-         if (l>0) assignedParts.push(`${compPretty.linked}: ${l}`);
-         const assignedDisplay = assignedParts.length ? assignedParts.join(' • ') : '—';
-         const pct = (s.max && s.max>0) ? ((s.total||0)/s.max)*100 : 0;
-         const grade = gradeColor(pct).letter;
-         return `<tr>
-           <td style="padding:6px;border:1px solid #ddd">${escape(s.subject)}</td>
-           <td style="padding:6px;border:1px solid #ddd">${escape(assignedDisplay)}</td>
-           <td style="padding:6px;border:1px solid #ddd;text-align:center">${escape(String(s.exam||0))}</td>
-           <td style="padding:6px;border:1px solid #ddd;text-align:center">${escape(String(s.total||0))}</td>
-           <td style="padding:6px;border:1px solid #ddd;text-align:center">${escape(String(s.max||0))}</td>
-           <td style="padding:6px;border:1px solid #ddd;text-align:center">${escape(grade)}</td>
-         </tr>`; 
-       }).join('');
-       const table = `<table style="width:100%;border-collapse:collapse;font-family:Inter,system-ui,-apple-system,Segoe UI,Arial,sans-serif"><thead><tr><th style="padding:8px;border:1px solid #ddd;background:#f8fafc">Subject</th><th style="padding:8px;border:1px solid #ddd;background:#f8fafc">Components Assigned</th><th style="padding:8px;border:1px solid #ddd;background:#f8fafc">Exam</th><th style="padding:8px;border:1px solid #ddd;background:#f8fafc">Total</th><th style="padding:8px;border:1px solid #ddd;background:#f8fafc">Max</th><th style="padding:8px;border:1px solid #ddd;background:#f8fafc">Grade</th></tr></thead><tbody>${rowsHtml}</tbody></table>`;
-       return `<div>${header}${table}</div>`;
-     }
- 
-     // Export PDF: create clean report and render via html2canvas/jsPDF
-     const exportBtn = modalBody.querySelector('#exportMarksPdf');
-     if (exportBtn){
-       exportBtn.onclick = async () => {
-         try {
-           const reportHtml = buildPrintableReportHtml();
-           // create a hidden container in DOM
-           let tmp = document.getElementById('_marks_print_area_tmp');
-           if (tmp) tmp.remove();
-           tmp = document.createElement('div');
-           tmp.id = '_marks_print_area_tmp';
-           tmp.style.position = 'fixed';
-           tmp.style.left = '-9999px';
-           tmp.style.top = '0';
-           tmp.innerHTML = reportHtml;
-           document.body.appendChild(tmp);
- 
-           if (typeof html2canvas !== 'undefined' && window.jspdf){
-             const canvas = await html2canvas(tmp, { scale: 2, useCORS: true });
-             const img = canvas.toDataURL('image/png');
-             const { jsPDF } = window.jspdf;
-             const pdf = new jsPDF('landscape', 'pt', 'a4');
-             const pageWidth = pdf.internal.pageSize.getWidth();
-             const pageHeight = pdf.internal.pageSize.getHeight();
-             const imgW = canvas.width;
-             const imgH = canvas.height;
-             const ratio = Math.min(pageWidth / imgW, pageHeight / imgH);
-             const w = imgW * ratio;
-             const h = imgH * ratio;
-             pdf.addImage(img, 'PNG', (pageWidth - w)/2, 10, w, h - 20);
-             pdf.save(`marks_${String(studentId)}_${String(selectedExamId)}.pdf`);
-           } else {
-             // fallback: open print window with clean html
-             const popup = window.open('', '_blank', 'width=900,height=700');
-             popup.document.write(reportHtml);
-             popup.document.close();
-             popup.focus();
-             setTimeout(()=> popup.print(), 400);
-           }
-           tmp.remove();
-         } catch(err){
-           console.error('export pdf err', err);
-           toast('PDF export failed, using print fallback');
-           // fallback to print
-           const popup = window.open('', '_blank', 'width=900,height=700');
-           popup.document.write(buildPrintableReportHtml());
-           popup.document.close();
-           popup.focus();
-           setTimeout(()=> popup.print(), 400);
-         }
-       };
-     }
- 
-     // Print — use printable report html so everything (ranks, grade, totals) is present
-     const printBtn = modalBody.querySelector('#printMarks');
-     if (printBtn){
-       printBtn.onclick = () => {
-         const html = buildPrintableReportHtml();
-         const popup = window.open('', '_blank', 'width=900,height=700');
-         if (!popup) { toast('Popup blocked — allow popups to print'); return; }
-         popup.document.write(`<!doctype html><html><head><title>Marks — ${escape(student.fullName||student.name||'')}</title><meta name="viewport" content="width=device-width,initial-scale=1"></head><body>${html}</body></html>`);
-         popup.document.close();
-         popup.focus();
-         setTimeout(()=> popup.print(), 400);
-       };
-     }
- 
-     // close button
-     const closeBtn = modalBody.querySelector('#closeMarks');
-     if (closeBtn) closeBtn.onclick = closeModal;
- 
-     // update badges
-     const tBadge = modalBody.querySelector('#marksTotalBadge');
-     const aBadge = modalBody.querySelector('#marksAvgBadge');
-     if (tBadge) tBadge.textContent = `${String(totalObtained)} / ${String(totalMax)}`;
-     if (aBadge) aBadge.textContent = `${Number(avgPercent).toFixed(1)}%`;
-   }
- 
-   // show modal and render initial exam
-   const title = `📊 ${escape(student.fullName || student.name || '')}`;
-   showModal(title, `<div style="padding:12px"><div class="muted">Loading marks…</div></div>`);
-   try {
-     await renderForExam(selectedExamId);
-   } catch(err){
-     console.error('renderForExam failed', err);
-     modalBody.innerHTML = `<div class="muted" style="padding:12px">Failed to render marks</div>`;
-   }
- }
- 
- 
- 
- 
- 
- // Drop-in replacement for renderLeaderboard()
- async function renderLeaderboard() {
-  const kind = leaderboardKind.value;
-  const examId = leaderboardExamSel.value;
-  leaderboardExamInfo.textContent = examId ? `Exam: ${examId}` : 'No exam selected';
- 
-
-  const exam = (examsCache || []).find(e => String(e.id) === String(examId)) || {};
-const examDate = exam.publishedAt ? new Date(tsToMs(exam.publishedAt)).toLocaleDateString() : '—';
-
-const leaderboardHeaderMobile = `
-<div class="mobile-top10-header">
-  <div class="h-title">Top-10 Students (Exam leaderboard)</div>
-  <div class="h-sub">Exam: ${escape(examId)}</div>
-  <div class="h-sub">Top 10 — ${leaderboardKind.value === 'class' ? escape(leaderboardClassSel.value) : 'School'}</div>
-
-  <div class="h-actions" style="justify-content:space-between">
-    <div class="muted">${escape(exam.name || 'Exam')} • ${examDate}</div>
-    <button id="exportLeaderboardCsv" class="btn btn-ghost">Export</button>
-  </div>
-</div>
-`;
-
-  if (!examId) {
-    leaderboardListRoot.innerHTML = `<div class="muted" style="padding:12px">No exam selected</div>`;
-    return;
-  }
- 
-  // prefer cached examTotals snapshot
-  let resultsMap = (typeof examTotalsCache !== 'undefined' && examTotalsCache && examTotalsCache[examId]) ? examTotalsCache[examId] : null;
-  if(!resultsMap){
-    try { await loadExamTotalsForExam(examId); resultsMap = examTotalsCache && examTotalsCache[examId] ? examTotalsCache[examId] : null; } catch(e){ console.warn('loadExamTotalsForExam failed', e); }
-  }
- 
-  let rows = [];
-  if(resultsMap && Object.keys(resultsMap).length){
-    rows = Object.values(resultsMap).map(r => {
-      const s = findStudentByRef(r.studentId) || {};
-      const total = Number(r.total || r.average || 0);
-      const maxSum = (r.subjects || []).reduce((a,b)=> a + (Number(b.max||0)), 0) || 0;
-      const pct = maxSum ? (total / maxSum) * 100 : (Number(r.average || 0));
-      return {
-        studentId: r.studentId,
-        name: s.fullName || s.name || r.studentName || r.studentId,
-        className: s.classId || r.classId || r.className || '—',
-        score: Number(total || 0),
-        pct: Number(pct || 0),
-        raw: r
-      };
-    });
-  } else {
-    // fallback to examResults cache (drafts)
-    const examResults = (typeof examResultsCache !== 'undefined' && examResultsCache) ? examResultsCache : (window.examResultsCache || []);
-    const filtered = examResults.filter(rr => rr.examId === examId);
-    if(filtered.length){
-      rows = filtered.map(r => {
-        const s = findStudentByRef(r.studentId) || {};
-        const pct = r.max && r.max>0 ? (Number(r.total||0) / Number(r.max))*100 : (r.pct || 0);
-        return {
-          studentId: r.studentId,
-          name: s.fullName || s.name || r.studentName || r.studentId,
-          className: s.classId || r.className || '—',
-          score: Number(r.total || 0),
-          pct: Number(pct || 0),
-          raw: r
-        };
-      });
-    }
-  }
- 
-  if(kind === 'class' && leaderboardClassSel.value){
-    rows = rows.filter(r => String(r.className) === String(leaderboardClassSel.value));
-  }
- 
-  rows = rows.sort((a,b)=> b.score - a.score).slice(0,10);
- 
-  if(!rows.length){
-    leaderboardListRoot.innerHTML = `<div class="muted" style="padding:12px">No students found for the selected exam/class.</div>`;
-    return;
-  }
-  const html = `<div style="display:flex;flex-direction:column;gap:8px">
-  ${rows.map((r, idx) => `
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
-      <div style="display:flex;align-items:center;gap:8px">
-        <div style="width:36px;height:36px;border-radius:999px;background:#f1f5f9;display:flex;align-items:center;justify-content:center">
-          ${idx < 3 ? (idx===0?'🏆':idx===1?'🥈':'🥉') : idx+1}
-        </div>
-        <div style="min-width:0">
-          <div style="font-weight:900">${escape(r.name)}</div>
-          <div class="muted">${escape(r.className)} • ID: ${escape(r.studentId)}</div>
-        </div>
-      </div>
-      <div style="display:flex;align-items:center;gap:8px">
-        <progress value="${Math.round(r.pct)}" max="100"></progress>
-        <div style="font-weight:900">${r.pct.toFixed(1)}%</div>
-        <button class="btn btn-ghost view-marks"
-          data-id="${escape(r.studentId)}"
-          data-exam="${escape(examId)}">View</button>
-      </div>
-    </div>
-  `).join('')}
-</div>`;
-
-leaderboardListRoot.innerHTML = isMobileViewport()
-  ? leaderboardHeaderMobile + html
-  : html;
-
- 
-  leaderboardListRoot.querySelectorAll('.view-marks').forEach(b => b.addEventListener('click', async ev => {
-    const sid = ev.currentTarget.dataset.id;
-    const ex = ev.currentTarget.dataset.exam;
-    if(typeof openStudentMarksModal === 'function') {
-      openStudentMarksModal(sid, ex);
-    } else {
-      // fallback: open result modal but prevent edit path
-      const stud = findStudentByRef(sid) || (studentsCache||[]).find(s=>String(s.studentId||s.id||s.uid||s._id)===String(sid));
-      if(stud && typeof openStudentResultModalFor === 'function') {
-        // ensure original modal doesn't present the edit UI: pass only view intent
-        openStudentResultModalFor(stud);
-      } else {
-        showModal('Marks', `<div>Open marks for ${escape(sid)} (exam ${escape(ex)})</div>`);
-      }
-    }
-  }));
- }
- 
- 
-  // ---------- Leaderboard ----------
-  function loadExamsIntoLeaderboard() {
-    const exams = (typeof examsCache !== 'undefined' && examsCache) ? examsCache : (window.examsCache || []);
-    if (exams.length) leaderboardExamSel.innerHTML = exams.map(e => `<option value="${escape(e.id)}">${escape(e.name || e.id)}${e.publishedAt ? ' • ' + new Date(tsToMs(e.publishedAt)).toLocaleDateString() : ''}</option>`).join('');
-    else leaderboardExamSel.innerHTML = `<option value="">No exams available</option>`;
- 
-    const classes = (classesCache || []).map(c => ({ id: c.id || c.classId || c.name, name: c.name || c.displayName || c.id }));
-    if (classes.length) leaderboardClassSel.innerHTML = `<option value="">All classes</option>` + classes.map(c => `<option value="${escape(c.name)}">${escape(c.name)}</option>`).join('');
-    else leaderboardClassSel.innerHTML = `<option value="">No classes</option>`;
- 
-    // wire events (idempotent)
-    leaderboardKind._handler = () => { leaderboardClassSel.style.display = leaderboardKind.value === 'class' ? 'inline-block' : 'none'; renderLeaderboard(); };
-    leaderboardKind.removeEventListener('change', leaderboardKind._handler || (()=>{}));
-    leaderboardKind.addEventListener('change', leaderboardKind._handler);
- 
-    leaderboardExamSel._handler = () => renderLeaderboard();
-    leaderboardExamSel.removeEventListener('change', leaderboardExamSel._handler || (()=>{}));
-    leaderboardExamSel.addEventListener('change', leaderboardExamSel._handler);
- 
-    leaderboardClassSel._handler = () => renderLeaderboard();
-    leaderboardClassSel.removeEventListener('change', leaderboardClassSel._handler || (()=>{}));
-    leaderboardClassSel.addEventListener('change', leaderboardClassSel._handler);
-  }
-  // place below loadExamsIntoLeaderboard so elements exist
- (function tidyLeaderboardMobile() {
-   const lbCard = page.querySelector('#leaderboardCard');
-   if (!lbCard) return;
-   // if mobile, move controls under title
-   if (isMobileViewport && isMobileViewport()) {
-     const controls = lbCard.querySelector('div[style*="display:flex;gap:8px;align-items:center"]');
-     const titleArea = lbCard.querySelector('div > strong');
-     if (controls && titleArea) {
-       controls.style.marginTop = '8px';
-       controls.style.width = '100%';
-       controls.style.justifyContent = 'flex-start';
-       titleArea.parentElement.appendChild(controls);
-     }
-   }
- })();
- 
- 
- 
-  function medalEmoji(i) { return i === 0 ? '🏆' : (i === 1 ? '🥈' : (i === 2 ? '🥉' : (i+1))); }
- 
-  // ---------- Notifications ----------
-  function computeNotifications(range) {
-    const cfgRaw = localStorage.getItem('dashboard_alerts_cfg');
-    const cfg = cfgRaw ? JSON.parse(cfgRaw) : { thresholdAmount: 50000, thresholdCount: 5, revenueDropPct: 10 };
-    const notes = [];
- 
-    const outstandingSum = (studentsCache || []).reduce((s, st) => s + getBalanceCents(st), 0);
-    if (outstandingSum > (cfg.thresholdAmount || 0)) notes.push({ severity: 'warn', text: `⚠️ Outstanding total is ${formatMoney(outstandingSum)} (> ${formatMoney(cfg.thresholdAmount)})`, action: () => openOutstandingDrillDown('students') });
- 
-    const overdueCount = (studentsCache || []).filter(s => getBalanceCents(s) > 0).length;
-    if (overdueCount > (cfg.thresholdCount || 0)) notes.push({ severity: 'warn', text: `⚠️ ${overdueCount} students overdue — View outstanding`, action: () => openOutstandingDrillDown('students') });
- 
-    const k = computeKPIs(range);
-    const prev = k.prevRevenueCents || 0;
-    if (prev > 0) {
-      const drop = ((prev - k.totalRevenueCents) / prev) * 100;
-      if (drop > (cfg.revenueDropPct || 10)) notes.push({ severity: 'alert', text: `📢 Revenue down ${drop.toFixed(1)}% vs previous period`, action: () => showModal('Revenue drop', `<div>Revenue dropped by ${drop.toFixed(1)}%.</div>`) });
-    }
- 
-    return notes;
-  }
- 
-  function renderNotifications(range) {
-    const notes = computeNotifications(range);
-    const badge = page.querySelector('#notifBadge');
-    if (notes.length) { badge.style.display = 'inline-block'; badge.textContent = String(notes.length); } else { badge.style.display = 'none'; }
-    page.querySelector('#dashboardNotifications').onclick = () => {
-      const html = `<div><strong>Notifications</strong></div><div style="margin-top:8px">${notes.map((n,i)=>`<div style="margin-bottom:8px"><div>${n.text}</div><div style="margin-top:6px"><button class="btn btn-primary notif-act" data-i="${i}">Open</button></div></div>`).join('')}</div>`;
-      showModal('Notifications', html);
-      modalBody.querySelectorAll('.notif-act').forEach(b => b.addEventListener('click', ev => {
-        const n = notes[Number(ev.currentTarget.dataset.i)];
-        if (n && typeof n.action === 'function') n.action();
-        closeModal();
-      }));
-    };
-  }
- 
-  // ---------- wiring & utilities ----------
-  filterButtons.forEach(b => b.addEventListener('click', () => {
-    activeFilter = b.dataset.filter;
-    setActiveFilterButton(activeFilter);
-    currentRange = computeRangeForFilter(activeFilter);
-    refreshDashboard();
-  }));
- 
-  page.querySelector('#dashboardSettings').onclick = () => {
-    const html = `
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-        <div>
-          <label>School year start month</label>
-          <select id="cfgStart">${Array.from({length:12},(_,i)=>`<option value="${i+1}" ${(Number(schoolYearConfig.startMonth)===i+1)?'selected':''}>${monthsShort[i]}</option>`).join('')}</select>
-        </div>
-        <div>
-          <label>School year end month</label>
-          <select id="cfgEnd">${Array.from({length:12},(_,i)=>`<option value="${i+1}" ${(Number(schoolYearConfig.endMonth)===i+1)?'selected':''}>${monthsShort[i]}</option>`).join('')}</select>
-        </div>
-      </div>
-      <div style="margin-top:10px"><strong>Alerts</strong></div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px">
-        <div><label>Threshold amount (cents)</label><input id="cfgThreshAmt" value="${(JSON.parse(localStorage.getItem('dashboard_alerts_cfg')||'{}').thresholdAmount)||50000}" /></div>
-        <div><label>Threshold count</label><input id="cfgThreshCount" value="${(JSON.parse(localStorage.getItem('dashboard_alerts_cfg')||'{}').thresholdCount)||5}" /></div>
-        <div><label>Revenue drop pct</label><input id="cfgDropPct" value="${(JSON.parse(localStorage.getItem('dashboard_alerts_cfg')||'{}').revenueDropPct)||10}" /></div>
-      </div>
-      <div class="modal-actions"><button id="cfgClose" class="btn btn-ghost">Close</button><button id="cfgSave" class="btn btn-primary">Save</button></div>
-    `;
-    showModal('Dashboard settings', html);
-    modalBody.querySelector('#cfgClose').onclick = closeModal;
-    modalBody.querySelector('#cfgSave').onclick = () => {
-      const s = Number(modalBody.querySelector('#cfgStart').value);
-      const e = Number(modalBody.querySelector('#cfgEnd').value);
-      const amt = Number(modalBody.querySelector('#cfgThreshAmt').value) || 50000;
-      const cnt = Number(modalBody.querySelector('#cfgThreshCount').value) || 5;
-      const pct = Number(modalBody.querySelector('#cfgDropPct').value) || 10;
-      localStorage.setItem('schoolYearConfig', JSON.stringify({ startMonth: s, endMonth: e }));
-      localStorage.setItem('dashboard_alerts_cfg', JSON.stringify({ thresholdAmount: amt, thresholdCount: cnt, revenueDropPct: pct }));
-      toast('Settings saved');
-      closeModal();
-      // re-run to pick up settings
-      renderDashboard();
-    };
-  };
- 
-  page.querySelector('#dashboardRefresh').onclick = async () => {
-    dashStatus.textContent = 'Refreshing...';
-    try {
-      await Promise.all([
-        typeof loadStudents === 'function' ? loadStudents() : Promise.resolve(),
-        typeof loadTeachers === 'function' ? loadTeachers() : Promise.resolve(),
-        typeof loadStaff === 'function' ? loadStaff() : Promise.resolve(),
-        typeof loadTransactions === 'function' ? loadTransactions() : Promise.resolve()
-      ]);
-      toast('Refreshed');
     } catch(e) {
-      console.error(e);
-      toast('Refresh failed');
-    } finally {
-      dashStatus.textContent = '';
-      refreshDashboard();
-    }
-  };
- 
-
-    // export helpers
-    function exportCsvFromDashboard() {
-      const rangeLabel = currentRange.label || '';
-      const k = computeKPIs(currentRange);
-      const lines = [['Metric','Value'], ['Date range', rangeLabel]];
-      lines.push(['Total Students', k.totalStudents]);
-      lines.push(['Total Teachers', k.totalTeachers]);
-      lines.push(['Total Staff', k.totalStaff]);
-      lines.push(['Total Revenue', formatMoney(k.totalRevenueCents)]);
-      lines.push(['Total Expenses+', formatMoney(k.totalExpensesPlusCents)]);
-      const csv = lines.map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
-      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `dashboard_export_${Date.now()}.csv`; a.click(); URL.revokeObjectURL(url);
-    }
-    function exportPdfFromDashboard() {
-      const el = kpisRoot;
-      if (!el) return toast && toast('Nothing to export');
-      if (typeof html2canvas === 'undefined' || !window.jspdf) {
-        // fallback to printing the KPIs container
-        try {
-          const popup = window.open('', '_blank', 'width=900,height=700');
-          if (!popup) { toast && toast('Popup blocked — allow popups to export'); return; }
-          popup.document.write(el.outerHTML);
-          popup.document.close();
-          setTimeout(()=> popup.print(), 300);
-          return;
-        } catch(e) { console.error(e); return; }
-      }
-      html2canvas(el).then(canvas => {
-        const img = canvas.toDataURL('image/png');
-        const { jsPDF } = window.jspdf;
-        const pdf = new jsPDF('landscape');
-        const w = pdf.internal.pageSize.getWidth();
-        const h = (canvas.height / canvas.width) * w;
-        pdf.addImage(img,'PNG',10,10,w-20,h-20);
-        pdf.save(`dashboard_${Date.now()}.pdf`);
-      }).catch(err => { console.error(err); toast('PDF export failed'); });
-    }
-  
-    // Defensive binding — header may contain either the old buttons or the new export menu
-    const dashboardExportCsvBtn = page.querySelector('#dashboardExportCsv');
-    if (dashboardExportCsvBtn) dashboardExportCsvBtn.onclick = exportCsvFromDashboard;
-    const dashboardExportPdfBtn = page.querySelector('#dashboardExportPdf');
-    if (dashboardExportPdfBtn) dashboardExportPdfBtn.onclick = exportPdfFromDashboard;
-  
-    // chart controls — guard nodes before attaching listeners
-    const chartPaymentsGran = page.querySelector('#chartPaymentsGranularity');
-    if (chartPaymentsGran) chartPaymentsGran.addEventListener('change', () => renderCharts(currentRange));
-    const chartTeachersGran = page.querySelector('#chartTeachersGranularity');
-    if (chartTeachersGran) chartTeachersGran.addEventListener('change', () => renderCharts(currentRange));
-  
-    const exportChartPaymentsBtn = page.querySelector('#exportChartPayments');
-    if (exportChartPaymentsBtn) exportChartPaymentsBtn.addEventListener('click', () => {
-      const agg = aggregateTransactionsForChart((transactionsCache || []).filter(t => String(t.target_type).toLowerCase() === 'student'), currentRange, (page.querySelector('#chartPaymentsGranularity') || { value:'monthly' }).value);
-      const csv = ['label,amount'].concat(agg.labels.map((l,i)=>`${l},${(agg.series[i]||0)/100}`)).join('\n');
-      const blob = new Blob([csv], { type: 'text/csv' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'payments_chart.csv'; a.click(); URL.revokeObjectURL(url);
-    });
-    const exportChartTeachersBtn = page.querySelector('#exportChartTeachers');
-    if (exportChartTeachersBtn) exportChartTeachersBtn.addEventListener('click', () => {
-      const agg = aggregateTransactionsForChart((transactionsCache || []).filter(t => String(t.target_type).toLowerCase() === 'teacher'), currentRange, (page.querySelector('#chartTeachersGranularity') || { value:'monthly' }).value);
-      const csv = ['label,amount'].concat(agg.labels.map((l,i)=>`${l},${(agg.series[i]||0)/100}`)).join('\n');
-      const blob = new Blob([csv], { type: 'text/csv' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'teacher_payouts_chart.csv'; a.click(); URL.revokeObjectURL(url);
-    });
-  
-    // outstanding search (fixed) — guard existence of outstandingSearch and outstandingTableRoot
-    if (outstandingSearch && typeof outstandingSearch.addEventListener === 'function') {
-      outstandingSearch.addEventListener('input', () => {
-        const q = outstandingSearch.value.trim().toLowerCase();
-        if (!q) { renderOutstandingTable(currentRange); return; }
-        const found = (studentsCache || []).filter(s => ((s.fullName||'').toLowerCase().includes(q) || (String(s.studentId||s.id||'')).toLowerCase().includes(q))).sort((a,b) => getBalanceCents(b) - getBalanceCents(a)).slice(0,10);
-        if (!outstandingTableRoot) return;
-        outstandingTableRoot.innerHTML = `<div style="display:flex;flex-direction:column;gap:8px">
-          ${found.map((r, idx) => `<div class="list-row"><div class="row-left"><div class="no-badge">${idx+1}</div><div><div class="title">${escape(r.fullName||r.name||'')}</div><div class="sub">ID:${escape(r.studentId||r.id)} • ${escape(typeof resolveClassName === 'function' ? resolveClassName(r) : (r.class || '—'))}</div></div></div><div style="display:flex;align-items:center;gap:10px"><div style="font-weight:900;color:#b91c1c">${formatMoney(getBalanceCents(r))}</div><div><button class="btn btn-primary record-pay" data-id="${escape(r.studentId||r.id)}">Record Payment</button></div></div></div>`).join('')}
-        </div>`;
-        outstandingTableRoot.querySelectorAll('.record-pay').forEach(b => b.addEventListener('click', ev => openPayModal(ev.currentTarget)));
-      });
-    }
-  
-    // bulk reminder — guard
-    const outstandingBulkBtn = page.querySelector('#outstandingBulkReminder');
-    if (outstandingBulkBtn) outstandingBulkBtn.onclick = async () => {
-      const toRemind = (studentsCache || []).filter(s => getBalanceCents(s) > 0).slice(0,50);
-      if (!toRemind.length) return toast('No outstanding students to remind');
-      const html = `<div><strong>Send reminders to ${toRemind.length} students?</strong></div><div style="margin-top:8px;display:flex;justify-content:flex-end"><button id="cancelRem" class="btn btn-ghost">Cancel</button><button id="sendRem" class="btn btn-primary">Send</button></div>`;
-      showModal('Send reminders', html);
-      modalBody.querySelector('#cancelRem').onclick = closeModal;
-      modalBody.querySelector('#sendRem').onclick = () => { toast(`Reminders queued for ${toRemind.length} students (messaging not configured)`); closeModal(); };
-    };
-  
-    // leaderboard export — guard
-    const leaderboardExportBtn = page.querySelector('#leaderboardExport');
-    if (leaderboardExportBtn) leaderboardExportBtn.addEventListener('click', () => {
-      const rows = Array.from((leaderboardListRoot || document.createElement('div')).querySelectorAll('.list-row')).map((r, i) => {
-        return [`${i+1}`, r.querySelector('.title') ? r.querySelector('.title').textContent.trim() : '', '—', '—'].join(',');
-      });
-      const csv = ['Rank,Name,Class,Score'].concat(rows).join('\n');
-      const blob = new Blob([csv], { type: 'text/csv' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'leaderboard.csv'; a.click(); URL.revokeObjectURL(url);
-    });
-  
-    const pdfBtn = page.querySelector('#exportPdfOpt');
-    pdfBtn?.addEventListener('click', exportPdfFromDashboard);
-    
-    const csvBtn = page.querySelector('#exportCsvOpt');
-    csvBtn?.addEventListener('click', exportCsvFromDashboard);
-    
- 
-  // chart controls
-  page.querySelector('#chartPaymentsGranularity').addEventListener('change', () => renderCharts(currentRange));
-  page.querySelector('#chartTeachersGranularity').addEventListener('change', () => renderCharts(currentRange));
-  page.querySelector('#exportChartPayments').addEventListener('click', () => {
-    const agg = aggregateTransactionsForChart((transactionsCache || []).filter(t => String(t.target_type).toLowerCase() === 'student'), currentRange, page.querySelector('#chartPaymentsGranularity').value);
-    const csv = ['label,amount'].concat(agg.labels.map((l,i)=>`${l},${(agg.series[i]||0)/100}`)).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'payments_chart.csv'; a.click(); URL.revokeObjectURL(url);
-  });
-  page.querySelector('#exportChartTeachers').addEventListener('click', () => {
-    const agg = aggregateTransactionsForChart((transactionsCache || []).filter(t => String(t.target_type).toLowerCase() === 'teacher'), currentRange, page.querySelector('#chartTeachersGranularity').value);
-    const csv = ['label,amount'].concat(agg.labels.map((l,i)=>`${l},${(agg.series[i]||0)/100}`)).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'teacher_payouts_chart.csv'; a.click(); URL.revokeObjectURL(url);
-  });
- 
-  // outstanding search (fixed)
-  outstandingSearch.addEventListener('input', () => {
-    const q = outstandingSearch.value.trim().toLowerCase();
-    if (!q) { renderOutstandingTable(currentRange); return; }
-    const found = (studentsCache || []).filter(s => ((s.fullName||'').toLowerCase().includes(q) || (String(s.studentId||s.id||'')).toLowerCase().includes(q))).sort((a,b) => getBalanceCents(b) - getBalanceCents(a)).slice(0,10);
-    outstandingTableRoot.innerHTML = `<div style="display:flex;flex-direction:column;gap:8px">
-      ${found.map((r, idx) => `<div class="list-row"><div class="row-left"><div class="no-badge">${idx+1}</div><div><div class="title">${escape(r.fullName||r.name||'')}</div><div class="sub">ID:${escape(r.studentId||r.id)} • ${escape(typeof resolveClassName === 'function' ? resolveClassName(r) : (r.class || '—'))}</div></div></div><div style="display:flex;align-items:center;gap:10px"><div style="font-weight:900;color:#b91c1c">${formatMoney(getBalanceCents(r))}</div><div><button class="btn btn-primary record-pay" data-id="${escape(r.studentId||r.id)}">Record Payment</button></div></div></div>`).join('')}
-    </div>`;
-    outstandingTableRoot.querySelectorAll('.record-pay').forEach(b => b.addEventListener('click', ev => openPayModal(ev.currentTarget)));
-  });
- 
-  // bulk reminder
-  page.querySelector('#outstandingBulkReminder').onclick = async () => {
-    const toRemind = (studentsCache || []).filter(s => getBalanceCents(s) > 0).slice(0,50);
-    if (!toRemind.length) return toast('No outstanding students to remind');
-    const html = `<div><strong>Send reminders to ${toRemind.length} students?</strong></div><div style="margin-top:8px;display:flex;justify-content:flex-end"><button id="cancelRem" class="btn btn-ghost">Cancel</button><button id="sendRem" class="btn btn-primary">Send</button></div>`;
-    showModal('Send reminders', html);
-    modalBody.querySelector('#cancelRem').onclick = closeModal;
-    modalBody.querySelector('#sendRem').onclick = () => { toast(`Reminders queued for ${toRemind.length} students (messaging not configured)`); closeModal(); };
-  };
- 
-  // leaderboard export
-  page.querySelector('#leaderboardExport').addEventListener('click', () => {
-    const rows = Array.from(leaderboardListRoot.querySelectorAll('.list-row')).map((r, i) => {
-      return [`${i+1}`, r.querySelector('.title') ? r.querySelector('.title').textContent.trim() : '', '—', '—'].join(',');
-    });
-    const csv = ['Rank,Name,Class,Score'].concat(rows).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'leaderboard.csv'; a.click(); URL.revokeObjectURL(url);
-  });
- 
-  // ---------- orchestrator ----------
-  function refreshDashboard() {
-    currentRange = computeRangeForFilter(activeFilter);
-    if (filterInfo) filterInfo.textContent = currentRange.label;
-    const k = computeKPIs(currentRange);
-    renderKPIs(k);
-    renderCharts(currentRange);
-    renderOutstandingTable(currentRange);
-    loadExamsIntoLeaderboard();
-    renderLeaderboard();
-    // ensure mobile sections/charts layout (outstanding above leaderboard, charts stacked)
-    try { adjustSectionsForViewport(); } catch(e){/*ignore*/}
-    renderNotifications(currentRange);
-    dashSources.textContent = `Data source: local cache (transactions ${transactionsCache ? transactionsCache.length : 0}, students ${studentsCache ? studentsCache.length : 0})`;
-  }
-  
-
-  function adjustSectionsForViewport() {
-    const container = page.querySelector('#outstandingCard')?.parentElement;
-    if (!container) return;
-    // mobile: stack single column (outstanding first, leaderboard after)
-    if (typeof isMobileViewport === 'function' && isMobileViewport()) {
-      container.style.gridTemplateColumns = '1fr';
-      const outstanding = page.querySelector('#outstandingCard');
-      const leaderboard = page.querySelector('#leaderboardCard');
-      if (outstanding && leaderboard) {
-        // append in desired order (appendChild moves existing nodes)
-        container.appendChild(outstanding);
-        container.appendChild(leaderboard);
-      }
-    } else {
-      // desktop: restore two-column layout
-      container.style.gridTemplateColumns = '2fr 1fr';
+      console.warn('expandAnnouncementForStudent top10 load failed', e);
+      bodyTemplate += '\n\n(Unable to load Top-10 details.)';
     }
   }
-  
- 
-  // initial render
-  function init() { currentRange = computeRangeForFilter(activeFilter); setActiveFilterButton(activeFilter); refreshDashboard(); }
-  init();
- 
-  // expose refresh
-  page.refreshDashboard = refreshDashboard;
-  showPage && showPage('dashboard');
- }
 
-// database.js — admin attendance render + export
-// Use your existing imports at top; this snippet implements admin-side attendance features.
-// Ensure you have these imports available: collection, doc, getDocs, setDoc, query, where, Timestamp, getDoc, deleteDoc
+  // final token replacement
+  const finalTitle = replaceTokens(titleTemplate, subs);
+  const finalBody = replaceTokens(bodyTemplate, subs);
 
-/* ===========================
-  Admin attendance — updated (replace previous admin attendance functions)
-  Dependencies assumed present in your file:
-    db, getDocs, getDoc, collection, query, where, doc, setDoc, deleteDoc, Timestamp
-    classesCache, subjectsCache, studentsCache, currentUser, toast, showModal, closeModal
-  The code contains safe fallbacks when some globals/constants are missing.
-  ===========================*/
-
-/* safe constants (fallback if not defined earlier) */
-const ATT_RECORDS_COLL = 'attendance_records';
-const LEGACY_ATT_COLL = 'attendance';
-
-
-/* small helpers */
-function escapeHtmlLocal(s){ if(!s && s!==0) return ''; return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-function computePercentFromFlags(flags){ if(!Array.isArray(flags)||flags.length===0) return 0; const present = flags.reduce((s,f)=>s + (f?1:0),0); return Math.round((present/flags.length)*100); }
-function nowLocalISODate(){ return (new Date()).toISOString().slice(0,10); }
-
-
-
-/* undo state */
-let lastAdminSave = null;
-
-/* RENDER ATTENDANCE PAGE */
-async function renderAttendance(){
-  let page = document.getElementById('pageAttendance');
-  if(!page){
-    page = document.createElement('section');
-    page.id = 'pageAttendance';
-    page.className = 'page';
-    const main = document.querySelector('main') || document.body;
-    main.appendChild(page);
-  }
-
-  page.innerHTML = `
-    <style>
-      /* tiny local styles for export menus and responsive cards */
-      .export-dropdown { position: relative; display:inline-block; }
-      .export-dropdown .export-menu { position:absolute; right:0; top:34px; z-index:150; background:#fff; border:1px solid #eef2f7; padding:6px; border-radius:8px; box-shadow:0 8px 22px rgba(2,6,23,0.06); }
-      .export-dropdown .export-menu.hidden { display:none; }
-      .attendance-cards { display:flex; flex-wrap:wrap; gap:12px; }
-      .attendance-card { flex:1 1 320px; background:#fff; border-radius:10px; padding:14px; box-shadow:0 6px 18px rgba(2,6,23,0.03); border:1px solid rgba(2,6,23,0.03); display:flex; justify-content:space-between; align-items:center; }
-      @media(max-width:720px){
-        .attendance-card { flex:1 1 100%; }
-        .page .attendance-page-header { display:flex; flex-direction:column; gap:8px; }
-      }
-      .muted{ color:#6b7280; }
-    </style>
-
-    <div class="attendance-page-header" style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
-      <input id="attClassSearch" type="search" placeholder="Search class name or id..." style="padding:8px 10px;border-radius:8px;border:1px solid #eef2f7;min-width:220px" />
-      <select id="attClassSelect" style="padding:8px 10px;border-radius:8px;border:1px solid #eef2f7">
-        <option value="">All classes</option>
-      </select>
-      <div style="margin-left:auto;display:flex;gap:8px">
-        <button id="attRefreshBtn" class="btn btn-ghost">Refresh</button>
-      </div>
-    </div>
-
-    <div id="attendanceList" class="attendance-cards"></div>
-
-    <div id="attendanceClassView" class="hidden" style="margin-top:12px">
-      <div id="attendanceClassHeader"></div>
-      <div id="attendanceClassEditor" style="margin-top:12px"></div>
-    </div>
-
-    <!-- Undo snackbar -->
-    <div id="adminUndoSnk" style="position:fixed;right:18px;bottom:18px;display:none;z-index:1200">
-      <div style="background:#111;color:#fff;padding:10px 12px;border-radius:8px;display:flex;gap:8px;align-items:center">
-        <div id="adminUndoMsg" style="font-weight:800">Saved — <span id="adminUndoInfo"></span></div>
-        <button id="adminUndoBtn" class="btn" style="background:#fff;color:#111;padding:6px 8px;border-radius:8px">Undo</button>
-      </div>
-    </div>
-  `;
-
-  // populate class select
-  const sel = document.getElementById('attClassSelect');
-  sel.innerHTML = '<option value="">All classes</option>' + (classesCache||[]).map(c => `<option value="${escapeHtmlLocal(c.name||c.id)}">${escapeHtmlLocal(c.name||c.id)}</option>`).join('');
-
-  // wire search and select
-  const searchInput = document.getElementById('attClassSearch');
-  searchInput.oninput = renderAttendanceClassCards;
-  sel.onchange = renderAttendanceClassCards;
-  document.getElementById('attRefreshBtn').onclick = async () => {
-    // if you have a function that refreshes caches, call it here. Otherwise re-render.
-    renderAttendanceClassCards();
-    toast('Refreshed');
-  };
-
-  // initial render
-  renderAttendanceClassCards();
-}
-window.updateAllAdminPercentsInEditor = function(){
-  document.querySelectorAll('.att-row-admin').forEach(row => {
-    const sid = row.dataset.student;
-    const chks = row.querySelectorAll('.admin-att-chk');
-    const flags = Array.from(chks).map(c => c.checked);
-    const pct = computePercentFromFlags(flags);
-    const el = row.querySelector('.row-pct');
-    if(el) el.textContent = pct + '%';
-  });
-};
-
-window.updateEditorCheckAllLabel = function(){
-  const btn = document.getElementById('editorCheckAll');
-  if(!btn) return;
-  const chks = document.querySelectorAll('.admin-att-chk');
-  btn.textContent = Array.from(chks).every(c => c.checked) ? 'Uncheck all' : 'Check all';
-};
-
-
-/* render class cards (filters by search + select) */
-function renderAttendanceClassCards(){
-  const list = document.getElementById('attendanceList');
-  if(!list) return;
-  const q = (document.getElementById('attClassSearch').value || '').trim().toLowerCase();
-  const sel = (document.getElementById('attClassSelect').value || '').trim();
-  const classes = classesCache || [];
-
-  // filter
-  let filtered = classes.slice();
-  if(sel) filtered = filtered.filter(c => String(c.name||c.id) === sel);
-  if(q) filtered = filtered.filter(c => (String(c.name||'') + ' ' + String(c.id||'')).toLowerCase().includes(q));
-
-  if(filtered.length === 0){
-    list.innerHTML = `<div class="muted">No classes found.</div>`;
-    return;
-  }
-
-  list.innerHTML = filtered.map(c => {
-    const stdCount = (studentsCache||[]).filter(s => String(s.classId||s.class||s.className||'') === String(c.name||c.id)).length;
-    // const subjText = (Array.isArray(c.subjects) && c.subjects.length) ? c.subjects.slice(0,4).join(', ') : 'No subjects';
-    return `
-      <div class="attendance-card" data-class="${escapeHtmlLocal(c.name||c.id)}">
-        <div style="flex:1">
-          <div style="font-weight:800">${escapeHtmlLocal(c.name||c.id)}</div>
-          <div class="muted">ID: ${escapeHtmlLocal(c.id || c.name || '')} • Students: ${stdCount}</div>
-        </div>
-        <div style="display:flex;gap:8px;align-items:center">
-          
-        <button class="btn btn-ghost open-class" data-class="${escapeHtmlLocal(c.name||c.id)}">Open</button>
-
-          <button class="btn btn-ghost more-btn" data-class="${escapeHtmlLocal(c.name||c.id)}">⋮</button>
-
-        </div>
-      </div>`;
-  }).join('');
-
-  // wire buttons (use event delegation safe handlers)
-  list.querySelectorAll('.open-class').forEach(b => b.onclick = (ev) => {
-    ev.stopPropagation();
-    const cname = ev.currentTarget.dataset.class;
-    openAdminPreviewClass(cname);
-  });
-  list.querySelectorAll('.subj-btn').forEach(b => b.onclick = (ev) => {
-    ev.stopPropagation();
-    const cname = ev.currentTarget.dataset.class;
-    showClassSubjectsModal(cname);
-  });
-  list.querySelectorAll('.card-export-btn').forEach(btn => {
-    btn.onclick = (ev) => {
-      ev.stopPropagation();
-      // toggle menu sibling
-      const menu = btn.parentElement.querySelector('.export-menu');
-      if(menu) menu.classList.toggle('hidden');
-    };
-  });
-  list.querySelectorAll('.card-export-pdf').forEach(b => {
-    b.onclick = async (ev) => {
-      ev.stopPropagation();
-      const cname = ev.currentTarget.dataset.class;
-      await exportAllSubjectsForClass(cname, 'pdf');
-    };
-  });
-  list.querySelectorAll('.card-export-csv').forEach(b => {
-    b.onclick = async (ev) => {
-      ev.stopPropagation();
-      const cname = ev.currentTarget.dataset.class;
-      await exportAllSubjectsForClass(cname, 'csv');
-    };
-  });
-  list.querySelectorAll('.history-btn').forEach(b => {
-    b.onclick = (ev) => {
-      ev.stopPropagation();
-      const cname = ev.currentTarget.dataset.class;
-      openAttendanceHistory(cname);
-    };
-  });
-
-  list.querySelectorAll('.more-btn').forEach(b => {
-    b.onclick = (ev) => {
-      ev.stopPropagation();
-      openClassMoreModal(ev.currentTarget.dataset.class);
-    };
-  });
-  
-  // close export menus when clicking outside
- 
+  return { title: finalTitle, body: finalBody };
 }
 
-if (!window.__attExportOutsideClick) {
-  window.__attExportOutsideClick = true;
-  document.addEventListener('click', (e) => {
-    document.querySelectorAll('.export-menu').forEach(m => {
-      if (!m.contains(e.target) && !m.previousElementSibling?.contains(e.target)) {
-        m.classList.add('hidden');
-      }
-    });
-  });
-}
 
-const ICONS = {
-  open: `<svg width="18" height="18" viewBox="0 0 24 24" stroke="#fff" fill="none" stroke-width="2"><path d="M3 7h5l2 2h11v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>`,
-  subjects: `<svg width="18" height="18" viewBox="0 0 24 24" stroke="#fff" fill="none" stroke-width="2"><path d="M4 4h16v16H4z"/><path d="M8 4v16M16 4v16"/></svg>`,
-  attend: `<svg width="18" height="18" viewBox="0 0 24 24" stroke="#111" fill="none" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M2 12a10 10 0 1 0 20 0"/></svg>`,
-  history: `<svg width="18" height="18" viewBox="0 0 24 24" stroke="#fff" fill="none" stroke-width="2"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 3v6h6"/></svg>`,
-  export: `<svg width="18" height="18" viewBox="0 0 24 24" stroke="#fff" fill="none" stroke-width="2"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>`,
-  pdf: `<svg width="16" height="16" viewBox="0 0 24 24" stroke="#dc2626" fill="none" stroke-width="2"><path d="M6 2h9l5 5v15H6z"/></svg>`,
-  csv: `<svg width="16" height="16" viewBox="0 0 24 24" stroke="#16a34a" fill="none" stroke-width="2"><path d="M4 4h16v16H4z"/></svg>`
-};
-
-
-function openClassMoreModal(className){
-  const html = `
-    <div class="more-grid">
-
-      <button id="moreOpen" class="btn btn-open">
-        ${ICONS.open} Open Class
-      </button>
-
-      <button id="moreSubjects" class="btn btn-subj">
-        ${ICONS.subjects} Subjects
-      </button>
-
-      <button id="moreHistory" class="btn btn-hist">
-        ${ICONS.history} History
-      </button>
-
-      <button id="moreAttend" class="btn btn-att">
-        ${ICONS.attend} Attendance
-      </button>
-
-      <div class="full">
-        <div class="export-dropdown">
-          <button id="moreExportBtn" class="btn btn-export">
-            ${ICONS.export} Export
-          </button>
-          <div id="moreExportMenu" class="export-menu hidden">
-            <button id="moreExportPdf">
-              ${ICONS.pdf} Export PDF
-            </button>
-            <button id="moreExportCsv">
-              ${ICONS.csv} Export CSV
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div class="full">
-        <button id="moreClose" class="btn btn-ghost">Close</button>
-      </div>
-
-    </div>
-  `;
-
-  showModal(`Class • ${escapeHtmlLocal(className)}`, html);
-
-  const exportBtn  = modalBody.querySelector('#moreExportBtn');
-  const exportMenu = modalBody.querySelector('#moreExportMenu');
-
-  // 🔐 SAFE TOGGLE
-  exportBtn.onclick = (e) => {
-    e.stopPropagation();
-    exportMenu.classList.toggle('hidden');
-    console.log('[EXPORT] menu toggled');
-  };
-
-  // ❗ DO NOT auto-close on modalBody click
-  document.addEventListener('click', function closeOnce(ev){
-    if(!exportMenu.contains(ev.target) && !exportBtn.contains(ev.target)){
-      exportMenu.classList.add('hidden');
-      document.removeEventListener('click', closeOnce);
-    }
-  });
-
-  modalBody.querySelector('#moreExportPdf').onclick = async () => {
-    console.log('[EXPORT] PDF clicked', className);
-    try{
-      await exportAllSubjectsForClass(className, 'pdf');
-    }catch(err){
-      console.error('PDF export failed', err);
-      toast('PDF export failed – see console');
-    }
-    closeModal();
-  };
-
-  modalBody.querySelector('#moreExportCsv').onclick = async () => {
-    console.log('[EXPORT] CSV clicked', className);
-    try{
-      await exportAllSubjectsForClass(className, 'csv');
-    }catch(err){
-      console.error('CSV export failed', err);
-      toast('CSV export failed – see console');
-    }
-    closeModal();
-  };
-
-  modalBody.querySelector('#moreOpen').onclick = () => {
-    closeModal();
-    openAdminPreviewClass(className);
-  };
-
-  modalBody.querySelector('#moreSubjects').onclick = () => {
-    closeModal();
-    showClassSubjectsModal(className);
-  };
-
-  modalBody.querySelector('#moreAttend').onclick = () => {
-    closeModal();
-    openAdminPreviewClass(className);
-    setTimeout(() => document.getElementById('previewTakeBtn')?.click(), 200);
-  };
-
-  modalBody.querySelector('#moreHistory').onclick = () => {
-    closeModal();
-    openAttendanceHistory(className);
-  };
-
-  modalBody.querySelector('#moreClose').onclick = closeModal;
-}
-
-/* Subjects modal (detailed) */
-function showClassSubjectsModal(className){
-  const classDoc = (classesCache||[]).find(c => c.name === className || c.id === className) || { name: className, subjects: [] };
-  const classSubjects = Array.isArray(classDoc.subjects) ? classDoc.subjects : [];
-  const html = `
-    <div>
-      <div style="font-weight:900">Subjects — ${escapeHtmlLocal(classDoc.name)}</div>
-      <div style="margin-top:8px"><strong>Class:</strong> ${escapeHtmlLocal(classDoc.name)}</div>
-      <div style="margin-top:8px"><strong>Subjects assigned to the class:</strong></div>
-      <div class="muted" style="margin-top:6px">${classSubjects.length ? escapeHtmlLocal(classSubjects.join(', ')) : '<em>No subjects assigned</em>'}</div>
-      <div style="margin-top:12px;text-align:right"><button id="closeSub" class="btn btn-ghost">Close</button></div>
-    </div>
-  `;
-  showModal(`Subjects — ${escapeHtmlLocal(classDoc.name)}`, html);
-  modalBody.querySelector('#closeSub').onclick = closeModal;
-}
-
-/* OPEN PREVIEW — minimal header (no subject/date/periods) */
-async function openAdminPreviewClass(className){
+async function fetchAnnouncementsAll(){
   try {
-    const classDoc = (classesCache||[]).find(c => c.name === className || c.id === className) || { name: className, subjects: [] };
-    let students = (studentsCache||[]).filter(s => String(s.classId||s.class||s.className||'') === String(classDoc.name));
-    if(!students.length){
-      const snaps = await getDocs(collection(db,'students'));
-      students = snaps.docs.map(d=>({ id:d.id, ...d.data() })).filter(s => String(s.classId||s.class||s.className||'') === String(classDoc.name));
-    }
-
-    // compute simple preview percent map (latest found)
-    const previewMap = {};
-    try {
-      const recsSnap = await getDocs(query(collection(db, ATT_RECORDS_COLL), where('class_id','==', classDoc.name)));
-      recsSnap.forEach(snap => {
-        const r = snap.data();
-        if(!Array.isArray(r.entries)) return;
-        r.entries.forEach(e => {
-          if(!previewMap[e.studentId]) previewMap[e.studentId] = e.percent || computePercentFromFlags(e.flags || []);
-        });
-      });
-    } catch(e){}
-
-    // render minimal header
-    document.getElementById('attendanceList').classList.add('hidden');
-    document.getElementById('attendanceClassView').classList.remove('hidden');
-
-    const headerHtml = `
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <button id="previewBackBtn" class="btn btn-ghost">← Back</button>
-        <div><strong>${escapeHtmlLocal(classDoc.name)}</strong><div class="muted small">ID: ${escapeHtmlLocal(classDoc.id||'')} • Students: ${students.length}</div></div>
-        <div style="margin-left:auto;display:flex;gap:8px">
-          <button id="previewTakeBtn" class="btn btn-primary">Take Attendance</button>
-          <div class="export-dropdown">
-            <button id="previewExportBtn" class="btn btn-ghost">Export ▾</button>
-            <div id="previewExportMenu" class="export-menu hidden">
-              <button id="previewExportPdf">Export PDF (view)</button>
-              <button id="previewExportCsv">Export CSV (view)</button>
-            </div>
-          </div>
-          <button id="previewHistoryBtn" class="btn btn-ghost">History</button>
-
-
-        </div>
-      </div>
-    `;
-    document.getElementById('attendanceClassHeader').innerHTML = headerHtml;
-
-    // rows preview
-    const rowsHtml = students.map((s, idx) => {
-      const sid = s.id || s.studentId || '';
-      const name = s.fullName || s.name || '';
-      const pct = previewMap[sid] !== undefined ? previewMap[sid] : 0;
-      return `<div class="att-row" data-student="${escapeHtmlLocal(sid)}" style="display:flex;gap:12px;padding:10px;border-bottom:1px solid #f4f6f9;align-items:center">
-        <div style="width:36px">${idx+1}</div>
-        <div style="min-width:120px">${escapeHtmlLocal(sid)}</div>
-        <div style="flex:1;font-weight:800">${escapeHtmlLocal(name)}</div>
-        <div style="width:64px;text-align:right"><small class="row-pct">${pct}%</small></div>
-      </div>`;
-    }).join('');
-    document.getElementById('attendanceClassEditor').innerHTML = rowsHtml;
-
-    // wires
-    document.getElementById('previewBackBtn').onclick = () => {
-      document.getElementById('attendanceClassView').classList.add('hidden');
-      document.getElementById('attendanceList').classList.remove('hidden');
-      document.getElementById('attendanceClassHeader').innerHTML = '';
-      document.getElementById('attendanceClassEditor').innerHTML = '';
-    };
-
-    document.getElementById('previewExportBtn').onclick = (e) => {
-      e.stopPropagation();
-      document.getElementById('previewExportMenu').classList.toggle('hidden');
-    };
-    document.getElementById('previewExportPdf').onclick = async () => {
-      document.getElementById('previewExportMenu').classList.add('hidden');
-      await exportAllSubjectsForClass(classDoc.name, 'pdf');
-    };
-    document.getElementById('previewExportCsv').onclick = async () => {
-      document.getElementById('previewExportMenu').classList.add('hidden');
-      await exportAllSubjectsForClass(classDoc.name, 'csv');
-    };
-
-    document.getElementById('previewTakeBtn').onclick = () => {
-      // when user clicks Take Attendance we show the editor UI with subject/date/period selection.
-      renderAdminEditorStarter(classDoc, students);
-    };
-
-    document.getElementById('previewHistoryBtn').onclick = () => openAttendanceHistory(classDoc.name);
-
-  } catch(err){
-    console.error('openAdminPreviewClass failed', err);
-    toast('Failed to open class preview.');
-  }
+    const s = await getDocs(query(collection(db,'announcements')));
+    return s.docs.map(d => ({ id: d.id, ...d.data() }));
+  } catch(err){ console.error('fetchAnnouncementsAll', err); return []; }
 }
 
-/* Start editor: minimal overlay to choose subject/date/periods then open full editor */
-function renderAdminEditorStarter(classDoc, students){
-  // show small inline form then call renderAdminEditor with chosen options
-  const header = document.getElementById('attendanceClassHeader');
-  header.innerHTML = `
-    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-      <button id="editorStarterBack" class="btn btn-ghost">← Back</button>
-      <div><strong>${escapeHtmlLocal(classDoc.name)}</strong><div class="muted small">Students: ${students.length}</div></div>
-      <label>Subject
-        <select id="editorStarterSubject">${(classDoc.subjects && classDoc.subjects.length ? `<option value="">Select subject</option>` : `<option value="">No subjects</option>`) + (classDoc.subjects||[]).map(s=>`<option value="${escapeHtmlLocal(s)}">${escapeHtmlLocal(s)}</option>`).join('')}</select>
-      </label>
-      <label>Date <input id="editorStarterDate" type="date" value="${nowLocalISODate()}" /></label>
-      <label>Periods
-        <select id="editorStarterPeriods"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select>
-      </label>
-      <div style="margin-left:auto;display:flex;gap:8px">
-        <button id="editorStarterOpen" class="btn btn-primary">Open Editor</button>
-      </div>
-    </div>
-  `;
-  // wire
-  document.getElementById('editorStarterBack').onclick = () => {
-    openAdminPreviewClass(classDoc.name);
-  };
-  document.getElementById('editorStarterOpen').onclick = () => {
-    const subj = document.getElementById('editorStarterSubject').value;
-    const dateVal = document.getElementById('editorStarterDate').value || nowLocalISODate();
-    const periods = Number(document.getElementById('editorStarterPeriods').value || 2);
-    // open editor with values
-    renderAdminEditor(classDoc, students, subj || '', dateVal, periods);
-  };
-}
-
-/* Render admin editor (full) */
-async function renderAdminEditor(classDoc, students, subjectName, dateVal, periodsVal){
-  const classSubjects = Array.isArray(classDoc.subjects) ? classDoc.subjects : [];
-  // header for editor with controls
-  const headerHtml = `
-    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-      <button id="editorBackBtn" class="btn btn-ghost">← Back</button>
-      <div><strong>${escapeHtmlLocal(classDoc.name)}</strong><div class="muted small">Total students: ${students.length}</div></div>
-      <label>Subject
-        <select id="editorSubject">${(classSubjects.length ? `<option value="">Select subject</option>` : `<option value="">No subjects</option>`) + classSubjects.map(s=>`<option value="${escapeHtmlLocal(s)}">${escapeHtmlLocal(s)}</option>`).join('')}</select>
-      </label>
-      <label>Date <input id="editorDate" type="date" value="${escapeHtmlLocal(dateVal || nowLocalISODate())}" /></label>
-      <label>Periods
-        <select id="editorPeriods"><option value="1">1</option><option value="2" ${periodsVal===2?'selected':''}>2</option><option value="3" ${periodsVal===3?'selected':''}>3</option><option value="4" ${periodsVal===4?'selected':''}>4</option></select>
-      </label>
-      <div style="margin-left:auto;display:flex;gap:8px">
-        <button id="editorCheckAll" class="btn btn-ghost">Check all</button>
-        <button id="editorSave" class="btn btn-primary">Save Attendance</button>
-        <div class="export-dropdown">
-          <button id="editorExportBtn" class="btn btn-ghost">Export ▾</button>
-          <div id="editorExportMenu" class="export-menu hidden">
-            <button id="editorExportPdf">Export PDF</button>
-            <button id="editorExportCsv">Export CSV</button>
-          </div>
-        </div>
-      </div>
-    </div>
-  `;
-  document.getElementById('attendanceClassHeader').innerHTML = headerHtml;
-  const editor = document.getElementById('attendanceClassEditor');
-  editor.innerHTML = `<div class="muted">Loading attendance editor…</div>`;
-
-  // helper: load existing record if exists for admin (subject required)
-  const subj = subjectName || '';
-  const adminRecId = `${String(classDoc.name).replace(/\s+/g,'_')}__${String(subj||'ALL').replace(/\s+/g,'_')}__${dateVal}__admin`;
-
-  async function loadAndRender(periods){
-    let existingMap = {};
-    if(subj){
-      try {
-        const snap = await getDoc(doc(db, ATT_RECORDS_COLL, adminRecId));
-        if(snap && snap.exists()){
-          const rec = snap.data();
-          (rec.entries || []).forEach(e => existingMap[e.studentId] = e.flags || Array.from({length:rec.periods_count||periods}).map(()=>false));
-        }
-      } catch(e){ console.warn('load admin rec failed', e); }
-    }
-    // render rows
-    const rows = students.map((s, idx) => {
-      const sid = s.id || s.studentId || '';
-      const name = s.fullName || s.name || '';
-      const flags = (existingMap && existingMap[sid]) ? existingMap[sid].slice(0,periods).concat(Array.from({length:Math.max(0, periods - (existingMap[sid].length||0))}).map(()=>false)) : Array.from({length:periods}).map(()=>false);
-      const checkboxes = flags.map((f,i) => `<label style="margin-right:8px"><input class="admin-att-chk" data-student="${escapeHtmlLocal(sid)}" data-period="${i}" type="checkbox" ${f ? 'checked' : ''} />P${i+1}</label>`).join('');
-      const percent = computePercentFromFlags(flags);
-      return `<div class="att-row-admin att-row" data-student="${escapeHtmlLocal(sid)}" style="display:flex;gap:12px;padding:10px;border-bottom:1px solid #f4f6f9;align-items:center">
-        <div style="width:36px">${idx+1}</div>
-        <div style="min-width:120px">${escapeHtmlLocal(sid)}</div>
-        <div style="flex:1">${escapeHtmlLocal(name)}</div>
-        <div style="min-width:260px;display:flex;gap:8px">${checkboxes}</div>
-        <div style="width:64px;text-align:right"><small class="row-pct">${percent}%</small></div>
-      </div>`;
-    }).join('');
-    const headerControls = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-      <div class="muted">Mark presence per selected period</div>
-      <div><small class="muted">Admin can edit anytime — undo available after save</small></div>
-    </div>`;
-    editor.innerHTML = headerControls + rows;
-
-    // attach checkbox listeners
-    Array.from(editor.querySelectorAll('.admin-att-chk')).forEach(c => {
-      c.onchange = (ev) => {
-        const sid = ev.currentTarget.dataset.student;
-        updateAdminRowPercentInEditor(sid);
-        updateEditorCheckAllLabel();
-      };
-    });
-    updateAllAdminPercentsInEditor(periods);
-    updateEditorCheckAllLabel();
-  }
-
-  function updateAdminRowPercentInEditor(sid){
-    const chks = Array.from(document.querySelectorAll(`.admin-att-chk[data-student="${sid}"]`)).sort((a,b)=>Number(a.dataset.period)-Number(b.dataset.period));
-    const flags = chks.map(c => c.checked);
-    const pct = computePercentFromFlags(flags);
-    const row = editor.querySelector(`.att-row-admin[data-student="${sid}"]`);
-    if(row){ const el = row.querySelector('.row-pct'); if(el) el.textContent = `${pct}%`; }
-  }
-  function updateAllAdminPercentsInEditor(periodsCount){
-    const uniq = [...new Set(Array.from(editor.querySelectorAll('.admin-att-chk')).map(c=>c.dataset.student))];
-    uniq.forEach(updateAdminRowPercentInEditor);
-  }
-  function toggleEditorCheckAll(periodsCount){
-    const allChks = Array.from(editor.querySelectorAll('.admin-att-chk'));
-    if(allChks.length === 0) return;
-    const anyUnchecked = allChks.some(c => !c.checked);
-    allChks.forEach(c => c.checked = anyUnchecked ? true : false);
-    updateAllAdminPercentsInEditor(periodsCount);
-  }
-  function updateEditorCheckAllLabel(){
-    const btn = document.getElementById('editorCheckAll');
-    if(!btn) return;
-    const allChks = Array.from(editor.querySelectorAll('.admin-att-chk'));
-    if(allChks.length === 0){ btn.textContent = 'Check all'; return; }
-    const allChecked = allChks.every(c => c.checked);
-    btn.textContent = allChecked ? 'Uncheck all' : 'Check all';
-  }
-
-  // wire header controls
-  document.getElementById('editorBackBtn').onclick = () => openAdminPreviewClass(classDoc.name);
-
-  document.getElementById('editorPeriods').onchange = () => {
-    const p = Number(document.getElementById('editorPeriods').value || 2);
-    // reload editor with new period count (preserving subject/date)
-    const subj = document.getElementById('editorSubject').value || '';
-    const date = document.getElementById('editorDate').value || nowLocalISODate();
-    renderAdminEditor(classDoc, students, subj, date, p);
-  };
-
-  document.getElementById('editorCheckAll').onclick = () => {
-    const p = Number(document.getElementById('editorPeriods').value || 2);
-    toggleEditorCheckAll(p);
-    updateEditorCheckAllLabel();
-  };
-
-  document.getElementById('editorExportBtn').onclick = (e) => {
-    e.stopPropagation();
-    document.getElementById('editorExportMenu').classList.toggle('hidden');
-  };
-  document.getElementById('editorExportPdf').onclick = async () => {
-    document.getElementById('editorExportMenu').classList.add('hidden');
-    const subj = document.getElementById('editorSubject').value || '';
-    const date = document.getElementById('editorDate').value || nowLocalISODate();
-    await exportAttendanceCSVorPDF(classDoc.name, date, subj, 'pdf');
-  };
-  document.getElementById('editorExportCsv').onclick = async () => {
-    document.getElementById('editorExportMenu').classList.add('hidden');
-    const subj = document.getElementById('editorSubject').value || '';
-    const date = document.getElementById('editorDate').value || nowLocalISODate();
-    await exportAttendanceCSVorPDF(classDoc.name, date, subj, 'csv');
-  };
-
-  document.getElementById('editorSave').onclick = async () => {
-    const subj = document.getElementById('editorSubject').value || '';
-    const date = document.getElementById('editorDate').value || nowLocalISODate();
-    const periods = Number(document.getElementById('editorPeriods').value || 2);
-    if(!subj) return toast('Select a subject before saving.');
-    if(!classSubjects.includes(subj)) return toast('Cannot save: subject is not assigned to this class.');
-
-    // gather entries
-    const rows = Array.from(document.querySelectorAll('.att-row-admin'));
-    if(rows.length === 0) return toast('No students loaded.');
-    const entries = rows.map(r => {
-      const sid = r.dataset.student;
-      const chks = Array.from(r.querySelectorAll('.admin-att-chk')).filter(c => c.dataset.student === sid).sort((a,b)=>Number(a.dataset.period)-Number(b.dataset.period));
-      const flags = chks.map(c => !!c.checked);
-      return { studentId: sid, flags, present_count: flags.reduce((s,f)=> s + (f?1:0), 0), percent: computePercentFromFlags(flags) };
-    });
-
-    const adminRecId = `${String(classDoc.name).replace(/\s+/g,'_')}__${String(subj).replace(/\s+/g,'_')}__${date}__admin`;
-    try {
-      const data = {
-        class_id: classDoc.name,
-        subject_id: subj,
-        date,
-        periods_count: periods,
-        entries,
-        saved_at: Timestamp.now(),
-        last_edited_by: (typeof currentUser !== 'undefined' && currentUser && currentUser.uid) ? currentUser.uid : (currentUser && currentUser.id) || 'admin',
-        last_edited_at: Timestamp.now(),
-        editor_role: 'admin'
-      };
-      await setDoc(doc(db, ATT_RECORDS_COLL, adminRecId), data, { merge: true });
-      toast('Attendance saved (admin).');
-
-      // undo logic
-      if(lastAdminSave && lastAdminSave.timeoutId) { clearTimeout(lastAdminSave.timeoutId); lastAdminSave = null; }
-      lastAdminSave = {
-        id: adminRecId,
-        timeoutId: setTimeout(() => { lastAdminSave = null; hideUndo(); }, 8000)
-      };
-      showUndo(`Saved ${classDoc.name} • ${subj} • ${date}`, async () => {
-        // delete doc if deleteDoc is available
-        try {
-          if(typeof deleteDoc === 'function'){
-            await deleteDoc(doc(db, ATT_RECORDS_COLL, adminRecId));
-            toast('Undo successful — attendance removed.');
-            openAdminPreviewClass(classDoc.name);
-          } else {
-            toast('Undo not available (deleteDoc missing).');
-          }
-        } catch(err){
-          console.error('undo delete failed', err);
-          toast('Undo failed. See console.');
-        } finally {
-          if(lastAdminSave && lastAdminSave.timeoutId) { clearTimeout(lastAdminSave.timeoutId); lastAdminSave = null; }
-          hideUndo();
-        }
-      });
-
-    } catch(err){
-      console.error('admin save attendance failed', err);
-      toast('Failed to save (see console).');
-    }
-  };
-
-  // initial selection
-  if(subjectName) document.getElementById('editorSubject').value = subjectName;
-  await loadAndRender(Number(periodsVal || 2));
-}
-
-/* show undo snackbar */
-function showUndo(infoText, undoFn){
-  const snk = document.getElementById('adminUndoSnk');
-  const infoEl = document.getElementById('adminUndoInfo');
-  const btn = document.getElementById('adminUndoBtn');
-  if(!snk || !infoEl || !btn) return;
-  infoEl.textContent = infoText;
-  snk.style.display = 'block';
-  btn.onclick = () => { undoFn && undoFn(); snk.style.display = 'none'; };
-}
-function hideUndo(){ const snk = document.getElementById('adminUndoSnk'); if(snk) snk.style.display = 'none'; }
-
-/* Attendance history view — lists saved structured records for class with filters and edit */
-async function openAttendanceHistory(className){
-  const classDoc =
-  (classesCache || []).find(c => c.name === className || c.id === className)
-  || { name: className, subjects: [] };
-
-const students =
-  (studentsCache || []).filter(
-    s => String(s.classId || s.class || s.className || '') === String(classDoc.name)
-  );
-
+/* ===============================
+   STUDENT – INLINE ANNOUNCEMENTS
+   (NO MODALS – Spark-safe)
+================================ */
+async function renderAnnouncementsForStudent(studentObj){
+  if(!studentObj) return;
   try {
-    // header
-    document.getElementById('attendanceList').classList.add('hidden');
-    document.getElementById('attendanceClassView').classList.remove('hidden');
+    try { hideCardsUI(); } catch(e){}
 
-    document.getElementById('attendanceClassHeader').innerHTML = `
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <button id="histBackBtn" class="btn btn-ghost">← Back</button>
-        <div><strong>History • ${escapeHtmlLocal(className)}</strong></div>
-        <input id="histSearch" placeholder="Search teacher id/name or date (YYYY-MM-DD)..." style="margin-left:8px;padding:6px 8px;border-radius:8px;border:1px solid #eef2f7;min-width:240px" />
-        <div style="margin-left:auto;display:flex;gap:8px">
-          <button id="histRefresh" class="btn btn-ghost">Refresh</button>
-        </div>
-      </div>
-    `;
-    const editor = document.getElementById('attendanceClassEditor');
-    editor.innerHTML = `<div class="muted">Loading history…</div>`;
+    const all = await fetchAnnouncementsAll();
 
-    document.getElementById('histBackBtn').onclick = () => {
-      document.getElementById('attendanceClassView').classList.add('hidden');
-      document.getElementById('attendanceList').classList.remove('hidden');
-      document.getElementById('attendanceClassHeader').innerHTML = '';
-      document.getElementById('attendanceClassEditor').innerHTML = '';
-    };
-
-    async function loadHistory(){
-      const recsSnap = await getDocs(query(collection(db, ATT_RECORDS_COLL), where('class_id','==', className)));
-      const recs = recsSnap.docs.map(d => ({ id:d.id, ...d.data() }));
-      // sort desc by date or saved_at
-      recs.sort((a,b) => ((b.date||b.saved_at||'') + '').localeCompare((a.date||a.saved_at||'')));
-
-      // build rows
-      const rows = recs.map(r => {
-        const editorLabel = r.editor_role || '';
-        const by = r.last_edited_by || r.created_by || '';
-        const when = r.saved_at ? (r.saved_at.seconds ? new Date(r.saved_at.seconds*1000).toISOString().slice(0,19).replace('T',' ') : String(r.saved_at)) : (r.date||'');
-        const totalStudents = (r.entries || []).length;
-        const teacherId = r.teacher_id || r.created_by || '';
-        return `<div class="history-row" data-id="${escapeHtmlLocal(r.id)}" style="display:flex;gap:8px;align-items:center;padding:10px;border-bottom:1px solid #eef2f9">
-          <div style="min-width:40px">${escapeHtmlLocal(r.date||'')}</div>
-          <div style="flex:1">
-            <div style="font-weight:800">${escapeHtmlLocal(r.subject_id||r.subject||'')}</div>
-            <div class="muted">By: ${escapeHtmlLocal(by || teacherId)} ${editorLabel ? '('+escapeHtmlLocal(editorLabel)+')' : ''} • Saved: ${escapeHtmlLocal(when)}</div>
-          </div>
-          <div style="min-width:120px;text-align:right" class="muted">Students: ${totalStudents}</div>
-          <div style="display:flex;gap:8px">
-            <button class="btn btn-ghost viewRec" data-id="${escapeHtmlLocal(r.id)}">View</button>
-            <button class="btn btn-ghost editRec" data-id="${escapeHtmlLocal(r.id)}">Edit</button>
-          </div>
-        </div>`;
-      }).join('');
-      editor.innerHTML = rows || '<div class="muted">No history found.</div>';
-
-      // wire view/edit
-      editor.querySelectorAll('.viewRec').forEach(b => b.onclick = async (ev) => {
-        const id = ev.currentTarget.dataset.id;
-        const snap = await getDoc(doc(db, ATT_RECORDS_COLL, id));
-        if(!snap.exists()) return toast('Record not found.');
-        const rec = snap.data();
-        // show modal with details
-        const details = (rec.entries||[]).map(e => {
-          return `<div style="padding:6px;border-bottom:1px solid #f3f4f6"><strong>${escapeHtmlLocal(e.studentId)}</strong> — ${escapeHtmlLocal(String(e.percent || computePercentFromFlags(e.flags||[])))}% • Present: ${e.present_count || 0} / ${rec.periods_count || 0}</div>`;
-        }).join('');
-        showModal(`Record • ${escapeHtmlLocal(rec.subject_id||rec.subject||'')}`, `<div>Date: ${escapeHtmlLocal(rec.date||'')}</div><div style="margin-top:8px">${details}</div><div style="text-align:right;margin-top:8px"><button id="closeRec" class="btn btn-ghost">Close</button></div>`);
-        modalBody.querySelector('#closeRec').onclick = closeModal;
-      });
-
-      editor.querySelectorAll('.editRec').forEach(b => b.onclick = async (ev) => {
-        const id = ev.currentTarget.dataset.id;
-        const snap = await getDoc(doc(db, ATT_RECORDS_COLL, id));
-        if(!snap.exists()) return toast('Record not found.');
-        const rec = { id: snap.id, ...snap.data() };
-        // To edit, we open the editor with the record content:
-        // Build students list from class (we already have students param), and prefill flags map
-        const flagsMap = {};
-        (rec.entries || []).forEach(e => { flagsMap[e.studentId] = e.flags || []; });
-        // render editor with prefilled map (we'll provide a helper that accepts existing map)
-        renderAdminEditorWithMap(classDoc, students, rec.subject_id || rec.subject || '', rec.date || nowLocalISODate(), rec.periods_count || 2, rec.id, flagsMap);
-      });
-    }
-
-    document.getElementById('histRefresh').onclick = loadHistory;
-    document.getElementById('histSearch').oninput = () => {
-      // a tiny client-side filter by teacher id/name or date (we simply reload and filter)
-      loadHistory().then(() => {
-        const q = (document.getElementById('histSearch').value||'').trim().toLowerCase();
-        if(!q) return;
-        const editor = document.getElementById('attendanceClassEditor');
-        Array.from(editor.querySelectorAll('.history-row')).forEach(row => {
-          const text = (row.textContent || '').toLowerCase();
-          row.style.display = text.includes(q) ? '' : 'none';
-        });
-      });
-    };
-
-    // initial load
-    await (async ()=> {
-      await new Promise(r => setTimeout(r,50)); // tiny wait for UI
-      await (async () => {
-        const recsSnap = await getDocs(query(collection(db, ATT_RECORDS_COLL), where('class_id','==', className)));
-        // then call loadHistory via same function
-        await document.getElementById('histRefresh').onclick();
-      })();
-    })();
-
-  } catch(err){
-    console.error('openAttendanceHistory failed', err);
-    toast('Failed to load history.');
-  }
-}
-
-/* Helper: edit a specific record (prefill map) */
-async function renderAdminEditorWithMap(classDoc, students, subjectName, dateVal, periodsVal, recordId, flagsMap){
-  // very similar to renderAdminEditor, but we prefill flagsMap and use recordId when saving to update instead of new admin id
-  // For brevity reuse renderAdminEditor but after it loads override checkboxes based on flagsMap
-  await renderAdminEditor(classDoc, students, subjectName, dateVal, periodsVal);
-  // now apply flagsMap to checkboxes
-  try {
-    const editor = document.getElementById('attendanceClassEditor');
-    Array.from(editor.querySelectorAll('.admin-att-chk')).forEach(chk => {
-      const sid = chk.dataset.student;
-      const p = Number(chk.dataset.period || 0);
-      if(flagsMap && flagsMap[sid] && typeof flagsMap[sid][p] !== 'undefined'){
-        chk.checked = !!flagsMap[sid][p];
+    // filter announcements for this student (initial filter)
+    const applicableRaw = (all || []).filter(a => {
+      const aud = a.audience || [];
+      if (aud.includes('all') || aud.includes('students')) return true;
+      for (const it of aud) {
+        if (it.startsWith('class:') && it.split(':')[1] === (studentObj.classId || studentObj.class)) return true;
+        if (it.startsWith('student:') && it.split(':')[1] === studentObj.id) return true;
       }
+      // monthly_payment will be checked later by expandAnnouncementForStudent
+      if (a.type === 'monthly_payment') return true;
+      return false;
+    }).sort((a,b)=>{
+      const as = a.createdAt?.seconds || 0;
+      const bs = b.createdAt?.seconds || 0;
+      return bs - as;
     });
-    updateAllAdminPercentsInEditor(periodsVal);
-    updateEditorCheckAllLabel();
-    // override save handler to update this record id (instead of adminRecId)
-    const saveBtn = document.getElementById('editorSave');
-    if(saveBtn){
-      saveBtn.onclick = async () => {
-        const subj = document.getElementById('editorSubject').value || '';
-        const date = document.getElementById('editorDate').value || nowLocalISODate();
-        const periods = Number(document.getElementById('editorPeriods').value || 2);
-        if(!subj) return toast('Select a subject before saving.');
-        // gather entries
-        const rows = Array.from(document.querySelectorAll('.att-row-admin'));
-        if(rows.length === 0) return toast('No students loaded.');
-        const entries = rows.map(r => {
-          const sid = r.dataset.student;
-          const chks = Array.from(r.querySelectorAll('.admin-att-chk')).filter(c => c.dataset.student === sid).sort((a,b)=>Number(a.dataset.period)-Number(b.dataset.period));
-          const flags = chks.map(c => !!c.checked);
-          return { studentId: sid, flags, present_count: flags.reduce((s,f)=> s + (f?1:0), 0), percent: computePercentFromFlags(flags) };
-        });
-        try {
-          const data = {
-            class_id: classDoc.name,
-            subject_id: subj,
-            date,
-            periods_count: periods,
-            entries,
-            saved_at: Timestamp.now(),
-            last_edited_by: (typeof currentUser !== 'undefined' && currentUser && currentUser.uid) ? currentUser.uid : (currentUser && currentUser.id) || 'admin',
-            last_edited_at: Timestamp.now(),
-            editor_role: 'admin'
-          };
-          await setDoc(doc(db, ATT_RECORDS_COLL, recordId), data, { merge: true });
-          toast('Attendance updated (admin).');
-          openAdminPreviewClass(classDoc.name);
-        } catch(err){
-          console.error('update record failed', err);
-          toast('Update failed. See console.');
-        }
-      };
+
+    // expand per-student and filter out null (monthly messages for 0-balance students)
+    const expandedPromises = applicableRaw.map(a => expandAnnouncementForStudent(a, studentObj));
+    const expandedResults = await Promise.all(expandedPromises);
+    // expandedResults may contain nulls (skip those)
+    const applicable = [];
+    for(let i=0;i<applicableRaw.length;i++){
+      const ex = expandedResults[i];
+      if(ex === null) continue; // skip (e.g., monthly with zero balance)
+      applicable.push({ raw: applicableRaw[i], expanded: ex });
     }
-  } catch(e){ console.warn('renderAdminEditorWithMap: fallback', e); }
-}
 
-/* EXPORT attendance helper (class + date + subject) */
-async function exportAttendanceCSVorPDF(className, dateISO, subjectName = '', format = 'csv'){
-  try {
-    const recsSnap = await getDocs(query(collection(db, ATT_RECORDS_COLL), where('class_id','==', className), where('date','==', dateISO)));
-    let recs = recsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-    if(subjectName) recs = recs.filter(r => String(r.subject_id || r.subject || '') === String(subjectName));
+    // unread counter
+    const lastSeenKey = `ann_lastSeen_student_${studentObj.id}`;
+    const lastSeen = Number(localStorage.getItem(lastSeenKey) || '0');
+    let unread = 0;
+    applicable.forEach(a=> {
+      const ts = a.raw.createdAt?.seconds ? a.raw.createdAt.seconds * 1000 : 0;
+      if(ts > lastSeen) unread++;
+    });
 
-    if(recs.length === 0){
-      // fallback to legacy
-      const oldSnap = await getDocs(query(collection(db, LEGACY_ATT_COLL), where('class_id','==', className), where('date','==', dateISO)));
-      const rowsOld = oldSnap.docs.map(d => ({ id:d.id, ...d.data() }));
-      if(format === 'pdf'){
-        try {
-          const { jsPDF } = window.jspdf;
-          const doc = new jsPDF({ unit:'pt', format:'a4' });
-          await addPdfHeader(doc, `Attendance — ${className} — ${dateISO}`);
-          const body = rowsOld.map(r => [ r.date||dateISO, r.class_id||r.class||'', r.subject||r.subject_id||'', r.studentId||r.student_id||'', r.status||'', r.note||'' ]);
-          doc.autoTable({ startY: 110, head: [['Date','Class','Subject','StudentId','Status','Note']], body, margin:{left:40, right:40}, styles:{fontSize:9} });
-          doc.save(`attendance_${className}_${dateISO}.pdf`);
-        } catch(e){
-          const csv = ['date,class,subject,studentId,status,note'].join(',') + '\n' + rowsOld.map(r => `${dateISO},${className},${r.subject||''},${r.studentId||''},${r.status||''},"${(r.note||'').replace(/"/g,'""')}"`).join('\n');
-          const blob = new Blob([csv], { type: 'text/csv' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href=url; a.download=`attendance_${className}_${dateISO}.csv`; a.click(); URL.revokeObjectURL(url);
-        }
+    const counterEl = document.getElementById('announcementsCounter');
+    if(counterEl){
+      if(unread > 0){
+        counterEl.textContent = unread;
+        counterEl.style.display = 'inline-block';
+        counterEl.classList.add('pulse');
       } else {
-        const csv = ['date,class,subject,studentId,status,note'].join(',') + '\n' + rowsOld.map(r => `${dateISO},${className},${r.subject||''},${r.studentId||''},${r.status||''},"${(r.note||'').replace(/"/g,'""')}"`).join('\n');
-        const blob = new Blob([csv], { type: 'text/csv' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href=url; a.download=`attendance_${className}_${dateISO}.csv`; a.click(); URL.revokeObjectURL(url);
+        counterEl.textContent = '';
+        counterEl.style.display = 'none';
+        counterEl.classList.remove('pulse');
       }
-      toast('Export complete (legacy data).');
+    }
+
+    const resultArea = document.getElementById('resultArea');
+    if(!resultArea) return;
+    resultArea.style.display = 'block';
+
+    if (!applicable.length) {
+      resultArea.innerHTML = `<div class="card muted">No announcements</div>`;
       return;
     }
 
-    // combine rows
-    const rows = [];
-    recs.forEach(r => {
-      (r.entries || []).forEach(e => {
-        rows.push({ date: r.date || dateISO, class: r.class_id, subject: r.subject_id || r.subject || '', studentId: e.studentId, present_count: e.present_count || 0, periods: r.periods_count || '', percent: e.percent || 0 });
-      });
-    });
+    // build inline list (title + first 10 chars of expanded.body)
+    resultArea.innerHTML = `
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <h3 style="margin:0">📢 Announcements</h3>
+          <button id="markReadBtn" class="btn btn-ghost">Mark all read</button>
+        </div>
+      </div>
 
-    if(format === 'csv'){
-      const lines = ['date,class,subject,studentId,present_count,periods,percent'];
-      rows.forEach(rr => lines.push(`${rr.date},${rr.class},${rr.subject},${rr.studentId},${rr.present_count},${rr.periods},${rr.percent}`));
-      const blob = new Blob([lines.join('\n')], { type: 'text/csv' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href=url; a.download=`attendance_${className}_${dateISO}.csv`; a.click(); URL.revokeObjectURL(url);
-      toast('CSV exported.');
-    } else {
-      const { jsPDF } = window.jspdf;
-      const doc = new jsPDF({ unit:'pt', format:'a4' });
-      await addPdfHeader(doc, `Attendance — ${className} — ${dateISO}`);
-      const body = rows.map(r => [ r.date || '', r.class || '', r.subject || '', r.studentId || '', String(r.present_count||0), String(r.periods || ''), String(r.percent||0) ]);
-      doc.autoTable({ startY: 110, head: [['Date','Class','Subject','StudentId','Present','Periods','%']], body, margin:{left:40, right:40}, styles:{fontSize:9} });
-      doc.save(`attendance_${className}_${dateISO}.pdf`);
-      toast('PDF exported.');
-    }
+      ${applicable.map(item=>{
+        const a = item.raw;
+        const expanded = item.expanded;
+        const tsMs = a.createdAt?.seconds ? a.createdAt.seconds * 1000 : 0;
+        const ts = tsMs ? new Date(tsMs).toLocaleString() : '';
+        const isUnread = tsMs > lastSeen;
+        const preview = expanded.body && expanded.body.length > 10 ? expanded.body.slice(0,10) + '...' : (expanded.body||'');
+        return `
+          <div class="card ann-inline ${isUnread ? 'ann-unread' : ''}" data-id="${escapeHtml(a.id)}" data-ts="${tsMs}" style="cursor:pointer">
+            <div class="ann-title">${escapeHtml(expanded.title || a.title)}</div>
+            <div class="ann-preview">${escapeHtml(preview)}</div>
+            <div class="muted small">${escapeHtml(ts)}</div>
+            <div class="ann-body" style="display:none;margin-top:8px;white-space:pre-wrap">${escapeHtml(expanded.body || '')}</div>
+          </div>
+        `;
+      }).join('')}
+    `;
 
-  } catch(err){
-    console.error('exportAttendanceCSVorPDF failed', err);
-    toast('Export failed. See console.');
-  }
-}
-
-/* Export aggregated per-class all-subjects report (student x subject percent) */
-async function exportAllSubjectsForClass(className, format='pdf'){
-  try {
-    const recsSnap = await getDocs(query(collection(db, ATT_RECORDS_COLL), where('class_id','==', className)));
-    const recs = recsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-    const perStudent = {};
-    const students = (studentsCache||[]).filter(s => String(s.classId||s.class||s.className||'') === String(className));
-    const studentMap = {}; students.forEach(s => studentMap[s.id || s.studentId] = s);
-
-    recs.forEach(r => {
-      const subj = r.subject_id || r.subject || '';
-      (r.entries || []).forEach(e => {
-        if(!perStudent[e.studentId]) perStudent[e.studentId] = { studentName: (studentMap[e.studentId] ? (studentMap[e.studentId].fullName || studentMap[e.studentId].name) : ''), subjects: {} };
-        const existing = perStudent[e.studentId].subjects[subj];
-        if(!existing || (e.percent || 0) > (existing.percent || 0)) {
-          perStudent[e.studentId].subjects[subj] = { percent: e.percent || computePercentFromFlags(e.flags||[]), savedAt: r.saved_at || r.date || '' };
+    // expand/collapse behaviour
+    document.querySelectorAll('.ann-inline').forEach(card=>{
+      card.onclick = ()=>{
+        const body = card.querySelector('.ann-body');
+        const ts = Number(card.dataset.ts || 0);
+        const isOpen = body.style.display === 'block';
+        body.style.display = isOpen ? 'none' : 'block';
+        card.classList.add('opened');
+        card.classList.remove('ann-unread');
+        if(ts) localStorage.setItem(lastSeenKey, Date.now());
+        if(counterEl){
+          counterEl.textContent = '';
+          counterEl.style.display = 'none';
         }
-      });
+      };
     });
 
-    const rows = [];
-    for(const sid in perStudent){
-      const p = perStudent[sid];
-      for(const subj in p.subjects){
-        rows.push({ studentId: sid, studentName: p.studentName || '', subject: subj, percent: p.subjects[subj].percent || 0 });
-      }
-    }
-    if(rows.length === 0) return toast('No structured attendance records found for this class.');
-
-    if(format === 'csv'){
-      const lines = ['studentId,studentName,subject,percent'];
-      rows.forEach(r => lines.push(`${r.studentId},"${(r.studentName||'').replace(/"/g,'""')}",${r.subject},${r.percent}`));
-      const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a'); a.href = url; a.download = `attendance_${className}_subjects.csv`; a.click(); URL.revokeObjectURL(url);
-      toast('CSV exported.');
-      return;
-    } else {
-      const { jsPDF } = window.jspdf;
-      const doc = new jsPDF({ unit:'pt', format:'a4' });
-      await addPdfHeader(doc, `Class Attendance — ${className}`);
-      const body = rows.map(r => [ r.studentId || '', r.studentName || '', r.subject || '', String(r.percent || 0) + '%' ]);
-      doc.autoTable({ startY: 110, head: [['StudentId','StudentName','Subject','% Present']], body, margin:{left:40, right:40}, styles:{fontSize:9} });
-      doc.save(`attendance_${className}_subjects.pdf`);
-      toast('PDF exported.');
+    // mark all read button
+    const markBtn = document.getElementById('markReadBtn');
+    if(markBtn){
+      markBtn.onclick = ()=>{
+        localStorage.setItem(lastSeenKey, Date.now());
+        if(counterEl){
+          counterEl.textContent = '';
+          counterEl.style.display = 'none';
+        }
+        toast && toast('All announcements marked as read');
+      };
     }
 
   } catch(err){
-    console.error('exportAllSubjectsForClass failed', err);
-    toast('Export failed. See console.');
+    console.error('renderAnnouncementsForStudent failed', err);
   }
 }
+window.renderAnnouncementsForStudent = renderAnnouncementsForStudent;
 
-/* PDF header helper (logo optional) */
-async function addPdfHeader(doc, titleText){
+
+
+
+
+
+/* Usage: after you fetch the student object (or after renderResult), call:
+   renderAnnouncementsForStudent(studentObj);
+*/
+
+
+
+
+
+// ------------------ Cards + Remember logic ------------------
+// global selected mode (defaults to exam)
+let selectedMode = 'exam';
+const cardsRow = document.getElementById('cardsRow');
+const showCardsBtn = document.getElementById('showCardsBtn');
+const rememberCheckbox = document.getElementById('rememberCheckbox');
+
+// load remembered id on page load
+(function loadRememberedId(){
   try {
-    const logoUrl = 'assets/logo.png';
-    const img = new Image();
-    const p = new Promise((resolve) => {
-      img.onload = () => {
-        const w = img.width, h = img.height;
-        const maxW = 80, maxH = 80;
-        let dw = w, dh = h;
-        if(dw > maxW){ dh = dh * (maxW/dw); dw = maxW; }
-        if(dh > maxH){ dw = dw * (maxH/dh); dh = maxH; }
-        const canvas = document.createElement('canvas');
-        canvas.width = dw; canvas.height = dh;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0, dw, dh);
-        const dURL = canvas.toDataURL('image/png');
-        try { doc.addImage(dURL, 'PNG', 40, 28, dw, dh); } catch(e){}
-        resolve();
-      };
-      img.onerror = () => resolve();
-    });
-    img.src = logoUrl;
-    await p;
-  } catch(e){ /* ignore */ }
-
-  doc.setFontSize(16);
-  doc.setFont(undefined, 'bold');
-  doc.text(titleText, 140, 56);
-  doc.setFontSize(10);
-  doc.setFont(undefined, 'normal');
-  doc.text('AL-FATXI School — Attendance Report', 140, 74);
-}
-
-/* END admin attendance code */
-
-
-/* ------------------------
-  Users (admin) CRUD
--------------------------*/
-async function renderUsers(){
-  let page = document.getElementById('pageUsers');
-  if(!page){
-    page = document.createElement('section');
-    page.id = 'pageUsers';
-    page.className = 'page';
-    const main = document.querySelector('main');
-    main && main.appendChild(page);
-  }
-
-  // load users
-  let users = [];
-  try{
-    const snap = await getDocs(collection(db,'users'));
-    users = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-  }catch(err){
-    console.error('load users failed', err);
-  }
-
-  page.innerHTML = `
-    <div class="page-header" style="display:flex;align-items:center;gap:8px">
-      <button id="addUserBtn" class="btn btn-primary">+ Add Admin</button>
-      <input id="usersSearch" placeholder="Search users" style="margin-left:auto" />
-    </div>
-    <div id="usersList"></div>
-  `;
-
-  document.getElementById('addUserBtn').onclick = openAddUserModal;
-  document.getElementById('usersSearch').oninput = () => renderUsersList(users);
-
-  renderUsersList(users);
-}
-
-function renderUsersList(users){
-  const q = (document.getElementById('usersSearch') && document.getElementById('usersSearch').value || '').trim().toLowerCase();
-  const list = (users || []).filter(u => !q || (u.displayName||'').toLowerCase().includes(q) || (u.email||'').toLowerCase().includes(q));
-  const container = document.getElementById('usersList');
-  if(!container) return;
-  let html = `<table style="width:100%;border-collapse:collapse"><thead><tr><th>No</th><th>Email</th><th>Name</th><th>Role</th><th>Actions</th></tr></thead><tbody>`;
-  list.forEach((u, idx) => {
-    html += `<tr style="border-bottom:1px solid #f1f5f9"><td style="padding:8px">${idx+1}</td><td style="padding:8px">${escape(u.email||'')}</td><td style="padding:8px">${escape(u.displayName||'')}</td><td style="padding:8px">${escape(u.role||'admin')}</td><td style="padding:8px"><button class="btn btn-ghost edit-user" data-id="${u.id}">Edit</button> <button class="btn btn-danger del-user" data-id="${u.id}">Delete</button></td></tr>`;
-  });
-  html += `</tbody></table>`;
-  container.innerHTML = html;
-  container.querySelectorAll('.edit-user').forEach(b => b.onclick = openEditUserModal);
-  container.querySelectorAll('.del-user').forEach(b => b.onclick = deleteUser);
-}
-
-function openAddUserModal(){
-  const html = `
-    <div style="display:grid;grid-template-columns:1fr;gap:8px">
-      <div><label>Email</label><input id="newUserEmail" /></div>
-      <div><label>Name</label><input id="newUserName" /></div>
-      <div><label>Role</label><select id="newUserRole"><option value="admin">Admin</option></select></div>
-    </div>
-    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
-      <button id="newUserClose" class="btn btn-ghost">Close</button>
-      <button id="newUserSave" class="btn btn-primary">Save</button>
-    </div>
-  `;
-  showModal('Add Admin', html);
-  modalBody.querySelector('#newUserClose').onclick = closeModal;
-  modalBody.querySelector('#newUserSave').onclick = async () => {
-    const email = modalBody.querySelector('#newUserEmail').value.trim();
-    const name = modalBody.querySelector('#newUserName').value.trim();
-    const role = modalBody.querySelector('#newUserRole').value;
-    if(!email) return toast('Email required');
-    try{
-      const payload = { email, displayName: name || '', role, createdAt: Timestamp.now(), createdBy: currentUser ? currentUser.uid : null };
-      const ref = await addDoc(collection(db,'users'), payload);
-      toast('Admin added');
-      closeModal();
-      renderUsers(); // reload list
-    }catch(err){
-      console.error('add admin failed', err);
-      toast('Failed to add');
+    const stored = localStorage.getItem('rememberedStudentId');
+    if (stored) {
+      studentIdInput.value = stored;
+      if(rememberCheckbox) rememberCheckbox.checked = true;
     }
-  };
-}
-
-async function openEditUserModal(e){
-  const id = e.target.dataset.id;
-  if(!id) return;
-  const snap = await getDoc(doc(db,'users', id));
-  if(!snap.exists()) return toast('User not found');
-  const u = { id: snap.id, ...snap.data() };
-  const html = `
-    <div style="display:grid;grid-template-columns:1fr;gap:8px">
-      <div><label>Name</label><input id="editUserName" value="${escape(u.displayName||'')}" /></div>
-      <div><label>Role</label><input id="editUserRole" value="${escape(u.role||'admin')}" /></div>
-    </div>
-    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
-      <button id="editUserClose" class="btn btn-ghost">Close</button>
-      <button id="editUserSave" class="btn btn-primary">Save</button>
-    </div>
-  `;
-  showModal('Edit Admin', html);
-  modalBody.querySelector('#editUserClose').onclick = closeModal;
-  modalBody.querySelector('#editUserSave').onclick = async () => {
-    const name = modalBody.querySelector('#editUserName').value.trim();
-    const role = modalBody.querySelector('#editUserRole').value.trim();
-    try{
-      await updateDoc(doc(db,'users', id), { displayName: name, role, updatedAt: Timestamp.now(), updatedBy: currentUser ? currentUser.uid : null });
-      toast('Updated');
-      closeModal();
-      renderUsers();
-    }catch(err){
-      console.error('update admin failed', err);
-      toast('Failed to update');
-    }
-  };
-}
-
-async function deleteUser(e){
-  const id = e.target.dataset.id;
-  if(!id) return;
-  if(!confirm('Delete admin?')) return;
-  try{
-    await deleteDoc(doc(db,'users', id));
-    toast('Deleted');
-    renderUsers();
-  }catch(err){
-    console.error('delete admin failed', err);
-    toast('Failed to delete');
-  }
-}
-
-/* ------------------------
-  Header wiring (add tabs: Dashboard, Payments, Attendance, Users)
--------------------------*/
-(function wireHeaderTabs(){
-  try{
-    const nav = document.querySelector('.tabs');
-    if(!nav) return;
-    if(!document.getElementById('tabDashboard')){
-      const btn = document.createElement('button'); btn.id='tabDashboard'; btn.className='tab'; btn.textContent='Dashboard';
-      nav.insertBefore(btn, nav.firstChild);
-      btn.onclick = ()=>{ renderDashboard(); showPage && showPage('dashboard'); };
-    }
-    if(!document.getElementById('tabPayments')){
-      const btn = document.createElement('button'); btn.id='tabPayments'; btn.className='tab'; btn.textContent='Payments';
-      nav.appendChild(btn);
-      btn.onclick = ()=>{ renderPayments(); showPage && showPage('payments'); };
-    }
-    if(!document.getElementById('tabAttendance')){
-      const btn = document.createElement('button'); btn.id='tabAttendance'; btn.className='tab'; btn.textContent='Attendance';
-      nav.appendChild(btn);
-      btn.onclick = ()=>{ renderAttendance(); showPage && showPage('attendance'); };
-    }
-    if(!document.getElementById('tabUsers')){
-      const btn = document.createElement('button'); btn.id='tabUsers'; btn.className='tab'; btn.textContent='Users';
-      nav.appendChild(btn);
-      btn.onclick = ()=>{ renderUsers(); showPage && showPage('users'); };
-    }
-  }catch(err){ console.warn('wireHeaderTabs failed', err); }
+  } catch(e){ console.warn('remember load failed', e); }
 })();
 
-/* End of payments/attendance/users additions */
+// when checkbox changed, update storage (but only store a valid id)
+if(rememberCheckbox){
+  rememberCheckbox.addEventListener('change', () => {
+    try {
+      const val = studentIdInput.value.trim();
+      if(rememberCheckbox.checked && val){
+        localStorage.setItem('rememberedStudentId', val);
+      } else {
+        localStorage.removeItem('rememberedStudentId');
+      }
+    } catch(e){ console.warn(e); }
+  });
+}
+
+// helper: hide & show cards
+function hideCardsUI(){
+  if(cardsRow) cardsRow.style.display = 'none';
+  if(showCardsBtn) showCardsBtn.style.display = 'inline-block';
+}
+function showCardsUI(){
+  if(cardsRow) cardsRow.style.display = 'flex';
+  if(showCardsBtn) showCardsBtn.style.display = 'none';
+}
+
+// wire show cards button
+if(showCardsBtn){
+  showCardsBtn.addEventListener('click', () => {
+    showCardsUI();
+  });
+}
+
+// wire the individual cards
+document.querySelectorAll('.mode-card').forEach(card => {
+  card.addEventListener('click', async (e) => {
+    e.preventDefault();
+    const mode = card.dataset.mode || 'exam';
+    selectedMode = mode;
+
+    // ensure ID present
+    const id = studentIdInput.value.trim();
+    if(!id){
+      message.textContent = 'Fadlan geli ID sax ah oo ka hor tag sanduuqa.';
+      studentIdInput.focus();
+      return;
+    } else {
+      message.textContent = '';
+    }
+
+    // if remember checked, save
+    try { if(rememberCheckbox && rememberCheckbox.checked) localStorage.setItem('rememberedStudentId', id); } catch(e){}
+
+    // perform action similar to the search button, but using the selected card
+    showLoader();
+    try {
+      if(mode === 'test'){
+        sessionStorage.setItem('visitorStudentId', id);
+        // hide cards for UX
+        hideCardsUI();
+        window.location.href = 'leaderboard.html';
+        return;
+      }
+      if(mode === 'payments'){
+        await renderStudentTransactionsModal(id);
+        hideCardsUI();
+        return;
+      }
+      if(mode === 'attendance'){
+        await renderStudentAttendanceModal(id);
+        hideCardsUI();
+        return;
+      }
+      // exam flow
+      if(mode === 'exam'){
+        const latestSnap = await getDoc(doc(db,'studentsLatest', id));
+        let latest = latestSnap.exists() ? latestSnap.data() : null;
+        if(latest && !latest.motherName){
+          try{
+            const sSnap = await getDoc(doc(db,'students', id));
+            if(sSnap.exists()){
+              const sData = sSnap.data();
+              if(sData?.motherName) latest.motherName = sData.motherName;
+            }
+          }catch(e){ console.warn(e); }
+        }
+        if(!latest){
+          const alt = await fallbackFindLatestExamTotal(id);
+          if(!alt){
+            message.textContent = 'Natiijo la heli waayey. Fadlan hubi ID-ga.';
+            hideLoader();
+            return;
+          }
+          await renderResult(alt, { source: 'examTotals' });
+          hideLoader();
+          hideCardsUI();
+          return;
+        }
+        if(latest.blocked){
+          resultArea.style.display='block';
+          resultArea.innerHTML = `<div class="card"><h2>Access blocked</h2><p>${escapeHtml(latest.blockMessage || 'You are not allowed to view results.')}</p></div>`;
+          hideLoader();
+          hideCardsUI();
+          return;
+        }
+        const alt = await fallbackFindLatestExamTotal(id);
+        if(alt && alt.publishedAt && latest.publishedAt){
+          const altSeconds = alt.publishedAt.seconds || Date.parse(alt.publishedAt)/1000;
+          const latestSeconds = latest.publishedAt.seconds || Date.parse(latest.publishedAt)/1000;
+          if(altSeconds > latestSeconds){
+            await renderResult(alt, { source: 'examTotals' });
+            hideLoader();
+            hideCardsUI();
+            return;
+          }
+        }
+    
+
+        await renderResult(latest, { source: 'AL-Fatxi School' });
+        setHeaderStudentNameById(id);
+
+        // NEW: also render announcements for this student (safe: uses existing function)
+        try {
+          const sDoc = await getDoc(doc(db,'students', id));
+          const studentObj = sDoc.exists() ? {
+            id,
+            fullName: sDoc.data().name || sDoc.data().fullName || '',
+            classId: sDoc.data().classId || sDoc.data().class || sDoc.data().className || '',
+            balance: sDoc.data().balance_cents ?? sDoc.data().balance ?? 0
+          } : { id };
+          // call function you already added earlier
+          renderAnnouncementsForStudent(studentObj).catch(e => console.warn('ann render error', e));
+        } catch(e){
+          console.warn('ann render fetch student failed', e);
+        }
+
+        hideLoader();
+        hideCardsUI();
+        return;
+
+      }
+      // NEW: announcements card behavior
+      if (mode === 'announcements') {
+        // hide cards right away so UI matches other cards
+        hideCardsUI();
+
+        // load student profile (so renderAnnouncementsForStudent has balance + class info)
+        try {
+          const sDoc = await getDoc(doc(db, 'students', id));
+          const studentObj = sDoc.exists() ? {
+            id,
+            fullName: sDoc.data().name || sDoc.data().fullName || '',
+            classId: sDoc.data().classId || sDoc.data().class || sDoc.data().className || '',
+            balance: sDoc.data().balance_cents ?? sDoc.data().balance ?? 0
+          } : { id };
+
+          // render announcements (function you already added earlier)
+          // don't await too long — function shows modal or renders into resultArea
+          await renderAnnouncementsForStudent(studentObj);
+        } catch (err) {
+          console.warn('Announcements load failed', err);
+        } finally {
+          hideLoader();
+        }
+        return;
+      }
+
+      
+    } catch(err){
+      console.error('Card action failed', err);
+      message.textContent = 'Khalad ayaa dhacay. Fadlan isku day mar kale.';
+      hideLoader();
+    }
+  });
+});
+
+// ------------------ Replace search button handler ------------------
+// Use the selectedMode (card click sets it) OR default to 'exam'
+searchBtn.onclick = async () => {
+  tryUnlockAudio().catch(()=>{});
+  const studentIdVal = studentIdInput.value.trim();
+  if(!studentIdVal){
+    message.textContent = 'Fadlan geli ID sax ah.';
+    return;
+  }
+  // save preference if checked
+  try { if(rememberCheckbox && rememberCheckbox.checked) localStorage.setItem('rememberedStudentId', studentIdVal); } catch(e){}
+
+  // if current selectedMode is payments/attendance/test/exam, reuse same behavior as cards
+  const mode = selectedMode || 'exam';
+
+  // trigger same flows as cards (delegated to the card handler logic above)
+  // to avoid duplicating large code, just simulate a click on the matching card if visible
+  const card = document.querySelector(`.mode-card[data-mode="${mode}"]`);
+  if(card){
+    card.click();
+  } else {
+    // fallback — if cards not present just run exam flow
+    selectedMode = 'exam';
+    const evt = new Event('click');
+    const examCard = document.querySelector(`.mode-card[data-mode="exam"]`);
+    if(examCard) examCard.dispatchEvent(evt);
+  }
+};
+
+export { renderResult  };
