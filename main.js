@@ -1200,16 +1200,6 @@ async function renderStudentTransactionsModal(studentId){
 }
 
 
-// -------------------------------
-// Student-facing: attendance view (inline, not modal)
-// -------------------------------
-// main.js - improved renderStudentAttendanceModal
-// Assumes you have getDoc, doc, collection, query, where, getDocs available.
-
-// Replace your existing renderStudentAttendanceModal with this improved version.
-// It expects Firestore functions: getDoc, getDocs, collection, query, where, doc
-// and a global `db`. It will render into `resultArea` if present, otherwise open a modal.
-
 // Replace your existing renderStudentAttendanceModal with this function.
 async function renderStudentAttendanceModal(studentId){
   // small helpers
@@ -1580,14 +1570,214 @@ async function renderStudentAttendanceModal(studentId){
 }
 
 
-// helper for attendance message
-function attendanceMessageForPercent(pct, name){
-  if(pct >= 100) return `<div style="padding:8px;border-radius:6px;background:#ecfdf5;color:#065f46">Congratulations, ${escapeHtml(name)}! Perfect attendance (${pct}%).</div>`;
-  if(pct >= 90) return `<div style="padding:8px;border-radius:6px;background:#ecfeff;color:#036666">Great job, ${escapeHtml(name)} — excellent attendance (${pct}%).</div>`;
-  if(pct >= 80) return `<div style="padding:8px;border-radius:6px;background:#fff7ed;color:#92400e">Good — aim for 90%+. (${pct}%)</div>`;
-  if(pct >= 50) return `<div style="padding:8px;border-radius:6px;background:#fff1f2;color:#991b1b">Warning — your attendance is low (${pct}%). Please see the school office.</div>`;
-  return `<div style="padding:8px;border-radius:6px;background:#fee2e2;color:#7f1d1d">Danger — very low attendance (${pct}%). Contact administration immediately.</div>`;
+/* -----------------------------
+  STUDENT: render announcements for the currently found student
+  Paste into main.js where you have student object available after login/search.
+------------------------------*/
+// helper: format cents -> "xx.xx"
+// function c2p(cents){
+//   const n = Number(cents || 0);
+//   if(Number.isNaN(n)) return '0.00';
+//   return (n/100).toFixed(2);
+// } this function already created  please
+
+function getMonthNameNum(n){
+  const m = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  return m[(Number(n||0)-1)] || '';
 }
+
+function expandAnnouncementForStudent(ann, studentObj){
+  if(!ann) return { title: '', body: '' };
+  let title = String(ann.title || '');
+  let body = String(ann.body || '');
+  const now = new Date();
+  // common tokens
+  const tokens = {
+    '{student_name}': studentObj.fullName || studentObj.name || studentObj.id || '',
+    '{student_id}': studentObj.id || '',
+    '{class}': studentObj.classId || studentObj.class || '',
+    '{balance}': (typeof studentObj.balance !== 'undefined') ? c2p(studentObj.balance) : (studentObj.balance_cents ? c2p(studentObj.balance_cents) : ''),
+    '{month}': getMonthNameNum(now.getMonth()+1),
+    '{year}': now.getFullYear(),
+    '{date}': now.toLocaleDateString(),
+    '{amount}': studentObj.amount ? c2p(studentObj.amount) : '',
+    '{due_date}': (ann.monthYear ? `05-${ann.monthYear.split('-')[0]}-${ann.monthYear.split('-')[1]}` : '')
+  };
+
+  // exam replacement: if announcement.meta.examId present, try to find the exam name
+  if(ann.meta && ann.meta.examId){
+    const ex = (window.examsCache || []).find(e => e.id === ann.meta.examId);
+    tokens['{exam}'] = ex ? (ex.name || ex.id) : (ann.meta.examName || ann.meta.examId || '');
+  } else {
+    tokens['{exam}'] = tokens['{month}'] || '';
+  }
+
+  // Replace all tokens in both body and title
+  Object.keys(tokens).forEach(k => {
+    const v = tokens[k] != null ? String(tokens[k]) : '';
+    const re = new RegExp(k.replace(/([.*+?^=!:${}()|\[\]\/\\])/g,'\\$1'), 'g');
+    title = title.replace(re, v);
+    body = body.replace(re, v);
+  });
+
+  return { title, body };
+}
+
+async function fetchAnnouncementsAll(){
+  try {
+    const s = await getDocs(query(collection(db,'announcements')));
+    return s.docs.map(d => ({ id: d.id, ...d.data() }));
+  } catch(err){ console.error('fetchAnnouncementsAll', err); return []; }
+}
+
+/* ===============================
+   STUDENT – INLINE ANNOUNCEMENTS
+   (NO MODALS – Spark-safe)
+================================ */
+async function renderAnnouncementsForStudent(studentObj){
+  if(!studentObj) return;
+
+  try {
+    try { hideCardsUI(); } catch(e){}
+
+    const all = await fetchAnnouncementsAll();
+
+    // filter announcements for this student
+    const applicable = (all || []).filter(a => {
+      const aud = a.audience || [];
+      if (aud.includes('all') || aud.includes('students')) return true;
+
+      for (const it of aud) {
+        if (it.startsWith('class:') && it.split(':')[1] === (studentObj.classId || studentObj.class)) {
+          return true;
+        }
+        if (it.startsWith('student:') && it.split(':')[1] === studentObj.id) {
+          return true;
+        }
+      }
+
+      if (a.type === 'monthly_payment') return !!a.allowMonthly;
+      return false;
+    }).sort((a,b)=>{
+      const as = a.createdAt?.seconds || 0;
+      const bs = b.createdAt?.seconds || 0;
+      return bs - as;
+    });
+
+    // unread counter
+    const lastSeenKey = `ann_lastSeen_student_${studentObj.id}`;
+    const lastSeen = Number(localStorage.getItem(lastSeenKey) || '0');
+    let unread = 0;
+
+    applicable.forEach(a=>{
+      const ts = a.createdAt?.seconds ? a.createdAt.seconds * 1000 : 0;
+      if(ts > lastSeen) unread++;
+    });
+
+    const counterEl = document.getElementById('announcementsCounter');
+    if(counterEl){
+      counterEl.textContent = unread > 0 ? unread : '';
+      counterEl.style.display = unread > 0 ? 'inline-block' : 'none';
+    }
+
+    const resultArea = document.getElementById('resultArea');
+    resultArea.style.display = 'block';
+
+    if (!applicable.length) {
+      resultArea.innerHTML = `<div class="card muted">No announcements</div>`;
+      return;
+    }
+
+    // build inline list
+    resultArea.innerHTML = `
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <h3 style="margin:0">📢 Announcements</h3>
+          <button id="markReadBtn" class="btn btn-ghost">Mark all read</button>
+        </div>
+      </div>
+
+      ${applicable.map(a=>{
+        const expanded = expandAnnouncementForStudent(a, studentObj);
+        const tsMs = a.createdAt?.seconds ? a.createdAt.seconds * 1000 : 0;
+        const ts = tsMs ? new Date(tsMs).toLocaleString() : '';
+      
+        const isUnread = tsMs > lastSeen;
+        const preview =
+          expanded.body.length > 10
+            ? expanded.body.slice(0, 10) + '...'
+            : expanded.body;
+      
+        return `
+          <div class="card ann-inline ${isUnread ? 'ann-unread' : ''}"
+               data-id="${escapeHtml(a.id)}"
+               data-ts="${tsMs}"
+               style="cursor:pointer">
+      
+            <div class="ann-title">${escapeHtml(expanded.title)}</div>
+            <div class="ann-preview">${escapeHtml(preview)}</div>
+            <div class="muted small">${escapeHtml(ts)}</div>
+      
+            <div class="ann-body"
+                 style="display:none;margin-top:8px;white-space:pre-wrap">
+              ${escapeHtml(expanded.body)}
+            </div>
+          </div>
+        `;
+      }).join('')}
+      `;
+
+    
+    // expand / collapse
+    document.querySelectorAll('.ann-inline').forEach(card=>{
+      card.onclick = ()=>{
+        const body = card.querySelector('.ann-body');
+        const ts = Number(card.dataset.ts || 0);
+    
+        const isOpen = body.style.display === 'block';
+        body.style.display = isOpen ? 'none' : 'block';
+    
+        card.classList.add('opened');
+        card.classList.remove('ann-unread');
+    
+        if(ts){
+          localStorage.setItem(lastSeenKey, Date.now());
+        }
+    
+        if(counterEl){
+          counterEl.textContent = '';
+          counterEl.style.display = 'none';
+        }
+      };
+    });
+    
+
+    // mark all read
+    const markBtn = document.getElementById('markReadBtn');
+    if(markBtn){
+      markBtn.onclick = ()=>{
+        localStorage.setItem(lastSeenKey, Date.now());
+        if(counterEl){
+          counterEl.textContent = '';
+          counterEl.style.display = 'none';
+        }
+        toast && toast('All announcements marked as read');
+      };
+    }
+
+  } catch(err){
+    console.error('renderAnnouncementsForStudent failed', err);
+  }
+}
+
+window.renderAnnouncementsForStudent = renderAnnouncementsForStudent;
+
+
+
+
+/* Usage: after you fetch the student object (or after renderResult), call:
+   renderAnnouncementsForStudent(studentObj);
+*/
 
 
 
@@ -1725,12 +1915,58 @@ document.querySelectorAll('.mode-card').forEach(card => {
             return;
           }
         }
+    
+
         await renderResult(latest, { source: 'AL-Fatxi School' });
         setHeaderStudentNameById(id);
+
+        // NEW: also render announcements for this student (safe: uses existing function)
+        try {
+          const sDoc = await getDoc(doc(db,'students', id));
+          const studentObj = sDoc.exists() ? {
+            id,
+            fullName: sDoc.data().name || sDoc.data().fullName || '',
+            classId: sDoc.data().classId || sDoc.data().class || sDoc.data().className || '',
+            balance: sDoc.data().balance_cents ?? sDoc.data().balance ?? 0
+          } : { id };
+          // call function you already added earlier
+          renderAnnouncementsForStudent(studentObj).catch(e => console.warn('ann render error', e));
+        } catch(e){
+          console.warn('ann render fetch student failed', e);
+        }
+
         hideLoader();
         hideCardsUI();
         return;
+
       }
+      // NEW: announcements card behavior
+      if (mode === 'announcements') {
+        // hide cards right away so UI matches other cards
+        hideCardsUI();
+
+        // load student profile (so renderAnnouncementsForStudent has balance + class info)
+        try {
+          const sDoc = await getDoc(doc(db, 'students', id));
+          const studentObj = sDoc.exists() ? {
+            id,
+            fullName: sDoc.data().name || sDoc.data().fullName || '',
+            classId: sDoc.data().classId || sDoc.data().class || sDoc.data().className || '',
+            balance: sDoc.data().balance_cents ?? sDoc.data().balance ?? 0
+          } : { id };
+
+          // render announcements (function you already added earlier)
+          // don't await too long — function shows modal or renders into resultArea
+          await renderAnnouncementsForStudent(studentObj);
+        } catch (err) {
+          console.warn('Announcements load failed', err);
+        } finally {
+          hideLoader();
+        }
+        return;
+      }
+
+      
     } catch(err){
       console.error('Card action failed', err);
       message.textContent = 'Khalad ayaa dhacay. Fadlan isku day mar kale.';
@@ -1768,4 +2004,4 @@ searchBtn.onclick = async () => {
   }
 };
 
-export { renderResult , };
+export { renderResult  };
