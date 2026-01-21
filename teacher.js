@@ -18,6 +18,15 @@ const classSearch = document.getElementById('classSearch');
 const attendanceHeaderInner = document.getElementById('attendanceHeaderInner');
 const attendanceEditor = document.getElementById('attendanceEditor');
 
+
+const tabTeacherAnnouncements = document.getElementById('tabTeacherAnnouncements');
+const pageTeacherAnnouncements = document.getElementById('pageTeacherAnnouncements');
+const teacherAnnouncementsList = document.getElementById('teacherAnnouncementsList');
+
+
+tabTeacherAnnouncements.onclick = () => showTab('announcements');
+
+
 const modalBackdrop = document.getElementById('modalBackdrop');
 const modal = document.getElementById('modal');
 const modalTitle = document.getElementById('modalTitle');
@@ -34,9 +43,22 @@ function toast(msg, t=2200){ if(!toastEl) return; toastEl.textContent = msg; toa
 function showTab(tab){
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   document.querySelectorAll('.page').forEach(p=>p.style.display='none');
-  if(tab === 'profile'){ tabProfile.classList.add('active'); pageProfile.style.display = 'block'; }
-  else { tabAttendance.classList.add('active'); pageAttendance.style.display = 'block'; }
+
+  if(tab === 'profile'){
+    tabProfile.classList.add('active');
+    pageProfile.style.display = 'block';
+  }
+  else if(tab === 'attendance'){
+    tabAttendance.classList.add('active');
+    pageAttendance.style.display = 'block';
+  }
+  else if(tab === 'announcements'){
+    tabTeacherAnnouncements.classList.add('active');
+    pageTeacherAnnouncements.style.display = 'block';
+    renderTeacherAnnouncementsPage(); // 👈 load list
+  }
 }
+
 tabProfile.onclick = () => showTab('profile');
 tabAttendance.onclick = () => showTab('attendance');
 btnLogout.onclick = async ()=> { await signOut(auth); window.location.href='login.html'; };
@@ -310,6 +332,50 @@ function showClassSubjectsModal(className){
   `;
   showModal(`Subjects — ${escapeHtml(className)}`, html);
   modalBody.querySelector('#closeSub').onclick = closeModal;
+}
+
+async function renderTeacherAnnouncementsPage(){
+  if(!currentTeacher || !teacherAnnouncementsList) return;
+
+  const all = await fetchAnnouncementsAll();
+  const myClasses = Array.isArray(currentTeacher.classes) ? currentTeacher.classes : [];
+
+  const applicable = all.filter(a => {
+    const aud = a.audience || [];
+    if(aud.includes('all') || aud.includes('teachers')) return true;
+    return aud.some(x => x.startsWith('class:') && myClasses.includes(x.split(':')[1]));
+  }).sort((a,b)=>{
+    const ta = a.createdAt?.seconds || 0;
+    const tb = b.createdAt?.seconds || 0;
+    return tb - ta;
+  });
+
+  const lastSeenKey = `ann_lastSeen_teacher_${currentTeacher.id}`;
+  const lastSeen = Number(localStorage.getItem(lastSeenKey) || '0');
+
+  teacherAnnouncementsList.innerHTML = applicable.length
+    ? applicable.map(a => {
+        const ts = a.createdAt?.toDate ? a.createdAt.toDate().toLocaleString() : '';
+        const createdMs = a.createdAt?.seconds ? a.createdAt.seconds * 1000 : 0;
+        const unread = createdMs > lastSeen;
+
+        return `
+          <div class="card" style="margin-bottom:10px">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div style="font-weight:800">${escapeHtml(a.title)}</div>
+              ${unread ? '<span class="ann-badge" style="display:inline-block">NEW</span>' : ''}
+            </div>
+            <div class="muted small">${escapeHtml(ts)}</div>
+            <div style="margin-top:6px;white-space:pre-wrap">${escapeHtml(a.body)}</div>
+          </div>
+        `;
+      }).join('')
+    : `<div class="muted">No announcements.</div>`;
+
+  // mark all read automatically when page opens
+  localStorage.setItem(lastSeenKey, String(Date.now()));
+  const counter = document.getElementById('teacherAnnouncementsCounter');
+  if(counter) counter.style.display = 'none';
 }
 
 /* ---------------- Open class attendance (NEW UX) ----------------
