@@ -93,3 +93,68 @@ body{margin:0;background:#fbfdff;color:#0f1724;}
     font-size:10px;
   }
 }
+
+/* Announcements: compact list, preview, unread + animations */
+.ann-list { display:flex; flex-direction:column; gap:10px; }
+.ann-card{
+  display:block;
+  padding:12px;
+  border-radius:10px;
+  background:#fff;
+  border:1px solid #eef2f7;
+  box-shadow:0 6px 18px rgba(2,6,23,0.04);
+  cursor:pointer;
+  overflow:visible;
+  transition: transform .14s ease, box-shadow .14s ease, background .18s ease;
+  position:relative;
+}
+.ann-card:hover{ transform:translateY(-4px); box-shadow:0 14px 30px rgba(2,6,23,0.08); }
+
+/* unread style (red) */
+.ann-card.unread{ background:#fff5f5; border-left:6px solid #ef4444; }
+.ann-card.unread .ann-title{ color:#b91c1c; }
+
+/* header row: title + date + small NEW badge */
+.ann-head{ display:flex; justify-content:space-between; align-items:center; gap:8px; }
+.ann-title{ font-weight:900; font-size:0.98rem; color:var(--text); transition: color .12s ease, transform .12s ease; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.ann-meta{ display:flex; gap:8px; align-items:center; font-size:12px; color:var(--muted); }
+
+/* preview line (first 10 chars shown) */
+.ann-preview{ margin-top:6px; color:var(--muted); font-size:13px; }
+
+/* hidden body: animated expand/collapse (we set max-height inline for smoothness) */
+.ann-body{
+  margin-top:10px;
+  white-space:pre-wrap;
+  overflow:hidden;
+  opacity:0;
+  max-height:0;
+  transition: max-height .28s cubic-bezier(.2,.9,.3,1), opacity .22s ease;
+  color: #0f1724;
+  border-top:1px solid rgba(15,23,42,0.02);
+  padding-top:8px;
+}
+
+/* opened state */
+.ann-card.open .ann-body{ opacity:1; }
+
+/* NEW badge on item */
+.ann-new{
+  background:#ef4444; color:#fff; padding:4px 8px; border-radius:999px; font-weight:900; font-size:11px;
+  box-shadow:0 6px 14px rgba(239,68,68,0.12);
+}
+
+/* top nav badge pulse */
+.ann-badge.pulse { animation:annPulse 1.4s ease-in-out infinite; box-shadow:0 8px 24px rgba(239,68,68,0.12); }
+@keyframes annPulse{
+  0%{ transform:scale(1); filter:brightness(1); }
+  50%{ transform:scale(1.08); filter:brightness(1.05); }
+  100%{ transform:scale(1); filter:brightness(1); }
+}
+
+/* small responsive tweaks */
+@media (max-width:720px){
+  .ann-card{ padding:10px; }
+  .ann-title{ font-size:0.95rem; }
+  .ann-preview{ font-size:12px }
+}
