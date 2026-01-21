@@ -255,6 +255,36 @@ function hideCardsView(){
 }
 
 
+function updateTeacherUnreadCounter(){
+  // compute unread again and update nav badge with pulse if >0
+  if(!currentTeacher) return;
+  fetchAnnouncementsAll().then(all => {
+    const myClasses = Array.isArray(currentTeacher.classes) ? currentTeacher.classes : [];
+    const applicable = (all||[]).filter(a => {
+      const aud = a.audience || [];
+      if(aud.includes('all') || aud.includes('teachers')) return true;
+      return aud.some(x => x.startsWith('class:') && myClasses.includes(x.split(':')[1]));
+    });
+    const lastSeenKey = `ann_lastSeen_teacher_${currentTeacher.id || currentTeacher.email || 'unknown'}`;
+    const lastSeen = Number(localStorage.getItem(lastSeenKey) || '0');
+    const unread = (applicable||[]).reduce((s,a) => {
+      const ts = a.createdAt?.seconds ? a.createdAt.seconds * 1000 : 0;
+      return s + (ts > lastSeen ? 1 : 0);
+    }, 0);
+
+    const badge = document.getElementById('teacherAnnouncementsCounter');
+    if(badge){
+      badge.textContent = unread > 0 ? String(unread) : '';
+      if(unread > 0){
+        badge.style.display = 'inline-block';
+        badge.classList.add('pulse');
+      } else {
+        badge.style.display = 'none';
+        badge.classList.remove('pulse');
+      }
+    }
+  }).catch(e => console.warn('unread counter update failed', e));
+}
 
 /* create class cards */
 function renderClassCards(){
@@ -337,46 +367,87 @@ function showClassSubjectsModal(className){
 async function renderTeacherAnnouncementsPage(){
   if(!currentTeacher || !teacherAnnouncementsList) return;
 
+  // fetch & filter
   const all = await fetchAnnouncementsAll();
   const myClasses = Array.isArray(currentTeacher.classes) ? currentTeacher.classes : [];
-
-  const applicable = all.filter(a => {
+  const applicable = (all||[]).filter(a => {
     const aud = a.audience || [];
     if(aud.includes('all') || aud.includes('teachers')) return true;
     return aud.some(x => x.startsWith('class:') && myClasses.includes(x.split(':')[1]));
-  }).sort((a,b)=>{
-    const ta = a.createdAt?.seconds || 0;
-    const tb = b.createdAt?.seconds || 0;
-    return tb - ta;
-  });
+  }).sort((a,b) => (b.createdAt?.seconds||0) - (a.createdAt?.seconds||0));
 
-  const lastSeenKey = `ann_lastSeen_teacher_${currentTeacher.id}`;
+  // lastSeen for teacher
+  const lastSeenKey = `ann_lastSeen_teacher_${currentTeacher.id || currentTeacher.email || 'unknown'}`;
   const lastSeen = Number(localStorage.getItem(lastSeenKey) || '0');
 
-  teacherAnnouncementsList.innerHTML = applicable.length
-    ? applicable.map(a => {
-        const ts = a.createdAt?.toDate ? a.createdAt.toDate().toLocaleString() : '';
-        const createdMs = a.createdAt?.seconds ? a.createdAt.seconds * 1000 : 0;
-        const unread = createdMs > lastSeen;
+  // build list HTML (title + date + preview 10 chars)
+  if(!applicable.length){
+    teacherAnnouncementsList.innerHTML = `<div class="muted">No announcements.</div>`;
+    // ensure top badge hidden
+    const topBadge = document.getElementById('teacherAnnouncementsCounter');
+    if(topBadge) topBadge.style.display = 'none';
+    return;
+  }
 
-        return `
-          <div class="card" style="margin-bottom:10px">
-            <div style="display:flex;justify-content:space-between;align-items:center">
-              <div style="font-weight:800">${escapeHtml(a.title)}</div>
-              ${unread ? '<span class="ann-badge" style="display:inline-block">NEW</span>' : ''}
-            </div>
+  teacherAnnouncementsList.innerHTML = `<div class="ann-list">` + applicable.map(a => {
+    const createdMs = a.createdAt?.seconds ? a.createdAt.seconds * 1000 : 0;
+    const ts = createdMs ? (new Date(createdMs)).toLocaleString() : '';
+    const unread = createdMs > lastSeen;
+    const previewRaw = String(a.body || '');
+    const preview = previewRaw.length > 10 ? previewRaw.slice(0,10) + '…' : previewRaw;
+    return `
+      <div class="ann-card ${unread ? 'unread' : ''}" data-id="${escapeHtml(a.id)}" data-ts="${createdMs}">
+        <div class="ann-head">
+          <div class="ann-title">${escapeHtml(a.title || '(No title)')}</div>
+          <div class="ann-meta">
             <div class="muted small">${escapeHtml(ts)}</div>
-            <div style="margin-top:6px;white-space:pre-wrap">${escapeHtml(a.body)}</div>
+            ${unread ? '<div class="ann-new">NEW</div>' : ''}
           </div>
-        `;
-      }).join('')
-    : `<div class="muted">No announcements.</div>`;
+        </div>
+        <div class="ann-preview">${escapeHtml(preview)}</div>
+        <div class="ann-body">${escapeHtml(String(a.body || ''))}</div>
+      </div>
+    `;
+  }).join('') + `</div>`;
 
-  // mark all read automatically when page opens
-  localStorage.setItem(lastSeenKey, String(Date.now()));
-  const counter = document.getElementById('teacherAnnouncementsCounter');
-  if(counter) counter.style.display = 'none';
+  // wire expand/collapse + mark-as-read
+  const annCards = Array.from(teacherAnnouncementsList.querySelectorAll('.ann-card'));
+  annCards.forEach(card => {
+    const body = card.querySelector('.ann-body');
+    // ensure starting collapsed
+    body.style.maxHeight = '0px';
+    body.style.opacity = '0';
+
+    card.onclick = (ev) => {
+      // allow clicks on buttons inside to not toggle (safe)
+      if(ev.target && (ev.target.tagName === 'BUTTON' || ev.target.closest('button'))) return;
+
+      const isOpen = card.classList.toggle('open');
+      if(isOpen){
+        // expand with scrollHeight
+        const targetH = body.scrollHeight;
+        body.style.maxHeight = targetH + 'px';
+        body.style.opacity = '1';
+        // small title animation
+        card.querySelector('.ann-title').style.transform = 'translateY(-2px)';
+        // mark as read if unread
+        if(card.classList.contains('unread')){
+          card.classList.remove('unread');
+          localStorage.setItem(lastSeenKey, String(Date.now()));
+          updateTeacherUnreadCounter(); // update top badge
+        }
+      } else {
+        body.style.maxHeight = '0px';
+        body.style.opacity = '0';
+        card.querySelector('.ann-title').style.transform = '';
+      }
+    };
+  });
+
+  // When page opens, update top unread counter & pulse
+  updateTeacherUnreadCounter();
 }
+
 
 /* ---------------- Open class attendance (NEW UX) ----------------
    - Hides cards list
