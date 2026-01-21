@@ -105,6 +105,75 @@ if(nameEl) nameEl.textContent = currentTeacher.fullName || currentTeacher.teache
   }
 });
 
+
+/* -----------------------------
+  TEACHER: announcements rendering
+  Paste after teacher caches are loaded (after renderAttendanceLanding())
+------------------------------*/
+async function fetchAnnouncementsAll(){
+  try {
+    const snap = await getDocs(query(collection(db, 'announcements')));
+    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  } catch(err){
+    console.error('fetchAnnouncementsAll', err); return [];
+  }
+}
+
+/** Render announcements applicable to teacher and show unread counter (localStorage-based) */
+async function renderAnnouncementsForTeacher(){
+  if(!currentTeacher) return;
+  try {
+    const all = await fetchAnnouncementsAll();
+    const myClasses = Array.isArray(currentTeacher.classes) ? currentTeacher.classes : [];
+    const applicable = (all||[]).filter(a => {
+      const aud = a.audience || [];
+      if(aud.includes('all') || aud.includes('teachers')) return true;
+      for(const i of aud){
+        if(i.startsWith('class:')){
+          const cls = i.split(':')[1];
+          if(myClasses.includes(cls)) return true;
+        }
+      }
+      return false;
+    }).sort((a,b) => (b.createdAt && b.createdAt.seconds ? b.createdAt.seconds : 0) - (a.createdAt && a.createdAt.seconds ? a.createdAt.seconds : 0));
+
+    // unread count using localStorage
+    const lastSeenKey = `ann_lastSeen_teacher_${currentTeacher.id || currentTeacher.email || 'unknown'}`;
+    const lastSeen = Number(localStorage.getItem(lastSeenKey) || '0');
+    const unread = (applicable||[]).reduce((s,a) => {
+      const ts = a.createdAt && a.createdAt.seconds ? a.createdAt.seconds * 1000 : Date.parse(a.createdAt||'') || 0;
+      return s + (ts > lastSeen ? 1 : 0);
+    }, 0);
+
+    const counterEl = document.getElementById('teacherAnnouncementsCounter');
+    const btn = document.getElementById('teacherAnnouncementsBtn');
+    if(counterEl) { counterEl.textContent = unread > 0 ? String(unread) : ''; counterEl.style.display = unread > 0 ? 'inline-block' : 'none'; }
+
+    if(btn){
+      btn.onclick = () => {
+        const html = (applicable||[]).map(a => {
+          const ts = a.createdAt && a.createdAt.toDate ? a.createdAt.toDate().toLocaleString() : '';
+          return `<div style="padding:8px;border-bottom:1px solid #eee"><div style="font-weight:700">${escapeHtml(a.title)}</div><div class="muted small">${escapeHtml(ts)}</div><div style="white-space:pre-wrap;margin-top:6px">${escapeHtml(a.body)}</div></div>`;
+        }).join('');
+        showModal('Announcements', `<div style="max-height:60vh;overflow:auto;padding:8px">${html || '<div class="muted">No announcements</div>'}</div><div style="text-align:right;margin-top:8px"><button id="markReadTeach" class="btn">Mark all read</button></div>`);
+        setTimeout(()=> {
+          const markBtn = document.getElementById('markReadTeach');
+          if(markBtn) markBtn.onclick = () => {
+            localStorage.setItem(lastSeenKey, String(Date.now()));
+            if(counterEl) counterEl.style.display = 'none';
+            closeModal();
+            toast('Marked as read');
+          };
+        }, 80);
+      };
+    }
+  } catch(err){ console.error('renderAnnouncementsForTeacher err', err); }
+}
+
+// call it after your existing render call (you can paste this call where you already render profile/attendance)
+setTimeout(() => { try { renderAnnouncementsForTeacher().catch(()=>{}); } catch(e){ } }, 200);
+window.renderAnnouncementsForTeacher = renderAnnouncementsForTeacher;
+
 /* ---------------- Profile (unchanged) ---------------- */
 function renderTeacherProfile(){
   if(!currentTeacher) return;
