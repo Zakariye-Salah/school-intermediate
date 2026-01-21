@@ -76,26 +76,7 @@ let examsCache = [];
 let teachersCache = []; // NEW
 let examTotalsCache = {}; // examId -> { studentId: payload }
 /* UI helpers */
-// function showPage(id) {
-//   // clear tab active classes (defensive - some tabs may be missing)
-//   [tabStudents, tabClasses, tabSubjects, tabExams, tabTeachers].forEach(t=>{
-//     if(t && t.classList) t.classList.remove('active');
-//   });
 
-//   // hide all pages (defensive - only hide if element exists)
-//   if(pageStudents) pageStudents.style.display = 'none';
-//   if(pageClasses) pageClasses.style.display = 'none';
-//   if(pageSubjects) pageSubjects.style.display = 'none';
-//   if(pageExams) pageExams.style.display = 'none';
-//   if(pageTeachers) pageTeachers.style.display = 'none';
-
-//   // show requested page and mark tab active
-//   if(id === 'students'){ if(tabStudents) tabStudents.classList.add('active'); if(pageStudents) pageStudents.style.display = 'block'; }
-//   if(id === 'classes'){ if(tabClasses) tabClasses.classList.add('active'); if(pageClasses) pageClasses.style.display = 'block'; }
-//   if(id === 'subjects'){ if(tabSubjects) tabSubjects.classList.add('active'); if(pageSubjects) pageSubjects.style.display = 'block'; }
-//   if(id === 'exams'){ if(tabExams) tabExams.classList.add('active'); if(pageExams) pageExams.style.display = 'block'; }
-//   if(id === 'teachers' && pageTeachers){ if(tabTeachers) tabTeachers.classList.add('active'); pageTeachers.style.display = 'block'; }
-// }
 
 function showPage(id) {
   // Remove active from all tabs
@@ -129,6 +110,8 @@ function showPage(id) {
     subjects: ['pageSubjects'],
     exams: ['pageExams'],
     teachers: ['pageTeachers'],
+    announcements: ['pageAnnouncements'], 
+
     // add other pages here if needed
   };
 
@@ -168,6 +151,8 @@ async function generateDefaultId(collectionName, prefix, digits){
   return `${prefix}${String(t).padStart(digits,'0')}`;
 }
 
+function escapeHtml(s){ if(!s && s!==0) return ''; return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
 // returns true if another teacher uses this email (case-insensitive). excludeId optional to ignore same teacher on edit.
 function isTeacherEmailDuplicate(email, excludeId) {
   if (!email) return false;
@@ -185,6 +170,8 @@ onAuthStateChanged(auth, async user => {
   if(!user) { window.location.href = 'login.html'; return; }
   currentUser = user;
   await loadAll();
+  try { await ensureMonthlyAnnouncementIfNeeded(); } catch(e){ console.warn(e); }
+
 });
 btnLogout.onclick = async ()=>{ await signOut(auth); window.location.href='login.html'; };
 
@@ -287,6 +274,968 @@ function populateStudentsExamDropdown(){
     studentsExamForTotals.appendChild(opt);
   }
 }
+/* ----------------------------
+  ANNOUNCEMENTS: admin functions (REPLACEMENT BLOCK)
+  Replace your existing announcements block with this code.
+------------------------------*/
+
+const ANNOUNCEMENTS_COLL = 'announcements';
+const ANNOUNCE_LOG_COLL = 'announcements_log';
+const ANNOUNCEMENT_TEMPLATES_COLL = 'announcement_templates';
+const ADMIN_QUOTA_COLL = 'admin_quota';
+const ANNOUNCEMENTS_SETTINGS_DOC = doc(db, 'settings', 'announcements'); // single doc for announcements settings
+
+// Simple in-memory cache while page is open (reduces repeated reads)
+let _cachedTemplates = null;
+let _cachedAnnouncements = null;
+
+/** Default built-in templates (15 examples). Used when templates collection is empty. */
+function builtInTemplates() {
+  return [
+    { key: 'monthly_payment_default', title: 'Monthly Fee — {month}', body: '{student_name}, please pay the monthly fee for {month} before the 5th. Your balance: {balance}', type: 'monthly_payment', audience: ['students'], allowMonthly: true },
+    { key: 'exam_announce', title: 'EXAM NOTICE — {exam}', body: 'OGEYSIIS: Imtixaanka {exam} waxaa uu bilaaban doonaa on {date}. Good luck!', type: 'exam', audience: ['students'] },
+    { key: 'top10_school', title: 'Top 10 — {exam}', body: '10ka arday ee ugu sareysa imtixaanka {exam}: 1) {rank1} ...', type: 'top10', audience: ['students'] },
+    { key: 'holiday_notice', title: 'School Holiday', body: 'Fasax: School will be closed on {date}. Enjoy the break!', type: 'holiday', audience: ['all'] },
+    { key: 'urgent_alert', title: 'Urgent Notice', body: 'URGENT: {message} — please contact the school immediately.', type: 'urgent', audience: ['all'] },
+    { key: 'fee_reminder', title: 'Fee Reminder', body: '{student_name}, your school fees are overdue. Please settle before {due_date}.', type: 'general', audience: ['students'] },
+    { key: 'exam_published', title: 'Exam Results Published', body: 'Results for {exam} are published. Check your student portal for details.', type: 'exam', audience: ['students'] },
+    { key: 'attendance_warn', title: 'Attendance Notice', body: '{student_name}, your attendance is low. Please meet the class teacher.', type: 'general', audience: ['students'] },
+    { key: 'competition', title: 'Competition Update', body: 'Competition scores updated: check the Leaderboard for the latest rankings.', type: 'general', audience: ['all'] },
+    { key: 'payment_received', title: 'Payment Confirmed', body: 'Payment of {amount} received. Thank you — Finance Office.', type: 'general', audience: ['students'] },
+    { key: 'parent_meeting', title: 'Parent Meeting', body: 'Parents meeting on {date} at {time}. Attendance is mandatory.', type: 'general', audience: ['all'] },
+    { key: 'system_maintenance', title: 'System Maintenance', body: 'Portal maintenance planned on {date}. Some services may be unavailable.', type: 'general', audience: ['all'] },
+    { key: 'exam_tips', title: 'Exam Tips', body: 'Exam tips for {exam}: revise past papers, sleep well, and arrive early.', type: 'general', audience: ['students'] },
+    { key: 'library', title: 'Library Update', body: 'New books added to the library. Visit to borrow your copy.', type: 'general', audience: ['students'] },
+    { key: 'covid_notice', title: 'Health Notice', body: 'Health advisory: please follow hygiene guidelines and report any symptoms.', type: 'general', audience: ['all'] }
+  ];
+}
+
+/** Get announcements settings (safe default if no doc) */
+async function getAnnouncementsSettings(){
+  try {
+    const s = await getDoc(ANNOUNCEMENTS_SETTINGS_DOC);
+    if(!s.exists()){
+      return { monthlyEnabled: true, excludedMonths: [7], dailyLimit: 10 };
+    }
+    const data = s.data();
+    // always force dailyLimit to 10 (admin can't edit it)
+    data.dailyLimit = 10;
+    return data;
+  } catch(err){
+    console.warn('getAnnouncementsSettings error', err);
+    return { monthlyEnabled: true, excludedMonths: [7], dailyLimit: 10 };
+  }
+}
+
+async function saveAnnouncementsSettings(settings){
+  try {
+    // force dailyLimit = 10 no matter what (UI will not allow editing it)
+    const safe = { monthlyEnabled: !!settings.monthlyEnabled, excludedMonths: Array.isArray(settings.excludedMonths) ? settings.excludedMonths : [], dailyLimit: 10 };
+    await setDoc(ANNOUNCEMENTS_SETTINGS_DOC, safe, { merge: true });
+    toast('Settings saved');
+    return true;
+  } catch(err){
+    console.error('saveAnnouncementsSettings', err);
+    toast('Failed to save settings');
+    return false;
+  }
+}
+
+
+/** Templates: fetch. If none found, return builtInTemplates (but do NOT write them automatically). */
+async function getAnnouncementTemplates(){
+  try {
+    if(_cachedTemplates) return _cachedTemplates;
+    const snap = await getDocs(collection(db, ANNOUNCEMENT_TEMPLATES_COLL));
+    const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    if(docs.length === 0){
+      _cachedTemplates = builtInTemplates().map((t, i) => ({ id: `builtin_${i}`, ...t, builtin: true }));
+      return _cachedTemplates;
+    }
+    _cachedTemplates = docs;
+    return docs;
+  } catch(err){
+    console.warn('getAnnouncementTemplates failed', err);
+    return builtInTemplates().map((t, i) => ({ id: `builtin_${i}`, ...t, builtin: true }));
+  }
+}
+
+/** Save a template (admin). Returns doc ref id. */
+async function saveTemplate(template){
+  try {
+    // template: { title, body, type, audience, allowMonthly }
+    const ref = await addDoc(collection(db, ANNOUNCEMENT_TEMPLATES_COLL), {
+      ...template,
+      createdBy: currentUser ? (currentUser.uid || currentUser.email) : 'unknown',
+      createdAt: Timestamp.now()
+    });
+    // clear cache
+    _cachedTemplates = null;
+    toast('Template saved');
+    return ref.id;
+  } catch(err){
+    console.error('saveTemplate failed', err);
+    toast('Failed to save template');
+    throw err;
+  }
+}
+
+/** Update existing template */
+async function updateTemplate(id, data){
+  try {
+    await updateDoc(doc(db, ANNOUNCEMENT_TEMPLATES_COLL, id), { ...data, updatedAt: Timestamp.now() });
+    _cachedTemplates = null;
+    toast('Template updated');
+    return true;
+  } catch(err){
+    console.error('updateTemplate failed', err);
+    toast('Failed to update template');
+    throw err;
+  }
+}
+
+/** Delete template */
+async function deleteTemplate(id){
+  try {
+    await deleteDoc(doc(db, ANNOUNCEMENT_TEMPLATES_COLL, id));
+    _cachedTemplates = null;
+    toast('Template deleted');
+    return true;
+  } catch(err){
+    console.error('deleteTemplate failed', err);
+    toast('Failed to delete template');
+    throw err;
+  }
+}
+
+/** Create announcement doc with quota enforcement (keeps your logic center) */
+async function createAnnouncementDoc(announcement, opts={}) {
+  const adminId = currentUser ? (currentUser.uid || currentUser.email) : 'unknown';
+  const todayKey = (new Date()).toISOString().slice(0,10); // YYYY-MM-DD
+  const quotaId = `${adminId}_${todayKey}`;
+  const quotaRef = doc(db, ADMIN_QUOTA_COLL, quotaId);
+
+  try {
+    const settings = await getAnnouncementsSettings();
+    const dailyLimit = settings.dailyLimit || 10;
+
+    const qDoc = await getDoc(quotaRef);
+    let count = 0;
+    if(qDoc.exists()) count = qDoc.data().count || 0;
+
+    if(!opts.autoCreated && count >= dailyLimit) {
+      throw new Error(`Daily send limit reached (${dailyLimit}).`);
+    }
+
+    const annRef = await addDoc(collection(db, ANNOUNCEMENTS_COLL), {
+      ...announcement,
+      createdBy: announcement.createdBy || adminId,
+      createdAt: Timestamp.now()
+    });
+
+    if(!opts.autoCreated) {
+      await setDoc(quotaRef, { count: count + 1, lastUpdated: Timestamp.now(), adminId }, { merge: true });
+    }
+
+    await addDoc(collection(db, ANNOUNCE_LOG_COLL), {
+      announcementId: annRef.id,
+      createdBy: adminId,
+      createdAt: Timestamp.now(),
+      auto: !!opts.autoCreated,
+      meta: announcement.meta || null
+    });
+
+    // refresh cache
+    _cachedAnnouncements = null;
+    return annRef;
+  } catch(err){
+    console.error('createAnnouncementDoc failed', err);
+    throw err;
+  }
+}
+
+/** Ensure monthly announcement for current month exists (called on admin page load).
+ *  Behavior unchanged but uses getAnnouncementsSettings()
+ */
+async function ensureMonthlyAnnouncementIfNeeded(){
+  try {
+    const settings = await getAnnouncementsSettings();
+    if(!settings.monthlyEnabled) return;
+
+    const now = new Date();
+    const month = now.getMonth() + 1; // 1..12
+    const year = now.getFullYear();
+    const monthKey = `${String(month).padStart(2,'0')}-${year}`; // e.g. "01-2026"
+
+    if(Array.isArray(settings.excludedMonths) && settings.excludedMonths.includes(month)) return;
+    if(now.getDate() !== 1) return; // only auto-create on the 1st
+
+    const snap = await getDocs(query(collection(db, ANNOUNCEMENTS_COLL)));
+    const exists = snap.docs.some(d => {
+      const data = d.data();
+      return data && data.type === 'monthly_payment' && data.monthYear === monthKey;
+    });
+    if(exists) return;
+
+    const defaultTitle = `Monthly Fee — ${getMonthName(month)} ${year}`;
+    const defaultBody = `{student_name},\n\nPlease pay the monthly fee for ${getMonthName(month)} ${year} before 05-${String(month).padStart(2,'0')}-${year}. Your outstanding balance is: {balance}.\n\nThank you.`;
+
+    await createAnnouncementDoc({
+      title: defaultTitle,
+      body: defaultBody,
+      type: 'monthly_payment',
+      audience: ['students'],
+      allowMonthly: true,
+      monthYear: monthKey,
+      meta: { autoCreated: true }
+    }, { autoCreated: true });
+
+    console.log('Auto-created monthly payment announcement', monthKey);
+  } catch(err){
+    console.warn('ensureMonthlyAnnouncementIfNeeded error', err);
+  }
+}
+
+/* ---------- Admin compose modal (updated): supports templates + save-as-template ---------- */
+function openComposeAnnouncementModal(pref = {}) {
+  getAnnouncementTemplates().then(async templates => {
+    const classOptions = (classesCache||[]).map(c => `<option value="${escapeHtml(c.name)}">${escapeHtml(c.name)}</option>`).join('');
+    const templateOptions = (templates||[]).map(t => `<option value="${escapeHtml(t.id || t.key)}">${escapeHtml(t.title || t.key || '(template)')}</option>`).join('');
+    const examOptions = (examsCache||[]).map(e => `<option value="${escapeHtml(e.id)}">${escapeHtml(e.name || e.id)}</option>`).join('');
+    const adminId = currentUser ? (currentUser.uid || currentUser.email) : 'unknown';
+    const used = await getAdminQuotaCountForToday(adminId);
+    const remaining = Math.max(0, 10 - (Number(used) || 0));
+
+    const html = `
+      <div style="min-width:320px;max-width:720px;display:flex;flex-direction:column;gap:10px;padding:6px">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div style="font-weight:800">Compose Announcement</div>
+          <div class="muted small">Remaining today: <strong id="composeQuotaRem">${remaining}</strong></div>
+        </div>
+
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <select id="annTemplateSelect" class="input" style="min-width:160px">
+            <option value="">— Select template —</option>
+            ${templateOptions}
+          </select>
+          <button id="annLoadTemplate" class="btn">Load</button>
+        </div>
+
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <label style="flex:1">Type
+            <select id="annType" class="input">
+              <option value="general">General</option>
+              <option value="monthly_payment">Monthly Payment</option>
+              <option value="exam">Exam</option>
+              <option value="top10">Top10 (Exam)</option>
+              <option value="holiday">Holiday</option>
+              <option value="urgent">Urgent</option>
+            </select>
+          </label>
+
+          <label style="flex:1">Audience
+            <select id="annAudience" class="input">
+              <option value="students" selected>Students</option>
+              <option value="teachers">Teachers</option>
+              <option value="all">All</option>
+              <option value="specific_class">Specific class</option>
+              <option value="specific_student">Specific student</option>
+            </select>
+          </label>
+        </div>
+
+        <div id="annExamRow" style="display:none">
+          <label>Exam
+            <select id="annExamSelect" class="input">
+              <option value="">— Select exam —</option>
+              ${examOptions}
+            </select>
+          </label>
+        </div>
+
+        <div id="annClassRow" style="display:none">
+          <label>Select class
+            <select id="annClassSelect" class="input">
+              <option value="">-- choose class --</option>
+              ${classOptions}
+            </select>
+          </label>
+        </div>
+
+        <div id="annStudentRow" style="display:none">
+          <label>Student ID
+            <input id="annStudentId" class="input" placeholder="STD042687284" />
+          </label>
+        </div>
+
+        <label>Title <input id="annTitle" class="input" value="${escapeHtml(pref.title||'')}" maxlength="200" /></label>
+        <label>Body <textarea id="annBody" rows="6" class="input" maxlength="4000">${escapeHtml(pref.body||'')}</textarea></label>
+
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <label style="display:flex;gap:8px;align-items:center">
+            <input type="checkbox" id="annAllowMonthly"${pref.allowMonthly ? ' checked' : ''}/>
+            <span>Mark as monthly template (auto-create)</span>
+          </label>
+
+          <label style="margin-left:auto;display:flex;gap:8px;align-items:center">
+            <input type="checkbox" id="saveAsTemplate" />
+            <span>Save this message as a template</span>
+          </label>
+        </div>
+
+        <div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">
+          <button id="annCancel" class="btn btn-ghost">Cancel</button>
+          <button id="annCreate" class="btn btn-primary">Create & Send</button>
+        </div>
+      </div>
+    `;
+
+    showModal('Compose Announcement', html);
+
+    // -- wiring --
+    const annAudience = document.getElementById('annAudience');
+    const annClassRow = document.getElementById('annClassRow');
+    const annStudentRow = document.getElementById('annStudentRow');
+    const annExamRow = document.getElementById('annExamRow');
+    const annCreate = document.getElementById('annCreate');
+    const annCancel = document.getElementById('annCancel');
+    const annTemplateSelect = document.getElementById('annTemplateSelect');
+    const annLoadTemplate = document.getElementById('annLoadTemplate');
+    const annType = document.getElementById('annType');
+    const annExamSelect = document.getElementById('annExamSelect');
+    const quotaRemEl = document.getElementById('composeQuotaRem');
+
+    function refreshAudienceUI(){
+      const v = annAudience ? annAudience.value : '';
+      annClassRow.style.display = v === 'specific_class' ? 'block' : 'none';
+      annStudentRow.style.display = v === 'specific_student' ? 'block' : 'none';
+    }
+    function refreshTypeUI(){
+      const t = annType.value;
+      // show exam selector when type is exam/top10
+      annExamRow.style.display = (t === 'exam' || t === 'top10') ? 'block' : 'none';
+      // for monthly_payment, force audience to students (disable teachers)
+      if(t === 'monthly_payment'){
+        // set audience to students if currently teachers or all (user asked to restrict)
+        if(annAudience.value === 'teachers' || annAudience.value === 'all') annAudience.value = 'students';
+        // disable teachers option
+        const opt = annAudience.querySelector('option[value="teachers"]');
+        if(opt) opt.disabled = true;
+      } else {
+        const opt = annAudience.querySelector('option[value="teachers"]');
+        if(opt) opt.disabled = false;
+      }
+    }
+
+    if(annAudience) annAudience.addEventListener('change', refreshAudienceUI);
+    if(annType) annType.addEventListener('change', refreshTypeUI);
+    refreshAudienceUI(); refreshTypeUI();
+
+    // when load template: populate fields and (if exam type) try to auto-select exam if template.meta.examId exists
+    annLoadTemplate.onclick = () => {
+      const id = annTemplateSelect.value;
+      if(!id) return toast('Select a template first');
+      const t = (_cachedTemplates || []).find(x => (x.id === id || x.key === id));
+      if(!t) return toast('Template not found');
+      const titleEl = document.getElementById('annTitle');
+      const bodyEl = document.getElementById('annBody');
+      if(titleEl) titleEl.value = t.title || '';
+      if(bodyEl) bodyEl.value = t.body || '';
+      if(annType) annType.value = t.type || 'general';
+      if(document.getElementById('annAllowMonthly')) document.getElementById('annAllowMonthly').checked = !!t.allowMonthly;
+      refreshTypeUI();
+      // if template meant for exam/top10 and we have exams, pick the first exam by default (or use template.meta.examId)
+      if((t.type === 'exam' || t.type === 'top10') && examsCache && examsCache.length){
+        const prefer = (t.meta && t.meta.examId) ? t.meta.examId : examsCache[0].id;
+        setTimeout(()=> { if(annExamSelect) annExamSelect.value = prefer; }, 40);
+      }
+      // if template is monthly_payment, force audience=students (user asked)
+      if(t.type === 'monthly_payment') { annAudience.value = 'students'; refreshAudienceUI(); }
+      toast('Template loaded');
+    };
+
+    annCancel.onclick = () => closeModal();
+
+    annCreate.onclick = async () => {
+      try {
+        const type = annType.value;
+        const title = document.getElementById('annTitle').value.trim() || 'Announcement';
+        const body = document.getElementById('annBody').value.trim() || '';
+        const audienceMode = annAudience.value;
+        const allowMonthly = !!document.getElementById('annAllowMonthly').checked;
+        const saveAsTemplate = !!document.getElementById('saveAsTemplate').checked;
+        let audience = [];
+        if(audienceMode === 'students') audience = ['students'];
+        else if(audienceMode === 'teachers') audience = ['teachers'];
+        else if(audienceMode === 'all') audience = ['all'];
+        else if(audienceMode === 'specific_class'){
+          const cls = document.getElementById('annClassSelect').value;
+          if(!cls){ toast('Please choose class'); return; }
+          audience = [`class:${cls}`];
+        } else if(audienceMode === 'specific_student'){
+          const sid = document.getElementById('annStudentId').value.trim();
+          if(!sid){ toast('Please enter student ID'); return; }
+          audience = [`student:${sid}`];
+        }
+
+        // enforce monthly rules: monthly_payment cannot be sent to teachers/global
+        if(type === 'monthly_payment' && (audienceMode === 'teachers' || audienceMode === 'all')) {
+          toast('Monthly announcements are for students only; switched to "students".');
+          audience = ['students'];
+        }
+
+        // if exam type, attach selected exam id (meta) to announcement for later substitution
+    // inside annCreate.onclick handler, replace the meta building part with this:
+        let meta = {};
+        if(type === 'exam' || type === 'top10'){
+          const examId = annExamSelect ? annExamSelect.value : '';
+          if(examId){
+            meta.examId = examId;
+            // try to get exam name from cache or firestore so messages use name not id
+            const ex = (window.examsCache || []).find(e => e.id === examId);
+            if(ex && (ex.name || ex.title)) meta.examName = ex.name || ex.title;
+            else {
+              try {
+                const d = await getDoc(doc(db,'exams', examId));
+                if(d && d.exists()){ meta.examName = d.data().name || d.data().title || examId; }
+              } catch(e){ meta.examName = examId; }
+            }
+          }
+        }
+        const ann = { title, body, type, audience, allowMonthly, createdBy: currentUser ? (currentUser.uid || currentUser.email) : 'unknown', createdAt: Timestamp.now(), meta };
+
+
+        if(type === 'monthly_payment' && allowMonthly){
+          const now = new Date();
+          ann.monthYear = `${String(now.getMonth()+1).padStart(2,'0')}-${now.getFullYear()}`;
+        }
+
+        await createAnnouncementDoc(ann, { autoCreated: false });
+
+        if(saveAsTemplate){
+          try { await saveTemplate({ title, body, type, audience, allowMonthly, meta }); } catch(e){ console.warn('save template failed', e); }
+        }
+
+        toast('Announcement created.');
+        closeModal();
+        _cachedAnnouncements = null; _cachedTemplates = null;
+        renderAnnouncements();
+      } catch(err){
+        console.error(err);
+        toast(err.message || 'Failed to create announcement');
+      }
+    };
+
+  }).catch(err => {
+    console.warn('templates fetch failed', err);
+    showModal('Compose Announcement', '<div style="padding:12px">Failed to load templates. Try again later.</div>');
+  });
+}
+/* --- replace the templates area in renderAnnouncements() --- */
+
+// helper: open templates modal (lists all templates with SVG icons for use/edit/delete)
+function openTemplatesModal(){
+  const templates = _cachedTemplates || [];
+  const html = `
+    <div style="min-width:320px;max-width:760px;padding:12px;display:flex;flex-direction:column;gap:8px">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div style="font-weight:900">Templates</div>
+        <div class="muted small">Use / Edit / Delete templates</div>
+      </div>
+      <div style="max-height:60vh;overflow:auto;display:flex;flex-direction:column;gap:8px">
+        ${templates.map(t => {
+          const id = escapeHtml(t.id || t.key || '');
+          const title = escapeHtml(t.title || '(untitled)');
+          const body = escapeHtml((t.body||'').slice(0,120));
+          return `
+            <div style="display:flex;gap:10px;align-items:center;padding:8px;border-radius:10px;border:1px solid #eef2f7">
+              <div style="flex:1;min-width:0">
+                <div style="font-weight:800">${title}</div>
+                <div class="muted small" style="margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${body}</div>
+              </div>
+              <div style="display:flex;gap:8px;align-items:center">
+                <button class="tpl-use" data-id="${id}" title="Use" aria-label="Use template" style="border:none;background:transparent;cursor:pointer">
+                  <!-- paper-plane / send icon -->
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M22 2L11 13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M22 2L15 22l-4-9-9-4 20-7z" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" opacity="0.9"/></svg>
+                </button>
+                <button class="tpl-edit" data-id="${id}" title="Edit" aria-label="Edit template" style="border:none;background:transparent;cursor:pointer">
+                  <!-- pencil -->
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </button>
+                <button class="tpl-del" data-id="${id}" title="Delete" aria-label="Delete template" style="border:none;background:transparent;cursor:pointer">
+                  <!-- trash -->
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M3 6h18M8 6v14a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2V6M10 6V4a2 2 0 0 1 2-2h0a2 2 0 0 1 2 2v2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </button>
+              </div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+      <div style="text-align:right;margin-top:8px"><button id="tplClose" class="btn btn-ghost">Close</button></div>
+    </div>
+  `;
+  showModal('Templates', html);
+  setTimeout(()=>{
+    document.getElementById('tplClose').onclick = closeModal;
+    document.querySelectorAll('.tpl-use').forEach(b => b.onclick = (e)=>{
+      const id = b.dataset.id;
+      const tpl = (_cachedTemplates||[]).find(x => (x.id === id || x.key === id));
+      if(!tpl) return toast('Template not found');
+      closeModal();
+      openComposeAnnouncementModal({ title: tpl.title, body: tpl.body, allowMonthly: !!tpl.allowMonthly, type: tpl.type, meta: tpl.meta || {} });
+    });
+    document.querySelectorAll('.tpl-edit').forEach(b => b.onclick = (e)=>{
+      const id = b.dataset.id;
+      const tpl = (_cachedTemplates||[]).find(x => (x.id === id || x.key === id));
+      if(!tpl) return toast('Template not found');
+      closeModal();
+      openComposeAnnouncementModal({ title: tpl.title, body: tpl.body, allowMonthly: !!tpl.allowMonthly, type: tpl.type, meta: tpl.meta || {} });
+      setTimeout(()=>{ const btn = document.getElementById('annCreate'); if(btn) btn.textContent='Save changes (template)'; }, 120);
+    });
+    document.querySelectorAll('.tpl-del').forEach(b => b.onclick = async (e)=>{
+      const id = b.dataset.id;
+      const tpl = (_cachedTemplates||[]).find(x => (x.id === id || x.key === id));
+      if(!tpl) return toast('Template not found');
+      if(String(tpl.id || tpl.key).startsWith('builtin_')) return toast('Cannot delete built-in template');
+      if(!confirm('Delete template?')) return;
+      try { await deleteTemplate(tpl.id); _cachedTemplates = null; toast('Deleted'); closeModal(); renderAnnouncements(); } catch(err){ console.error(err); toast('Delete failed'); }
+    });
+  },60);
+}
+
+
+
+/** Render announcements list in pageAnnouncements + templates area + settings gear */
+async function renderAnnouncements(){
+  const page = document.getElementById('pageAnnouncements');
+  if(!page) return;
+
+  // header area: inject a settings gear button if not present
+  try {
+    const header = page.querySelector(':scope > div:first-child');
+    if(header && !document.getElementById('annSettingsBtn')){
+      const gear = document.createElement('button');
+      gear.id = 'annSettingsBtn';
+      gear.className = 'btn';
+      gear.innerHTML = '⚙️ Settings';
+      gear.style.marginLeft = '8px';
+      gear.onclick = (e) => { e.preventDefault(); openAnnouncementsSettingsModal(); };
+      // insert into header's right-side controls if present
+      const rightControls = header.querySelector('div[style*="display:flex"]') || header;
+      rightControls.appendChild(gear);
+    }
+  } catch(e){ console.warn('inject gear failed', e); }
+
+  const listContainer = page.querySelector('#announcementsList');
+  if(!listContainer) return;
+
+  listContainer.innerHTML = '<div style="padding:8px">Loading announcements & templates…</div>';
+  try {
+    const [annSnap, templates] = await Promise.all([
+      getDocs(query(collection(db, ANNOUNCEMENTS_COLL))),
+      getAnnouncementTemplates()
+    ]);
+
+    const announcements = annSnap.docs.map(d => ({ id: d.id, ...d.data() }))
+      .sort((a,b) => (b.createdAt && b.createdAt.seconds ? b.createdAt.seconds : 0) - (a.createdAt && a.createdAt.seconds ? a.createdAt.seconds : 0));
+    _cachedAnnouncements = announcements;
+    _cachedTemplates = templates;
+
+    // templates UI (top area) — show small card list of templates (title only, truncated)
+    const templatesHtml = (templates||[]).slice(0, 15).map(t => {
+      const tid = escapeHtml(t.id || t.key || '');
+      const shortTitle = escapeHtml((t.title||'').slice(0,10)) + ((t.title||'').length > 10 ? '…' : '');
+      const shortBody = escapeHtml((t.body||'').slice(0,10)) + ((t.body||'').length > 10 ? '…' : '');
+      return `<div style="display:flex;gap:8px;align-items:center;padding:8px;border:1px dashed #eef2f7;border-radius:8px;margin-bottom:8px">
+        <div style="flex:1">
+          <div style="font-weight:800;cursor:pointer" data-template-id="${tid}" data-action="load-template">${shortTitle}</div>
+          <div class="muted small" style="margin-top:4px;cursor:pointer" data-template-id="${tid}" data-action="preview-template">${shortBody}</div>
+        </div>
+        <div style="display:flex;gap:6px">
+        
+          <button class="btn btn-ghost" data-template-id="${tid}" data-action="edit-template">Edit</button>
+          <button class="btn" data-template-id="${tid}" data-action="use-template">Use</button>
+        </div>
+      </div>`;
+    }).join('');
+
+    // announcements list (each shown with truncated preview of body to 10 chars; clicking opens full modal)
+    const annHtml = announcements.map(a => {
+      const ts = a.createdAt && a.createdAt.toDate ? a.createdAt.toDate().toLocaleString() : '';
+      const aud = (a.audience || []).join(', ');
+      const shortBody = escapeHtml((a.body||'').slice(0,10)) + ((a.body||'').length > 10 ? '…' : '');
+      const titleShort = escapeHtml((a.title||'').slice(0,10)) + ((a.title||'').length > 10 ? '…' : '');
+      return `
+        <div class="card" data-ann-id="${escapeHtml(a.id)}" style="padding:10px;margin-bottom:10px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div style="min-width:0">
+              <div style="font-weight:900;cursor:pointer" data-action="open-ann" data-id="${escapeHtml(a.id)}">${titleShort}</div>
+              <div class="muted small" style="margin-top:4px">${escapeHtml(a.type||'')}</div>
+            </div>
+            <div style="text-align:right">
+              <div class="muted small">${escapeHtml(ts)}</div>
+              <div class="muted small">${escapeHtml(aud)}</div>
+            </div>
+          </div>
+          <div style="margin-top:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer" data-action="open-ann" data-id="${escapeHtml(a.id)}">${shortBody}</div>
+          <div style="margin-top:8px;text-align:right">
+          <button class="btn btn-ghost btn-edit" data-id="${escapeHtml(a.id)}" title="Edit">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+<button class="btn btn-danger btn-delete" data-id="${escapeHtml(a.id)}" title="Delete">
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 6h18M8 6v14a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2V6M10 6V4a2 2 0 0 1 2-2h0a2 2 0 0 1 2 2v2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+</button>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    // assemble the page: templates area first (collapsible on mobile), then announcements
+    listContainer.innerHTML = `
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+        </div>
+        <div id="annTemplatesArea"><button id="openTemplatesBtn" class="btn">Templates</button></div>
+
+        <div id="annTemplatesArea">${templatesHtml || '<div class="muted">No templates</div>'}</div>
+
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
+          <div style="font-weight:900">Announcements</div>
+          <div style="display:flex;gap:8px">
+            <button id="openComposeAnnouncement" class="btn btn-primary">+ New Announcement</button>
+            <button id="refreshAnnouncements" class="btn">Refresh</button>
+          </div>
+        </div>
+
+      </div>
+    `;
+
+    // wire template actions
+    const templatesArea = document.getElementById('annTemplatesArea');
+    if(templatesArea){
+      templatesArea.querySelectorAll('[data-action]').forEach(el => {
+        const action = el.getAttribute('data-action');
+        const tid = el.getAttribute('data-template-id');
+        el.addEventListener('click', async (ev) => {
+          ev.preventDefault();
+          const t = (_cachedTemplates||[]).find(x => (x.id === tid || x.key === tid));
+          if(!t) return toast('Template not found');
+          if(action === 'load-template' || action === 'use-template' || action === 'preview-template'){
+            // open compose modal with template loaded
+            openComposeAnnouncementModal({ title: t.title, body: t.body, allowMonthly: !!t.allowMonthly, type: t.type });
+            if(action === 'use-template') {
+              // auto-check "Save as template" = false by default, but user can edit before send
+            }
+          } else if(action === 'edit-template'){
+            // open compose modal and after open override save button to update template
+            openComposeAnnouncementModal({ title: t.title, body: t.body, allowMonthly: !!t.allowMonthly, type: t.type });
+            setTimeout(() => {
+              const btn = document.getElementById('annCreate');
+              if(!btn) return;
+              btn.textContent = 'Save changes (template)';
+              btn.onclick = async () => {
+                try {
+                  const newTitle = document.getElementById('annTitle').value.trim();
+                  const newBody = document.getElementById('annBody').value.trim();
+                  const newAllow = !!document.getElementById('annAllowMonthly').checked;
+                  const newType = document.getElementById('annType').value;
+                  if(!t.id || String(t.id).startsWith('builtin_')) {
+                    // Create a new template (cannot update builtin)
+                    await saveTemplate({ title: newTitle, body: newBody, type: newType, allowMonthly: newAllow });
+                  } else {
+                    await updateTemplate(t.id, { title: newTitle, body: newBody, type: newType, allowMonthly: newAllow });
+                  }
+                  closeModal();
+                  _cachedTemplates = null;
+                  renderAnnouncements();
+                } catch(err){ console.error(err); toast('Save failed'); }
+              };
+            }, 120);
+          }
+        });
+      });
+    }
+
+    // wire announcements actions (open, edit, delete)
+    const annListArea = document.getElementById('annListArea');
+    if(annListArea){
+      annListArea.querySelectorAll('[data-action="open-ann"]').forEach(el => {
+        el.addEventListener('click', (ev) => {
+          ev.preventDefault();
+          const id = el.getAttribute('data-id');
+          const a = (announcements||[]).find(x => x.id === id);
+          if(!a) return toast('Announcement not found');
+          // show full announcement in modal (clickable)
+          const html = `
+            <div style="padding:8px;max-width:520px">
+              <div style="font-weight:900">${escapeHtml(a.title)}</div>
+              <div class="muted small" style="margin-top:6px">${a.createdAt && a.createdAt.toDate ? a.createdAt.toDate().toLocaleString() : ''}</div>
+              <div style="white-space:pre-wrap;margin-top:10px">${escapeHtml(a.body)}</div>
+            </div>
+            <div style="text-align:right;margin-top:8px">
+              <button id="modalEditAnn" class="btn btn-ghost">Edit</button>
+              <button id="modalDeleteAnn" class="btn btn-danger">Delete</button>
+            </div>
+          `;
+          showModal('Announcement', html);
+          setTimeout(() => {
+            const editBtn = document.getElementById('modalEditAnn');
+            const delBtn = document.getElementById('modalDeleteAnn');
+            if(editBtn) editBtn.onclick = async () => {
+              closeModal();
+              // reuse openComposeAnnouncementModal prefilled and override create -> update
+              openComposeAnnouncementModal({ title: a.title, body: a.body, allowMonthly: !!a.allowMonthly, type: a.type });
+              setTimeout(() => {
+                const btn = document.getElementById('annCreate');
+                if(!btn) return;
+                btn.textContent = 'Save changes';
+                btn.onclick = async () => {
+                  try {
+                    const newTitle = document.getElementById('annTitle').value.trim();
+                    const newBody = document.getElementById('annBody').value.trim();
+                    const newType = document.getElementById('annType').value;
+                    const newAllow = !!document.getElementById('annAllowMonthly').checked;
+                    await updateDoc(doc(db, ANNOUNCEMENTS_COLL, id), { title: newTitle, body: newBody, type: newType, allowMonthly: newAllow, updatedAt: Timestamp.now() });
+                    closeModal();
+                    toast('Saved');
+                    _cachedAnnouncements = null;
+                    renderAnnouncements();
+                  } catch(err){ console.error(err); toast('Save failed'); }
+                };
+              }, 120);
+            };
+            if(delBtn) delBtn.onclick = async () => {
+              if(!confirm('Delete announcement?')) return;
+              try {
+                await deleteDoc(doc(db, ANNOUNCEMENTS_COLL, id));
+                toast('Deleted');
+                _cachedAnnouncements = null;
+                closeModal();
+                renderAnnouncements();
+              } catch(err){ console.error(err); toast('Delete failed'); }
+            };
+          }, 80);
+        });
+      });
+
+      // edit / delete in list
+      annListArea.querySelectorAll('.btn-delete').forEach(b => b.onclick = async () => {
+        if(!confirm('Delete announcement?')) return;
+        try {
+          const id = b.dataset.id;
+          await deleteDoc(doc(db, ANNOUNCEMENTS_COLL, id));
+          toast('Deleted');
+          _cachedAnnouncements = null;
+          renderAnnouncements();
+        } catch(err){ console.error(err); toast('Delete failed'); }
+      });
+
+      annListArea.querySelectorAll('.btn-edit').forEach(b => b.onclick = async () => {
+        const id = b.dataset.id;
+        try {
+          const d = await getDoc(doc(db, ANNOUNCEMENTS_COLL, id));
+          if(!d.exists()) { toast('Not found'); return; }
+          const dat = d.data();
+          openComposeAnnouncementModal({
+            title: dat.title, body: dat.body, allowMonthly: !!dat.allowMonthly, type: dat.type, monthYear: dat.monthYear || ''
+          });
+          // override create to update
+          setTimeout(() => {
+            const btn = document.getElementById('annCreate');
+            if(!btn) return;
+            btn.textContent = 'Save changes';
+            btn.onclick = async () => {
+              try {
+                const newTitle = document.getElementById('annTitle').value.trim();
+                const newBody = document.getElementById('annBody').value.trim();
+                const newType = document.getElementById('annType').value;
+                const newAllow = !!document.getElementById('annAllowMonthly').checked;
+                await updateDoc(doc(db, ANNOUNCEMENTS_COLL, id), {
+                  title: newTitle, body: newBody, type: newType, allowMonthly: newAllow, updatedAt: Timestamp.now()
+                });
+                toast('Saved');
+                closeModal();
+                _cachedAnnouncements = null;
+                renderAnnouncements();
+              } catch(err){ console.error(err); toast('Save failed'); }
+            };
+          }, 120);
+        } catch(err){ console.error(err); toast('Open failed'); }
+      });
+    }
+
+    // wire Compose + Refresh buttons inserted earlier
+    const openComposeBtn = document.getElementById('openComposeAnnouncement');
+    if (openComposeBtn) openComposeBtn.onclick = (e) => { e.preventDefault(); openComposeAnnouncementModal(); };
+
+    const refreshBtn = document.getElementById('refreshAnnouncements');
+    if (refreshBtn) refreshBtn.onclick = (e) => { e.preventDefault(); _cachedAnnouncements = null; renderAnnouncements(); };
+
+  } catch(err){
+    console.error('renderAnnouncements error', err);
+    listContainer.innerHTML = '<div class="muted">Failed to load announcements</div>';
+  }
+}
+
+// wire button right after you render the page content:
+setTimeout(()=>{ const openTplBtn = document.getElementById('openTemplatesBtn'); if(openTplBtn) openTplBtn.onclick = (e)=>{ e.preventDefault(); openTemplatesModal(); }; }, 60);
+
+
+/* Settings modal for announcements (gear) */
+async function getAdminQuotaCountForToday(adminId){
+  try {
+    const todayKey = (new Date()).toISOString().slice(0,10);
+    const qId = `${adminId}_${todayKey}`;
+    const qDoc = await getDoc(doc(db, ADMIN_QUOTA_COLL, qId));
+    if(!qDoc.exists()) return 0;
+    return qDoc.data().count || 0;
+  } catch(e){
+    console.warn('getAdminQuotaCountForToday', e);
+    return 0;
+  }
+}
+
+function openAnnouncementsSettingsModal(){
+  Promise.all([ getAnnouncementsSettings(), getAnnouncementTemplates() ])
+    .then(async ([settings, templates]) => {
+      const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      const excluded = settings.excludedMonths || [];
+      const adminId = currentUser ? (currentUser.uid || currentUser.email) : 'unknown';
+      const used = await getAdminQuotaCountForToday(adminId);
+      const remaining = Math.max(0, 10 - (Number(used) || 0));
+
+      const templatesHtml = (templates||[]).map(t => {
+        return `<div style="padding:6px;border-radius:8px;border:1px solid #eee;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center">
+          <div style="min-width:0"><div style="font-weight:800">${escapeHtml(t.title||t.key||'Tpl')}</div><div class="muted small">${escapeHtml((t.body||'').slice(0,40))}${(t.body||'').length>40?'…':''}</div></div>
+          <div style="display:flex;gap:6px">
+            <button class="btn" data-tid="${escapeHtml(t.id||t.key||'')}" data-action="tpl-use">Use</button>
+            <button class="btn btn-ghost" data-tid="${escapeHtml(t.id||t.key||'')}" data-action="tpl-edit">Edit</button>
+            <button class="btn btn-danger" data-tid="${escapeHtml(t.id||t.key||'')}" data-action="tpl-del">Del</button>
+          </div>
+        </div>`;
+      }).join('');
+
+      const html = `
+        <div style="min-width:320px;max-width:720px;padding:12px;display:flex;flex-direction:column;gap:12px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div style="font-weight:900">Announcements Settings</div>
+            <div class="muted small">Daily limit is fixed to <strong>10</strong></div>
+          </div>
+
+          <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+            <label style="display:flex;gap:8px;align-items:center">
+              <input type="checkbox" id="sets_monthlyEnabled" ${settings.monthlyEnabled ? 'checked' : ''}/>
+              <span>Auto-create monthly template (1st of month)</span>
+            </label>
+            <div style="margin-left:auto;text-align:right">
+              <div class="muted small">Used today: <strong id="quotaUsed">${escapeHtml(String(used))}</strong></div>
+              <div class="muted small">Remaining today: <strong id="quotaRemaining">${escapeHtml(String(remaining))}</strong></div>
+            </div>
+          </div>
+
+          <div>
+            <div style="font-weight:800;margin-bottom:6px">Excluded months (auto-create will skip these)</div>
+            <div style="display:flex;flex-wrap:wrap;gap:8px">
+              ${months.map((m,i) => `<label style="display:flex;align-items:center;gap:6px"><input type="checkbox" class="sets_excl" value="${i+1}" ${excluded.includes(i+1)?'checked':''}/> ${m}</label>`).join('')}
+            </div>
+          </div>
+
+          <div style="display:flex;justify-content:flex-end;gap:8px">
+            <button id="sets_cancel" class="btn btn-ghost">Cancel</button>
+            <button id="sets_save" class="btn btn-primary">Save settings</button>
+          </div>
+
+          <hr/>
+          <div style="font-weight:900">Templates</div>
+          <div style="max-height:220px;overflow:auto">${templatesHtml || '<div class="muted">No templates</div>'}</div>
+        </div>
+      `;
+      showModal('Announcements Settings', html);
+
+      setTimeout(() => {
+        document.getElementById('sets_cancel').onclick = () => closeModal();
+        document.getElementById('sets_save').onclick = async () => {
+          try {
+            const monthlyEnabled = !!document.getElementById('sets_monthlyEnabled').checked;
+            const exclEls = Array.from(document.querySelectorAll('.sets_excl'));
+            const excludedMonths = exclEls.filter(x => x.checked).map(x => Number(x.value));
+            await saveAnnouncementsSettings({ monthlyEnabled, excludedMonths });
+            closeModal();
+            renderAnnouncements().catch(()=>{});
+          } catch(err){ console.error(err); toast('Save failed'); }
+        };
+
+        // template actions in settings (use/edit/delete)
+        document.querySelectorAll('[data-action]').forEach(el => {
+          el.onclick = async (ev) => {
+            ev.preventDefault();
+            const act = el.getAttribute('data-action');
+            const tid = el.getAttribute('data-tid');
+            const tpl = (_cachedTemplates||[]).find(x => (x.id===tid||x.key===tid));
+            if(act === 'tpl-use'){ closeModal(); openComposeAnnouncementModal({ title: tpl?.title || '', body: tpl?.body || '', allowMonthly: !!tpl?.allowMonthly, type: tpl?.type }); }
+            else if(act === 'tpl-edit'){ closeModal(); openComposeAnnouncementModal({ title: tpl?.title || '', body: tpl?.body || '', allowMonthly: !!tpl?.allowMonthly, type: tpl?.type }); setTimeout(()=>{ const btn = document.getElementById('annCreate'); if(btn) btn.textContent='Save changes (template)'; }, 120); }
+            else if(act === 'tpl-del'){
+              if(!confirm('Delete template?')) return;
+              try { if(tpl && tpl.id && !String(tpl.id).startsWith('builtin_')){ await deleteTemplate(tpl.id); _cachedTemplates = null; toast('Deleted'); closeModal(); renderAnnouncements(); } else { toast('Cannot delete built-in template'); } } catch(e){ console.error(e); toast('Delete failed'); }
+            }
+          };
+        });
+      }, 60);
+    })
+    .catch(err => {
+      console.warn('openAnnouncementsSettingsModal failed', err);
+      showModal('Settings', '<div style="padding:12px">Failed to load settings</div>');
+    });
+}
+
+
+/* Expose to global so admin HTML loader can call them */
+window.openComposeAnnouncementModal = openComposeAnnouncementModal;
+window.renderAnnouncements = renderAnnouncements;
+window.ensureMonthlyAnnouncementIfNeeded = ensureMonthlyAnnouncementIfNeeded;
+window.getAnnouncementTemplates = getAnnouncementTemplates;
+window.openAnnouncementsSettingsModal = openAnnouncementsSettingsModal;
+
+/* ----------------------------
+  Admin UI wiring for announcements buttons + auto-load (kept but improved)
+------------------------------*/
+try {
+  // Compose + Refresh are created in renderAnnouncements, but keep old wiring in case page markup changed
+  const openComposeBtn = document.getElementById('openComposeAnnouncement');
+  if (openComposeBtn) openComposeBtn.addEventListener('click', (e) => { e.preventDefault(); openComposeAnnouncementModal(); });
+
+  const refreshBtn = document.getElementById('refreshAnnouncements');
+  if (refreshBtn) refreshBtn.addEventListener('click', (e) => { e.preventDefault(); renderAnnouncements().catch(err => console.warn('refreshAnnouncements failed', err)); });
+
+  const tabAnn = document.getElementById('tabAnnouncements');
+  if (tabAnn) tabAnn.addEventListener('click', (e) => {
+    e.preventDefault();
+    try { if (typeof showPage === 'function') showPage('announcements'); else {
+      document.querySelectorAll('.page').forEach(p => p.style.display = 'none');
+      const p = document.getElementById('pageAnnouncements'); if (p) p.style.display = 'block';
+    } } catch(e){ console.warn(e); }
+    renderAnnouncements().catch(err => console.warn('renderAnnouncements failed', err));
+  });
+
+  // Auto-load on page load if admin opens the announcements page
+  window.addEventListener('load', () => {
+    setTimeout(() => {
+      if (document.getElementById('pageAnnouncements')) {
+        renderAnnouncements().catch(err => console.warn('initial renderAnnouncements failed', err));
+      }
+    }, 300);
+  });
+
+  const modalCloseBtn = document.getElementById('modalClose');
+  if (modalCloseBtn) modalCloseBtn.addEventListener('click', (e) => { e.preventDefault(); closeModal(); });
+
+} catch (e) {
+  console.warn('Admin announcements wiring failed', e);
+}
+
+
+
+
 /* rendering */
 
 /* -------------------------
