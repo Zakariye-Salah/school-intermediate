@@ -1675,10 +1675,18 @@ async function renderAnnouncementsForStudent(studentObj){
     });
 
     const counterEl = document.getElementById('announcementsCounter');
-    if(counterEl){
-      counterEl.textContent = unread > 0 ? unread : '';
-      counterEl.style.display = unread > 0 ? 'inline-block' : 'none';
-    }
+ if(counterEl){
+  if(unread > 0){
+    counterEl.textContent = unread;
+    counterEl.style.display = 'inline-block';
+    counterEl.classList.add('pulse');
+  } else {
+    counterEl.textContent = '';
+    counterEl.style.display = 'none';
+    counterEl.classList.remove('pulse');
+  }
+}
+
     
 
     const resultArea = document.getElementById('resultArea');
