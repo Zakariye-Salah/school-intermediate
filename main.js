@@ -1935,6 +1935,7 @@ async function fetchAnnouncementsAll(){
 // ---------- renderAnnouncementsForStudent (improved top-10 UI + mobile fit) ----------
 
 // ---------- renderAnnouncementsForStudent (improved top-10 UI + mobile fit) ----------
+// ---------- renderAnnouncementsForStudent (improved short titles, badges, top10 percent + mobile fit) ----------
 async function renderAnnouncementsForStudent(studentObj){
   if(!studentObj) return;
   try {
@@ -1993,7 +1994,28 @@ async function renderAnnouncementsForStudent(studentObj){
       return;
     }
 
-    // Render list (we keep expanded.body escaped for safety, but mark top10 rows for enhancement)
+    // small helper for short title (first line, truncated)
+    const short = (s, n=48) => {
+      if(!s) return '';
+      const one = String(s).split('\n')[0].trim();
+      return (one.length > n) ? one.slice(0,n-1) + '…' : one;
+    };
+
+    // map type -> badge
+    const typeBadge = (t) => {
+      switch(t){
+        case 'monthly_payment': return { text: 'Fee', cls: 'badge-fee' };
+        case 'top10': return { text: 'Top10', cls: 'badge-top10' };
+        case 'exam': return { text: 'Exam', cls: 'badge-exam' };
+        case 'holiday': return { text: 'Fasax', cls: 'badge-holiday' };
+        case 'urgent': return { text: 'Urgent', cls: 'badge-urgent' };
+        case 'system_maintenance': return { text: 'System', cls: 'badge-system' };
+        case 'payment_received': return { text: 'Paid', cls: 'badge-paid' };
+        default: return { text: '', cls: '' };
+      }
+    };
+
+    // Render list
     resultArea.innerHTML = `
       <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center">
@@ -2008,19 +2030,21 @@ async function renderAnnouncementsForStudent(studentObj){
         const tsMs = a.createdAt?.seconds ? a.createdAt.seconds * 1000 : 0;
         const ts = tsMs ? new Date(tsMs).toLocaleString() : '';
         const isUnread = tsMs > lastSeen;
-        const preview = expanded.body && expanded.body.length > 60 ? expanded.body.slice(0,60) + '...' : (expanded.body||'');
+        const preview = expanded.body && expanded.body.length > 80 ? expanded.body.slice(0,80) + '...' : (expanded.body||'');
         const top10Attr = (a.type === 'top10' && a.meta && a.meta.examId) ? `data-top10="true" data-examid="${escapeHtml(a.meta.examId||'')}" data-examname="${escapeHtml(a.meta.examName||'')}"` : '';
+        const tb = typeBadge(a.type);
+        const shortTitle = escapeHtml(short(expanded.title || a.title || 'Announcement', 56));
+        const badgeHtml = tb.text ? `<div class="ann-type ${tb.cls}">${escapeHtml(tb.text)}</div>` : '';
         return `
           <div class="card ann-inline ${isUnread ? 'ann-unread' : ''}" data-id="${escapeHtml(a.id)}" data-ts="${tsMs}" ${top10Attr} style="cursor:pointer;padding:12px">
             <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
               <div style="min-width:0">
-                <div class="ann-title">${escapeHtml(expanded.title || a.title)}</div>
+                <div class="ann-title">${shortTitle}</div>
                 <div class="muted small" style="margin-top:6px">${escapeHtml(ts)}</div>
                 <div class="ann-preview" style="margin-top:8px">${escapeHtml(preview)}</div>
               </div>
-              <div style="margin-left:12px;flex-shrink:0">
-                ${a.type === 'monthly_payment' ? `<div class="status-pass" style="padding:6px 8px;font-weight:900">Fee</div>` : ''}
-                ${a.type === 'top10' ? `<div style="font-weight:900;color:#0b74ff">Top10</div>` : ''}
+              <div style="margin-left:12px;flex-shrink:0;display:flex;flex-direction:column;gap:6px;align-items:flex-end">
+                ${badgeHtml}
               </div>
             </div>
             <div class="ann-body" style="display:none;margin-top:12px;white-space:pre-wrap">${escapeHtml(expanded.body || '')}</div>
@@ -2050,15 +2074,17 @@ async function renderAnnouncementsForStudent(studentObj){
             const className = escapeHtml(r.className || r.class || r.classId || '');
             const total = (typeof r.total !== 'undefined' && r.total !== null && r.total !== '') ? Number(r.total) : null;
 
-            // compute percent using available info
             let maxPossible = 0;
             if (Array.isArray(r.subjects) && r.subjects.length) maxPossible = r.subjects.reduce((s,sub)=>s+(Number(sub.max)||0),0);
             else if (typeof r.max !== 'undefined' && r.max !== null) maxPossible = Number(r.max);
-            else if (a && a.meta && a.meta.examMax) maxPossible = Number(a.meta.examMax) || 0;
             else {
-              // try meta on announcement if present
-              const ann = (typeof node.dataset !== 'undefined' ? null : null);
+              // try reading meta stored on announcement (if available)
+              const annId = node.getAttribute('data-id') || node.dataset.id;
+              // many announcements include meta.examMax already (expandAnnouncementForStudent sets it)
+              const ann = (window._cachedAnnouncements || []).find(x => x.id === annId);
+              if (ann && ann.meta && ann.meta.examMax) maxPossible = Number(ann.meta.examMax) || 0;
             }
+
             const percent = (total !== null && maxPossible > 0) ? ((total / maxPossible) * 100).toFixed(2) + '%' : (r.average ? String(r.average) : '—');
 
             // medal / rank icon
@@ -2124,10 +2150,7 @@ async function renderAnnouncementsForStudent(studentObj){
     console.error('renderAnnouncementsForStudent failed', err);
   }
 }
-
-
 window.renderAnnouncementsForStudent = renderAnnouncementsForStudent;
-
 
 
 
