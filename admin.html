@@ -714,27 +714,32 @@
   </header>
 
   <nav class="tabs" role="navigation" aria-label="Admin pages">
-    <button id="tabStudents" class="tab active">Students</button>
+    <button id="tabDashboard" class="tab active">Dashboard</button>
+
+    <button id="tabStudents" class="tab ">Students</button>
+    <button id="tabPayments" class="tab">Payments</button>
+
     <button id="tabClasses" class="tab">Classes</button>
     <button id="tabSubjects" class="tab">Subjects</button>
     <button id="tabExams" class="tab">Exams</button>
     <button id="tabTeachers" class="tab">Teachers</button>
     <!-- somewhere in header or nav buttons -->
-    <button id="gotoLeaderboardBtn" class="btn">Leaderboard</button>
 
       <!-- NEW: Announcements -->
     <button id="tabAnnouncements" class="tab">Announcements</button>
 
 
-<!-- Add to nav -->
-<button id="tabRecycle" class="tab">Recycle Bin</button>
+    <button id="tabAttendance" class="tab">Attendance</button>
+    <button id="gotoLeaderboardBtn" class="btn">Competition</button>
+    <button id="tabRecycle" class="tab">Recycle Bin</button>
+    <button id="tabUsers" class="tab">Users</button>
 
 
   </nav>
 
   <!-- PAGES -->
   <main>
-    <section id="pageStudents" class="page" style="display:block">
+    <section id="pageStudents" class="page" style="display:none">
       <div class="page-header">
         <input id="studentsSearch" type="text" placeholder="Search students..." />
         <select id="studentsClassFilter"></select>
@@ -778,6 +783,33 @@
       <div id="teachersList"></div>
     </section>
 
+
+    <!-- Dashboard page (renderDashboard should populate this) -->
+<section id="pageDashboard" class="page" style="display:block; padding:12px;">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+    <h2 style="margin:0">Dashboard</h2>
+    <div id="dashboardHeaderActions" style="display:flex;gap:8px"></div>
+  </div>
+
+  <!-- Quick stat cards / chart containers (your renderDashboard can fill these) -->
+  <div id="dashboardCards" style="display:flex;gap:12px;flex-wrap:wrap"></div>
+  <div id="dashboardCharts" style="margin-top:12px"></div>
+</section>
+
+<!-- Payments page placeholder (renderPayments populates / may create page if not present) -->
+<section id="pagePayments" class="page" style="display:none; padding:12px;">
+  <div id="paymentsContainer">Loading payments...</div>
+</section>
+
+<!-- Attendance page placeholder (renderAttendance should populate this) -->
+<section id="pageAttendance" class="page" style="display:none; padding:12px;">
+  <div id="attendanceContainer">Attendance page placeholder</div>
+</section>
+
+<!-- Users page placeholder (renderUsers should populate this) -->
+<section id="pageUsers" class="page" style="display:none; padding:12px;">
+  <div id="usersContainer">Users page placeholder</div>
+</section>
     <section id="pageAnnouncements" class="page" style="display:none; padding:12px;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
         <h2 style="margin:0">Announcements</h2>
