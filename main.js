@@ -1,7 +1,11 @@
 // main.js (updated)
 // Keep your firebase imports etc.
 import { db } from './firebase-config.js';
-import { doc, getDoc, getDocs, collection, query, where } from 'https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore.js';
+// import { doc, getDoc, getDocs, collection, query, where } from 'https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore.js';
+
+// add orderBy and limit to your firebase/firestore imports
+import { collection, doc, getDocs, getDoc, query, where, orderBy, limit, addDoc, updateDoc, deleteDoc, setDoc, Timestamp } from 'https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore.js';
+// or your project's firebase import style — just ensure orderBy & limit are present
 
 /* ---------- DOM refs ---------- */
 const searchBtn = document.getElementById('searchBtn');
@@ -1586,42 +1590,336 @@ function getMonthNameNum(n){
   return m[(Number(n||0)-1)] || '';
 }
 
-function expandAnnouncementForStudent(ann, studentObj){
-  if(!ann) return { title: '', body: '' };
-  let title = String(ann.title || '');
-  let body = String(ann.body || '');
-  const now = new Date();
-  // common tokens
-  const tokens = {
-    '{student_name}': studentObj.fullName || studentObj.name || studentObj.id || '',
-    '{student_id}': studentObj.id || '',
-    '{class}': studentObj.classId || studentObj.class || '',
-    '{balance}': (typeof studentObj.balance !== 'undefined') ? c2p(studentObj.balance) : (studentObj.balance_cents ? c2p(studentObj.balance_cents) : ''),
-    '{month}': getMonthNameNum(now.getMonth()+1),
-    '{year}': now.getFullYear(),
-    '{date}': now.toLocaleDateString(),
-    '{amount}': studentObj.amount ? c2p(studentObj.amount) : '',
-    '{due_date}': (ann.monthYear ? `05-${ann.monthYear.split('-')[0]}-${ann.monthYear.split('-')[1]}` : '')
+// Robust helper: fetchTop10Results(examId) -> returns array of docs (max 10), sorted by total desc
+async function fetchTop10Results(examId) {
+  try {
+    // If Firestore query helpers are available, try server-side ordered query first
+    if (typeof query !== 'undefined' && typeof where !== 'undefined' && typeof getDocs !== 'undefined' && typeof collection !== 'undefined' && typeof limit !== 'undefined' && typeof orderBy !== 'undefined') {
+      try {
+        const q = query(collection(db, 'results'), where('examId','==', examId), orderBy('total','desc'), limit(10));
+        const snap = await getDocs(q);
+        if (snap && snap.size) return snap.docs;
+      } catch(e){
+        // ignore and fallback below
+        console.warn('server-side results query failed, falling back', e);
+      }
+    }
+
+    // Fallback 1: examTotals collection (often has aggregated totals per student)
+    try {
+      const snapTotals = await getDocs(query(collection(db, 'examTotals'), where('examId','==', examId)));
+      if (snapTotals && snapTotals.size) {
+        // convert to array, choose best sort key available: total -> average -> schoolRank
+        const docs = snapTotals.docs.slice();
+        docs.sort((a,b) => {
+          const A = a.data(), B = b.data();
+          const aVal = (typeof A.total !== 'undefined') ? Number(A.total)
+                     : (typeof A.average !== 'undefined') ? Number(A.average)
+                     : (typeof A.schoolRank !== 'undefined') ? -Number(A.schoolRank) // rank small=better so invert
+                     : -Infinity;
+          const bVal = (typeof B.total !== 'undefined') ? Number(B.total)
+                     : (typeof B.average !== 'undefined') ? Number(B.average)
+                     : (typeof B.schoolRank !== 'undefined') ? -Number(B.schoolRank)
+                     : -Infinity;
+          return bVal - aVal;
+        });
+        return docs.slice(0,10);
+      }
+    } catch(e){
+      console.warn('examTotals query failed', e);
+    }
+
+    // Fallback 2: results collection client-side sort
+    try {
+      const snap = await getDocs(query(collection(db, 'results'), where('examId','==', examId)));
+      if (snap && snap.size) {
+        const docs = snap.docs.slice();
+        docs.sort((a,b) => {
+          const ar = a.data(), br = b.data();
+          const at = (typeof ar.total !== 'undefined') ? Number(ar.total) : -Infinity;
+          const bt = (typeof br.total !== 'undefined') ? Number(br.total) : -Infinity;
+          return bt - at;
+        });
+        return docs.slice(0,10);
+      }
+    } catch(e){
+      console.warn('fallback results fetch failed', e);
+    }
+
+    return [];
+  } catch(err){
+    console.warn('fetchTop10Results unexpected error', err);
+    return [];
+  }
+}
+
+/* --------- Helper: try to read full student doc if studentObj lacks amounts ---------- */
+async function ensureStudentFullData(studentObj) {
+  if (!studentObj) return studentObj;
+  // if studentObj already contains common balance keys, return as-is
+  const candidateKeys = ['balance','balance_cents','outstanding','amount_due','monthlyFee','monthly_amount'];
+  for (const k of candidateKeys) {
+    if (studentObj[k] !== undefined && studentObj[k] !== null) return studentObj;
+  }
+  // attempt to fetch from students collection by id or studentId
+  try {
+    // If studentObj.id looks like Firestore doc id
+    if (studentObj.id) {
+      const sdoc = await getDoc(doc(db, 'students', String(studentObj.id)));
+      if (sdoc && sdoc.exists()) return { id: sdoc.id, ...sdoc.data() };
+    }
+    // fallback: query where studentId == studentObj.id or studentObj.studentId
+    const sid = studentObj.studentId || studentObj.id;
+    if (sid) {
+      const q = query(collection(db,'students'), where('studentId','==', String(sid)));
+      const sSnap = await getDocs(q);
+      if (sSnap && sSnap.size) {
+        const dd = sSnap.docs[0].data();
+        return { id: sSnap.docs[0].id, ...dd };
+      }
+    }
+  } catch(e) {
+    console.warn('ensureStudentFullData failed', e);
+  }
+  return studentObj;
+}
+
+/* --------- Helper: extended detection of student amounts ---------- */
+function detectStudentAmounts(student) {
+  if(!student) return { monthlyAmount: null, balance: null };
+
+  const tryKeys = (obj, keys) => {
+    for(const k of keys) {
+      if (k.includes('.')) {
+        // nested key support "fees.balance"
+        const parts = k.split('.');
+        let cur = obj;
+        let ok = true;
+        for (const p of parts) {
+          if (cur && typeof cur[p] !== 'undefined') cur = cur[p];
+          else { ok = false; break; }
+        }
+        if (ok && cur !== null && cur !== undefined) return cur;
+      } else {
+        if(typeof obj[k] !== 'undefined' && obj[k] !== null) return obj[k];
+      }
+    }
+    return null;
   };
 
-  // exam replacement: if announcement.meta.examId present, try to find the exam name
-  if(ann.meta && ann.meta.examId){
-    const ex = (window.examsCache || []).find(e => e.id === ann.meta.examId);
-    tokens['{exam}'] = ex ? (ex.name || ex.id) : (ann.meta.examName || ann.meta.examId || '');
-  } else {
-    tokens['{exam}'] = tokens['{month}'] || '';
+  // broaden the candidate list to include nested and alternative names
+  const monthlyCandidates = [
+    'monthlyFee','monthly_fee','monthly_amount','monthly_amount_cents','fee','monthly','tuition_monthly','monthly_tuition',
+    'fees.monthly','fees.monthly_fee','charges.monthly'
+  ];
+  const balCandidates = [
+    'balance','balance_cents','outstanding','due','amount_due','balanceAmount','current_balance','fees.balance','finances.balance'
+  ];
+
+  let monthlyRaw = tryKeys(student, monthlyCandidates);
+  let balanceRaw = tryKeys(student, balCandidates);
+
+  // also check if there's an 'accounts' or 'ledger' array
+  if(balanceRaw === null && Array.isArray(student.ledger)) {
+    for(const item of student.ledger) {
+      if(item && (item.balance || item.amount)) { balanceRaw = item.balance || item.amount; break; }
+    }
   }
 
-  // Replace all tokens in both body and title
-  Object.keys(tokens).forEach(k => {
-    const v = tokens[k] != null ? String(tokens[k]) : '';
-    const re = new RegExp(k.replace(/([.*+?^=!:${}()|\[\]\/\\])/g,'\\$1'), 'g');
-    title = title.replace(re, v);
-    body = body.replace(re, v);
-  });
+  const normalize = (v) => {
+    if(v === null || typeof v === 'undefined') return null;
+    if(typeof v === 'number') {
+      if(Number.isInteger(v) && Math.abs(v) > 10000) return (v/100).toFixed(2); // treat as cents
+      return Number(v).toFixed(2);
+    }
+    const s = String(v).trim();
+    if(/^[\d]+$/.test(s)) {
+      return (s.length > 4) ? (Number(s)/100).toFixed(2) : Number(s).toFixed(2);
+    }
+    if(/^\d+(\.\d+)?$/.test(s)) return Number(s).toFixed(2);
+    const pf = parseFloat(s.replace(/[^0-9.-]/g,''));
+    return isNaN(pf) ? null : pf.toFixed(2);
+  };
 
-  return { title, body };
+  const monthlyAmount = normalize(monthlyRaw);
+  const balance = normalize(balanceRaw);
+
+  return { monthlyAmount, balance };
 }
+
+// -----------------------------
+// Replace expandAnnouncementForStudent in main.js (student inline announcements)
+// -----------------------------
+// ---------- expandAnnouncementForStudent (student-side) ----------
+// ---------- expandAnnouncementForStudent (student-side) ----------
+async function expandAnnouncementForStudent(a, studentObj) {
+  if (!a) return { title: a?.title || '', body: a?.body || '' };
+
+  // ensure full student data if possible
+  const enrichedStudent = await ensureStudentFullData(studentObj);
+
+  const titleTemplate = a.title || '';
+  let bodyTemplate = a.body || '';
+
+  const replaceTokens = (text, subs) => (text || '').replace(/\{([^\}]+)\}/g, (m, k) => (subs && subs[k] !== undefined) ? subs[k] : m );
+
+  // Try detect amounts (existing helper)
+  let { monthlyAmount, balance } = detectStudentAmounts(enrichedStudent);
+
+  // Fallback: if balance still null try to compute from payments/transactions collections
+  async function fetchBalanceFallback(sid) {
+    if (!sid) return null;
+    const candidateColls = ['payments','student_payments','transactions','fees_ledger','payments_v1'];
+    try {
+      for (const c of candidateColls) {
+        try {
+          const q = query(collection(db, c), where('studentId','==', String(sid)));
+          const snap = await getDocs(q);
+          if (!snap || !snap.size) continue;
+          // Attempt: if doc contains a balance/outstanding field return first seen
+          for (const d of snap.docs) {
+            const data = d.data();
+            if (data && (data.balance || data.outstanding || data.amount_due || data.due)) {
+              const val = data.balance || data.outstanding || data.amount_due || data.due;
+              const n = (typeof val === 'number') ? Number(val).toFixed(2) : (String(val).replace(/[^0-9.-]/g,'') || null);
+              if (n !== null && n !== '') return Number(n).toFixed(2);
+            }
+          }
+          // Otherwise try to compute outstanding: sum(charges) - sum(paid)
+          let sumCharge = 0, sumPaid = 0;
+          snap.docs.forEach(d => {
+            const dd = d.data();
+            const ch = dd.charge || dd.amount || dd.debit || 0;
+            const pd = dd.paid || dd.payment || dd.credit || 0;
+            if (!isNaN(Number(ch))) sumCharge += Number(ch);
+            if (!isNaN(Number(pd))) sumPaid += Number(pd);
+          });
+          if (sumCharge !== 0 || sumPaid !== 0) {
+            return (sumCharge - sumPaid).toFixed(2);
+          }
+        } catch(e){ /* ignore coll error, try next */ }
+      }
+    } catch(e){
+      console.warn('fetchBalanceFallback failed', e);
+    }
+    return null;
+  }
+
+  // If monthlyAmount missing: try class default from classesCache
+  if ((!monthlyAmount || monthlyAmount === null || monthlyAmount === '') && enrichedStudent) {
+    try {
+      const classKey = enrichedStudent.classId || enrichedStudent.class || enrichedStudent.className;
+      if (classKey && typeof window !== 'undefined') {
+        const cls = (window.classesCache || []).find(c => String(c.id) === String(classKey) || c.name === classKey);
+        if (cls) {
+          const classFee = cls.monthlyFee || cls.monthly_fee || cls.fee || cls.defaultMonthly || cls.tuition;
+          if (typeof classFee !== 'undefined' && classFee !== null) {
+            const norm = (v) => {
+              if (v === null || typeof v === 'undefined') return null;
+              if (typeof v === 'number') {
+                if (Number.isInteger(v) && Math.abs(v) > 10000) return (v / 100).toFixed(2);
+                return Number(v).toFixed(2);
+              }
+              const s = String(v).trim();
+              if (/^[\d]+$/.test(s)) return (s.length > 4) ? (Number(s) / 100).toFixed(2) : Number(s).toFixed(2);
+              if (/^\d+(\.\d+)?$/.test(s)) return Number(s).toFixed(2);
+              const pf = parseFloat(s.replace(/[^0-9.-]/g, ''));
+              return isNaN(pf) ? null : pf.toFixed(2);
+            };
+            monthlyAmount = monthlyAmount || norm(classFee);
+          }
+        }
+      }
+    } catch(e){ /* ignore */ }
+  }
+
+  // If balance missing, try fallback lookups
+  if (balance === null || typeof balance === 'undefined') {
+    try {
+      const sid = enrichedStudent?.id || enrichedStudent?.studentId || enrichedStudent?.student_id;
+      if (sid) {
+        const fb = await fetchBalanceFallback(sid);
+        if (fb !== null) balance = fb;
+      }
+    } catch(e){/* ignore */ }
+  }
+
+  // normalize balance to string or null
+  if (balance === null || typeof balance === 'undefined') balance = null;
+  else if (typeof balance === 'number') balance = Number(balance).toFixed(2);
+  else balance = String(balance);
+
+  const monthName = (a.meta && a.meta.month) ? a.meta.month : (new Date()).toLocaleString(undefined, { month: 'long' });
+
+  const subs = {
+    student_name: enrichedStudent?.fullName || enrichedStudent?.name || enrichedStudent?.displayName || (enrichedStudent?.firstName ? `${enrichedStudent.firstName} ${enrichedStudent.lastName || ''}`.trim() : 'Student'),
+    month: monthName,
+    balance: (balance !== null) ? balance : null,
+    monthly_amount: monthlyAmount || '',
+    amount: monthlyAmount || '',
+    exam: a.meta?.examName || a.meta?.examId || ''
+  };
+
+  // Monthly payments: show announcement when either balance is known OR monthlyAmount exists.
+  if (a.type === 'monthly_payment') {
+    // If balance unknown but monthlyAmount exists -> use monthlyAmount as balance fallback (so message appears)
+    if (subs.balance === null && (subs.monthly_amount && subs.monthly_amount !== '')) {
+      subs.balance = subs.monthly_amount;
+    }
+    // Final fallback: if still null, show 0.00 (avoids skipping when you want to inform even zero-fee students)
+    if (subs.balance === null) subs.balance = '0.00';
+
+    // Ensure monthly amount text visible
+    if (monthlyAmount) {
+      const monthlyText = ` :${monthlyAmount}`;
+      if (!/\{monthly_amount\}/i.test(bodyTemplate)) {
+        if (/monthly fee/i.test(bodyTemplate)) {
+          bodyTemplate = bodyTemplate.replace(/monthly fee/i, match => `${match}${monthlyText}`);
+        } else {
+          bodyTemplate = bodyTemplate + `\n\nMonthly amount: ${monthlyAmount}`;
+        }
+      }
+    }
+    if (!/\{balance\}/i.test(bodyTemplate)) {
+      bodyTemplate = bodyTemplate + `\n\nYour balance: ${subs.balance !== null ? subs.balance : '0.00'}`;
+    }
+  }
+
+  // Top10: produce text summary (render will upgrade to medal UI)
+  if (a.type === 'top10' && a.meta && a.meta.examId) {
+    try {
+      const docs = await fetchTop10Results(a.meta.examId);
+      if (docs && docs.length) {
+        const rows = [];
+        for (let i=0;i<docs.length;i++){
+          const d = docs[i];
+          const r = (typeof d.data === 'function') ? d.data() : (d||{});
+          const name = r.studentName || r.student_name || r.name || r.student || '—';
+          const sid = r.studentId || r.student_id || r.student || (d.id || 'xxxx');
+          const shortId = String(sid||'').slice(-4) || 'xxxx';
+          const className = r.className || r.class || r.classId || '';
+          const total = (typeof r.total !== 'undefined' && r.total !== null) ? Number(r.total) : '—';
+          let maxPossible = 0;
+          if (Array.isArray(r.subjects) && r.subjects.length) maxPossible = r.subjects.reduce((s,sub)=>s+(Number(sub.max)||0),0);
+          else if (typeof r.max !== 'undefined' && r.max !== null) maxPossible = Number(r.max);
+          else if (a.meta && a.meta.examMax) maxPossible = Number(a.meta.examMax)||0;
+          const percent = (total!=='—' && maxPossible>0) ? ((total/maxPossible)*100).toFixed(2)+'%' : (r.average ? String(r.average) : '');
+          rows.push(`${i+1}. ${name} • ID ${shortId} • ${className} • ${total} • ${percent}`);
+        }
+        bodyTemplate = `Top 10 — ${a.meta?.examName || a.meta?.examId || ''}\n\n${rows.join('\n')}`;
+      } else {
+        bodyTemplate = (bodyTemplate||'').replace(/\{rank\d+\}/g,'').trim() + `\n\n(No top-10 data found)`;
+      }
+    } catch(e){
+      console.warn('expandAnnouncementForStudent top10 error', e);
+    }
+  }
+
+  const finalTitle = replaceTokens(titleTemplate, subs);
+  const finalBody = replaceTokens(bodyTemplate, subs);
+  return { title: finalTitle, body: finalBody };
+}
+
 
 async function fetchAnnouncementsAll(){
   try {
@@ -1634,62 +1932,60 @@ async function fetchAnnouncementsAll(){
    STUDENT – INLINE ANNOUNCEMENTS
    (NO MODALS – Spark-safe)
 ================================ */
+// ---------- renderAnnouncementsForStudent (improved top-10 UI + mobile fit) ----------
+
+// ---------- renderAnnouncementsForStudent (improved top-10 UI + mobile fit) ----------
 async function renderAnnouncementsForStudent(studentObj){
   if(!studentObj) return;
-
   try {
     try { hideCardsUI(); } catch(e){}
-
     const all = await fetchAnnouncementsAll();
 
-    // filter announcements for this student
-    const applicable = (all || []).filter(a => {
+    // initial filter (same as before)
+    const applicableRaw = (all || []).filter(a => {
       const aud = a.audience || [];
       if (aud.includes('all') || aud.includes('students')) return true;
-
       for (const it of aud) {
-        if (it.startsWith('class:') && it.split(':')[1] === (studentObj.classId || studentObj.class)) {
-          return true;
-        }
-        if (it.startsWith('student:') && it.split(':')[1] === studentObj.id) {
-          return true;
-        }
+        if (it.startsWith('class:') && it.split(':')[1] === (studentObj.classId || studentObj.class)) return true;
+        if (it.startsWith('student:') && it.split(':')[1] === studentObj.id) return true;
       }
-
-      if (a.type === 'monthly_payment') return !!a.allowMonthly;
+      if (a.type === 'monthly_payment') return true;
       return false;
-    }).sort((a,b)=>{
-      const as = a.createdAt?.seconds || 0;
-      const bs = b.createdAt?.seconds || 0;
-      return bs - as;
-    });
+    }).sort((a,b)=> (b.createdAt?.seconds||0) - (a.createdAt?.seconds||0));
 
-    // unread counter
+    // expand and filter (skip null results)
+    const expandedPromises = applicableRaw.map(a => expandAnnouncementForStudent(a, studentObj));
+    const expandedResults = await Promise.all(expandedPromises);
+    const applicable = [];
+    for (let i=0;i<applicableRaw.length;i++){
+      const ex = expandedResults[i];
+      if (ex === null) continue;
+      applicable.push({ raw: applicableRaw[i], expanded: ex });
+    }
+
     const lastSeenKey = `ann_lastSeen_student_${studentObj.id}`;
     const lastSeen = Number(localStorage.getItem(lastSeenKey) || '0');
     let unread = 0;
-
-    applicable.forEach(a=>{
-      const ts = a.createdAt?.seconds ? a.createdAt.seconds * 1000 : 0;
+    applicable.forEach(a=> {
+      const ts = a.raw.createdAt?.seconds ? a.raw.createdAt.seconds * 1000 : 0;
       if(ts > lastSeen) unread++;
     });
 
     const counterEl = document.getElementById('announcementsCounter');
- if(counterEl){
-  if(unread > 0){
-    counterEl.textContent = unread;
-    counterEl.style.display = 'inline-block';
-    counterEl.classList.add('pulse');
-  } else {
-    counterEl.textContent = '';
-    counterEl.style.display = 'none';
-    counterEl.classList.remove('pulse');
-  }
-}
-
-    
+    if(counterEl){
+      if(unread > 0){
+        counterEl.textContent = unread;
+        counterEl.style.display = 'inline-block';
+        counterEl.classList.add('pulse');
+      } else {
+        counterEl.textContent = '';
+        counterEl.style.display = 'none';
+        counterEl.classList.remove('pulse');
+      }
+    }
 
     const resultArea = document.getElementById('resultArea');
+    if(!resultArea) return;
     resultArea.style.display = 'block';
 
     if (!applicable.length) {
@@ -1697,7 +1993,7 @@ async function renderAnnouncementsForStudent(studentObj){
       return;
     }
 
-    // build inline list
+    // Render list (we keep expanded.body escaped for safety, but mark top10 rows for enhancement)
     resultArea.innerHTML = `
       <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center">
@@ -1706,60 +2002,110 @@ async function renderAnnouncementsForStudent(studentObj){
         </div>
       </div>
 
-      ${applicable.map(a=>{
-        const expanded = expandAnnouncementForStudent(a, studentObj);
+      ${applicable.map((item, idx) => {
+        const a = item.raw;
+        const expanded = item.expanded;
         const tsMs = a.createdAt?.seconds ? a.createdAt.seconds * 1000 : 0;
         const ts = tsMs ? new Date(tsMs).toLocaleString() : '';
-      
         const isUnread = tsMs > lastSeen;
-        const preview =
-          expanded.body.length > 10
-            ? expanded.body.slice(0, 10) + '...'
-            : expanded.body;
-      
+        const preview = expanded.body && expanded.body.length > 60 ? expanded.body.slice(0,60) + '...' : (expanded.body||'');
+        const top10Attr = (a.type === 'top10' && a.meta && a.meta.examId) ? `data-top10="true" data-examid="${escapeHtml(a.meta.examId||'')}" data-examname="${escapeHtml(a.meta.examName||'')}"` : '';
         return `
-          <div class="card ann-inline ${isUnread ? 'ann-unread' : ''}"
-               data-id="${escapeHtml(a.id)}"
-               data-ts="${tsMs}"
-               style="cursor:pointer">
-      
-            <div class="ann-title">${escapeHtml(expanded.title)}</div>
-            <div class="ann-preview">${escapeHtml(preview)}</div>
-            <div class="muted small">${escapeHtml(ts)}</div>
-      
-            <div class="ann-body"
-                 style="display:none;margin-top:8px;white-space:pre-wrap">
-              ${escapeHtml(expanded.body)}
+          <div class="card ann-inline ${isUnread ? 'ann-unread' : ''}" data-id="${escapeHtml(a.id)}" data-ts="${tsMs}" ${top10Attr} style="cursor:pointer;padding:12px">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+              <div style="min-width:0">
+                <div class="ann-title">${escapeHtml(expanded.title || a.title)}</div>
+                <div class="muted small" style="margin-top:6px">${escapeHtml(ts)}</div>
+                <div class="ann-preview" style="margin-top:8px">${escapeHtml(preview)}</div>
+              </div>
+              <div style="margin-left:12px;flex-shrink:0">
+                ${a.type === 'monthly_payment' ? `<div class="status-pass" style="padding:6px 8px;font-weight:900">Fee</div>` : ''}
+                ${a.type === 'top10' ? `<div style="font-weight:900;color:#0b74ff">Top10</div>` : ''}
+              </div>
             </div>
+            <div class="ann-body" style="display:none;margin-top:12px;white-space:pre-wrap">${escapeHtml(expanded.body || '')}</div>
           </div>
         `;
       }).join('')}
-      `;
+    `;
 
-    
-    // expand / collapse
+    // After render: enhance top10 blocks with styled medal UI (async fetch + show percent)
+    (async () => {
+      const topNodes = Array.from(document.querySelectorAll('.ann-inline[data-top10="true"]'));
+      for (const node of topNodes) {
+        try {
+          const examId = node.getAttribute('data-examid');
+          const examName = node.getAttribute('data-examname') || '';
+          const annBody = node.querySelector('.ann-body');
+          const docs = await fetchTop10Results(examId);
+          if (!docs || !docs.length) continue;
+
+          // Build HTML list with medals for top3 and include percentage
+          const items = docs.map((d, i) => {
+            const r = (typeof d.data === 'function') ? d.data() : d.data ? d.data() : (d||{});
+            const name = escapeHtml(r.studentName || r.student_name || r.name || r.student || '—');
+            const sidRaw = (r.studentId || r.student_id || r.student || (d.id||'xxxx'));
+            const sid = escapeHtml(String(sidRaw));
+            const shortId = String(sid).slice(-4) || 'xxxx';
+            const className = escapeHtml(r.className || r.class || r.classId || '');
+            const total = (typeof r.total !== 'undefined' && r.total !== null && r.total !== '') ? Number(r.total) : null;
+
+            // compute percent using available info
+            let maxPossible = 0;
+            if (Array.isArray(r.subjects) && r.subjects.length) maxPossible = r.subjects.reduce((s,sub)=>s+(Number(sub.max)||0),0);
+            else if (typeof r.max !== 'undefined' && r.max !== null) maxPossible = Number(r.max);
+            else if (a && a.meta && a.meta.examMax) maxPossible = Number(a.meta.examMax) || 0;
+            else {
+              // try meta on announcement if present
+              const ann = (typeof node.dataset !== 'undefined' ? null : null);
+            }
+            const percent = (total !== null && maxPossible > 0) ? ((total / maxPossible) * 100).toFixed(2) + '%' : (r.average ? String(r.average) : '—');
+
+            // medal / rank icon
+            let medalHtml = `<div class="rank-num">${i+1}</div>`;
+            if (i === 0) medalHtml = `<div class="medal medal-gold">🥇</div>`;
+            if (i === 1) medalHtml = `<div class="medal medal-silver">🥈</div>`;
+            if (i === 2) medalHtml = `<div class="medal medal-bronze">🥉</div>`;
+
+            return `
+              <div class="top10-row ${i<3 ? 'top3' : ''}">
+                <div class="top10-medal">${medalHtml}</div>
+                <div class="top10-info">
+                  <div class="top10-name">${name}</div>
+                  <div class="top10-meta">ID ${shortId} • ${className}</div>
+                </div>
+                <div class="top10-score">
+                  <div style="font-weight:900">${total !== null ? String(total) : '—'}</div>
+                  <div style="font-size:12px;color:var(--muted)">${percent}</div>
+                </div>
+              </div>
+            `;
+          }).join('');
+
+          annBody.style.whiteSpace = 'normal';
+          annBody.innerHTML = `<div class="top10-grid"><div style="font-weight:900;margin-bottom:8px">${escapeHtml(examName || ('Top 10 — ' + examId))}</div>${items}</div>`;
+        } catch(e){
+          console.warn('top10 enhancement failed', e);
+        }
+      }
+    })();
+
+    // click behaviour expand/collapse
     document.querySelectorAll('.ann-inline').forEach(card=>{
       card.onclick = ()=>{
         const body = card.querySelector('.ann-body');
         const ts = Number(card.dataset.ts || 0);
-    
         const isOpen = body.style.display === 'block';
         body.style.display = isOpen ? 'none' : 'block';
-    
         card.classList.add('opened');
         card.classList.remove('ann-unread');
-    
-        if(ts){
-          localStorage.setItem(lastSeenKey, Date.now());
-        }
-    
+        if(ts) localStorage.setItem(lastSeenKey, Date.now());
         if(counterEl){
           counterEl.textContent = '';
           counterEl.style.display = 'none';
         }
       };
     });
-    
 
     // mark all read
     const markBtn = document.getElementById('markReadBtn');
@@ -1779,7 +2125,10 @@ async function renderAnnouncementsForStudent(studentObj){
   }
 }
 
+
 window.renderAnnouncementsForStudent = renderAnnouncementsForStudent;
+
+
 
 
 
