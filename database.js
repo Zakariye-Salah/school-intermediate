@@ -82,6 +82,29 @@ let teachersCache = []; // NEW
 let examTotalsCache = {}; // examId -> { studentId: payload }
 /* UI helpers */
 
+const recycleTypeFilter = document.getElementById('recycleTypeFilter');
+const recycleSearch = document.getElementById('recycleSearch');
+const recycleDateFrom = document.getElementById('recycleDateFrom');
+const recycleDateTo = document.getElementById('recycleDateTo');
+const recycleApplyFilters = document.getElementById('recycleApplyFilters');
+const recycleRestoreAll = document.getElementById('recycleRestoreAll');
+const recycleDeleteAll = document.getElementById('recycleDeleteAll');
+const recycleCounts = document.getElementById('recycleCounts');
+
+const recycleTbody = document.getElementById('recycleTbody');
+const recycleCardList = document.getElementById('recycleCardList');
+const tabRecycle = document.getElementById('tabRecycle');
+const pageRecycle = document.getElementById('pageRecycle');
+
+// wire tab button (if exists)
+if(tabRecycle){
+  tabRecycle.onclick = () => { showPage('recycle'); renderRecycleBin().catch(console.error); };
+}
+
+if(recycleApplyFilters) recycleApplyFilters.onclick = () => renderRecycleBin().catch(console.error);
+if(recycleRestoreAll) recycleRestoreAll.onclick = () => bulkRestore().catch(console.error);
+if(recycleDeleteAll) recycleDeleteAll.onclick = () => bulkDeleteAll().catch(console.error);
+
 
 function showPage(id) {
   // Remove active from all tabs
@@ -115,7 +138,8 @@ function showPage(id) {
     subjects: ['pageSubjects'],
     exams: ['pageExams'],
     teachers: ['pageTeachers'],
-    announcements: ['pageAnnouncements'], 
+    announcements: ['pageAnnouncements'],
+    recycleBin: ['pageRecycle'], 
 
     // add other pages here if needed
   };
@@ -279,6 +303,335 @@ function populateStudentsExamDropdown(){
     studentsExamForTotals.appendChild(opt);
   }
 }
+
+
+
+/*
+ * Helper: fetch deleted docs from a collection.
+ * Accepts collectionName and returns array of { id, collection, data, deletedAt }
+ */
+async function fetchDeletedFromCollection(collectionName){
+  try {
+    const snap = await getDocs(collection(db, collectionName));
+    return snap.docs
+      .map(d => ({ id: d.id, collection: collectionName, data: d.data() }))
+      .filter(item => {
+        const doc = item.data || {};
+        // support various deleted flags / statuses
+        const isDeleted = (doc.deleted === true) || (doc.is_deleted === true) || (doc.status === 'deleted');
+        return isDeleted;
+      })
+      .map(item => {
+        const deletedAt = item.data.deletedAt || item.data.deleted_at || item.data.deletedAt || item.data.deletedAt || item.data.deletedAt || item.data.deletedAt || item.data.deletedAt || null;
+        // fallback: some docs use deletedAt as Timestamp, or deleted_at.
+        return { id: item.id, collection: item.collection, data: item.data, deletedAt: deletedAt || item.data.deletedAt || item.data.deleted_at || null };
+      });
+  } catch(err) {
+    console.warn('fetchDeletedFromCollection failed', collectionName, err);
+    return [];
+  }
+}
+
+/**
+ * Fetch all deleted items across configured collections.
+ * collectionsToCheck can be subset (filter by type)
+ */
+async function fetchAllDeleted(collectionsToCheck){
+  const collections = collectionsToCheck || ['students','teachers','classes','subjects','exams','transactions','users','announcements'];
+  const promises = collections.map(c => fetchDeletedFromCollection(c));
+  const results = await Promise.all(promises);
+  const flat = results.flat();
+  // normalize for display: provide title / subtitle fields
+  return flat.map(item => {
+    const d = item.data || {};
+    let title = '', details = '';
+    switch(item.collection){
+      case 'students':
+        title = d.fullName || d.studentId || d.id || d.name || d.title || 'Student';
+        details = d.classId ? String(d.classId) : (d.parentPhone || '');
+        break;
+      case 'teachers':
+        title = d.fullName || d.id || d.teacherId || d.email || 'Teacher';
+        details = d.subjectName || (d.subjects || []).join(', ') || '';
+        break;
+      case 'classes':
+        title = d.name || d.id || 'Class';
+        details = `Total students: ${d.total || '-'}`;
+        break;
+      case 'subjects':
+        title = d.name || d.id || 'Subject';
+        details = d.code || '';
+        break;
+      case 'exams':
+        title = d.name || d.id || 'Exam';
+        details = (d.classes && d.classes.join(', ')) || '';
+        break;
+      case 'transactions':
+        title = d.description || (d.type ? `${d.type} (${d.target_type || ''})` : `Transaction ${item.id}`);
+        details = `Amount: ${d.amount || d.amount_cents || ''}`;
+        break;
+      case 'users':
+        title = d.displayName || d.email || d.name || item.id;
+        details = d.role || '';
+        break;
+      case 'announcements':
+        title = d.title || d.heading || `Announcement ${item.id}`;
+        details = d.summary || '';
+        break;
+      default:
+        title = d.name || d.title || d.id;
+        details = '';
+    }
+
+    // deletedAt normalization: convert Firestore Timestamp to Date
+    let deletedAt = d.deletedAt || d.deleted_at || d.deletedAt || d.deletedAt || d.deleted_at || null;
+    if(deletedAt && deletedAt.seconds) deletedAt = new Date(deletedAt.seconds * 1000);
+    if(deletedAt && deletedAt.toDate) { try { deletedAt = deletedAt.toDate(); } catch(e){} }
+    if(!deletedAt) deletedAt = d.deletedAtTimestamp || null;
+
+    return {
+      id: item.id,
+      collection: item.collection,
+      title: String(title || item.id),
+      details: String(details || ''),
+      deletedAt: deletedAt,
+      deletedBy: d.deletedBy || d.deleted_by || d.deletedBy || null,
+      raw: d
+    };
+  });
+}
+
+/**
+ * Render Recycle Bin list
+ */
+async function renderRecycleBin(){
+  if(!pageRecycle) return;
+  // show page
+  showPage('recycle');
+
+  const type = recycleTypeFilter ? recycleTypeFilter.value : 'all';
+  const q = (recycleSearch && recycleSearch.value || '').trim().toLowerCase();
+  const from = recycleDateFrom && recycleDateFrom.value ? new Date(recycleDateFrom.value) : null;
+  const to = recycleDateTo && recycleDateTo.value ? new Date(recycleDateTo.value) : null;
+
+  // which collections to check
+  const collectionsToCheck = (type && type !== 'all') ? [type] : undefined;
+  const allDeleted = await fetchAllDeleted(collectionsToCheck);
+
+  // filter by query and date
+  const filtered = allDeleted.filter(it => {
+    if(q){
+      const hay = `${it.title} ${it.details} ${it.id} ${it.collection}`.toLowerCase();
+      if(!hay.includes(q)) return false;
+    }
+    if(from && it.deletedAt){
+      if(it.deletedAt < from) return false;
+    }
+    if(to && it.deletedAt){
+      // include whole day
+      const toEnd = new Date(to); toEnd.setHours(23,59,59,999);
+      if(it.deletedAt > toEnd) return false;
+    }
+    return true;
+  });
+
+  // counts by type
+  const counts = {};
+  allDeleted.forEach(it => counts[it.collection] = (counts[it.collection] || 0) + 1);
+  const total = filtered.length;
+  if(recycleCounts) {
+    const parts = [`Total deleted: ${total}`];
+    for(const k of ['students','teachers','classes','subjects','exams','transactions','users','announcements']){
+      if(counts[k]) parts.push(`${k}: ${counts[k]}`);
+    }
+    recycleCounts.textContent = parts.join(' • ');
+  }
+
+  // render table (desktop)
+  if(recycleTbody){
+    recycleTbody.innerHTML = '';
+    filtered.forEach((it, idx) => {
+      const deletedAtStr = it.deletedAt ? (new Date(it.deletedAt)).toLocaleString() : '—';
+      const deletedByStr = escapeHtml(it.deletedBy || '');
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td style="padding:8px;vertical-align:middle">${idx+1}</td>
+        <td style="padding:8px;vertical-align:middle"><span class="recycle-type-pill">${escapeHtml(it.collection)}</span></td>
+        <td style="padding:8px;vertical-align:middle">${escapeHtml(it.title)}</td>
+        <td style="padding:8px;vertical-align:middle">${escapeHtml(it.details)}</td>
+        <td style="padding:8px;vertical-align:middle">${escapeHtml(deletedAtStr)}<div class="recycled-meta">${deletedByStr ? 'by '+deletedByStr : ''}</div></td>
+        <td style="padding:8px;vertical-align:middle" class="recycle-actions">
+          <button class="btn btn-ghost btn-sm recycle-restore" data-idx="${idx}">Restore</button>
+          <button class="btn btn-danger btn-sm recycle-delete" data-idx="${idx}" ${!isSuperAdmin() ? 'disabled' : ''}>Delete Permanently</button>
+        </td>`;
+      recycleTbody.appendChild(tr);
+    });
+
+    // wire buttons (use dataset idx to match filtered array)
+    recycleTbody.querySelectorAll('.recycle-restore').forEach(b=>{
+      b.onclick = async (ev) => {
+        const idx = ev.currentTarget.dataset.idx;
+        const item = filtered[idx];
+        if(!item) return;
+        await restoreItem(item);
+        await renderRecycleBin();
+      };
+    });
+    recycleTbody.querySelectorAll('.recycle-delete').forEach(b=>{
+      b.onclick = async (ev) => {
+        if(!isSuperAdmin()) { toast('Only superadmin can permanently delete'); return; }
+        const idx = ev.currentTarget.dataset.idx;
+        const item = filtered[idx];
+        if(!item) return;
+        if(!confirm('Delete permanently? This cannot be undone.')) return;
+        await permanentlyDeleteItem(item);
+        await renderRecycleBin();
+      };
+    });
+  }
+
+  // mobile cards
+  if(recycleCardList){
+    recycleCardList.innerHTML = '';
+    filtered.forEach((it, idx) => {
+      const deletedAtStr = it.deletedAt ? (new Date(it.deletedAt)).toLocaleString() : '—';
+      const card = document.createElement('div');
+      card.className = 'user-card';
+      card.style.display = 'flex';
+      card.style.justifyContent = 'space-between';
+      card.style.alignItems = 'center';
+      card.style.padding = '10px';
+      card.innerHTML = `
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(it.title)}</div>
+          <div style="font-size:13px;color:#6b7280">${escapeHtml(it.collection)} • ${escapeHtml(it.details)}</div>
+          <div style="font-size:12px;color:#94a3b8">${escapeHtml(deletedAtStr)} ${it.deletedBy ? ' • by '+escapeHtml(it.deletedBy) : ''}</div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;margin-left:12px">
+          <button class="btn btn-ghost btn-sm recycle-restore" data-idx="${idx}">Restore</button>
+          <button class="btn btn-danger btn-sm recycle-delete" data-idx="${idx}" ${!isSuperAdmin() ? 'disabled' : ''}>Delete</button>
+        </div>
+      `;
+      recycleCardList.appendChild(card);
+    });
+
+    recycleCardList.querySelectorAll('.recycle-restore').forEach(b=>{
+      b.onclick = async (ev) => { const idx=ev.currentTarget.dataset.idx; const item=filtered[idx]; if(item){ await restoreItem(item); await renderRecycleBin(); } };
+    });
+    recycleCardList.querySelectorAll('.recycle-delete').forEach(b=>{
+      b.onclick = async (ev) => { if(!isSuperAdmin()){ toast('Only superadmin'); return; } const idx=ev.currentTarget.dataset.idx; const item=filtered[idx]; if(item && confirm('Delete permanently?')){ await permanentlyDeleteItem(item); await renderRecycleBin(); } };
+    });
+  }
+}
+
+/** Return true if current user role is superadmin (based on localStorage) */
+function isSuperAdmin(){
+  const r = (localStorage.getItem('verifiedRole') || '').toLowerCase();
+  return r === 'superadmin';
+}
+
+/** Restore an item object from fetchAllDeleted() */
+async function restoreItem(item){
+  try{
+    const { collection: collName, id, raw } = item;
+    const ref = doc(db, collName, id);
+    // collection-specific restore behavior:
+    if(collName === 'students'){
+      // set status active + deleted false
+      await updateDoc(ref, { status: 'active', deleted: false, deletedAt: null, deletedBy: null, updatedAt: Timestamp.now() });
+    } else if(collName === 'transactions'){
+      await updateDoc(ref, { is_deleted: false, deleted_by: null, deleted_at: null });
+    } else {
+      // generic restore: set deleted flags to false and clear metadata
+      await updateDoc(ref, { deleted: false, deletedAt: null, deletedBy: null, deleted_at: null, deleted_by: null, updatedAt: Timestamp.now() });
+    }
+    toast('Restored');
+  }catch(err){
+    console.error('restoreItem failed', err);
+    toast('Failed to restore');
+  }
+}
+
+/** Permanently delete a record (only for superadmin) */
+async function permanentlyDeleteItem(item){
+  try{
+    const { collection: collName, id } = item;
+    await deleteDoc(doc(db, collName, id));
+    toast('Deleted permanently');
+  }catch(err){
+    console.error('permanentlyDeleteItem failed', err);
+    toast('Failed to delete permanently');
+  }
+}
+
+/** Bulk restore visible items (applies current filters) */
+async function bulkRestore(){
+  if(!confirm('Restore all visible deleted items?')) return;
+  // fetch current filtered list same as renderRecycleBin
+  const type = recycleTypeFilter ? recycleTypeFilter.value : 'all';
+  const collectionsToCheck = (type && type !== 'all') ? [type] : undefined;
+  const items = await fetchAllDeleted(collectionsToCheck);
+
+  const q = (recycleSearch && recycleSearch.value || '').trim().toLowerCase();
+  const from = recycleDateFrom && recycleDateFrom.value ? new Date(recycleDateFrom.value) : null;
+  const to = recycleDateTo && recycleDateTo.value ? new Date(recycleDateTo.value) : null;
+
+  const filtered = items.filter(it=>{
+    if(q){
+      const hay = `${it.title} ${it.details} ${it.id} ${it.collection}`.toLowerCase();
+      if(!hay.includes(q)) return false;
+    }
+    if(from && it.deletedAt && it.deletedAt < from) return false;
+    if(to && it.deletedAt){
+      const toEnd = new Date(to); toEnd.setHours(23,59,59,999);
+      if(it.deletedAt > toEnd) return false;
+    }
+    return true;
+  });
+
+  for(const it of filtered){
+    await restoreItem(it);
+  }
+  toast('Restored all visible items');
+  await renderRecycleBin();
+}
+
+/** Bulk delete visible items (only superadmin) */
+async function bulkDeleteAll(){
+  if(!isSuperAdmin()){
+    toast('Only superadmin can delete permanently');
+    return;
+  }
+  if(!confirm('Permanently delete ALL visible items? This cannot be undone.')) return;
+
+  const type = recycleTypeFilter ? recycleTypeFilter.value : 'all';
+  const collectionsToCheck = (type && type !== 'all') ? [type] : undefined;
+  const items = await fetchAllDeleted(collectionsToCheck);
+
+  const q = (recycleSearch && recycleSearch.value || '').trim().toLowerCase();
+  const from = recycleDateFrom && recycleDateFrom.value ? new Date(recycleDateFrom.value) : null;
+  const to = recycleDateTo && recycleDateTo.value ? new Date(recycleDateTo.value) : null;
+
+  const filtered = items.filter(it=>{
+    if(q){
+      const hay = `${it.title} ${it.details} ${it.id} ${it.collection}`.toLowerCase();
+      if(!hay.includes(q)) return false;
+    }
+    if(from && it.deletedAt && it.deletedAt < from) return false;
+    if(to && it.deletedAt){
+      const toEnd = new Date(to); toEnd.setHours(23,59,59,999);
+      if(it.deletedAt > toEnd) return false;
+    }
+    return true;
+  });
+
+  for(const it of filtered){
+    await permanentlyDeleteItem(it);
+  }
+  toast('Deleted permanently all visible items');
+  await renderRecycleBin();
+}
+
 /* ----------------------------
   ANNOUNCEMENTS: admin functions 
 ------------------------------*/
@@ -1798,16 +2151,26 @@ async function openEditTeacherModal(e){
 async function deleteTeacher(e){
   const id = e && e.target ? e.target.dataset.id : e;
   if(!id) return;
-  if(!confirm('Delete teacher?')) return;
+  if(!confirm('Move teacher to Recycle Bin?')) return;
+
   try {
-    await deleteDoc(doc(db,'teachers', id));
-    toast('Teacher deleted');
-    await loadTeachers(); renderTeachers();
+    const who = (currentUser && currentUser.uid) || (auth && auth.currentUser && auth.currentUser.uid) || null;
+    await updateDoc(doc(db,'teachers', id), {
+      deleted: true,
+      deletedAt: Timestamp.now(),
+      deletedBy: who,
+      deleted_at: Timestamp.now(),    // alternate name
+      deleted_by: who                 // alternate name
+    });
+    toast('Teacher moved to Recycle Bin');
+    await loadTeachers();
+    renderTeachers();
   } catch(err){
     console.error('delete teacher failed', err);
     toast('Failed to delete teacher');
   }
 }
+
 
 /* -------------------------
   Wire buttons (defensive)
@@ -1991,11 +2354,30 @@ function openEditClassModal(e){
 }
 
 async function deleteClass(e){
-  const id = e.target.dataset.id;
-  if(!confirm('Delete class?')) return;
-  await deleteDoc(doc(db,'classes',id));
-  await loadClasses(); renderClasses(); populateClassFilters(); renderStudents();
+  const id = e && e.target ? e.target.dataset.id : e;
+  if(!id) return;
+  if(!confirm('Move class to Recycle Bin?')) return;
+
+  try {
+    const who = (currentUser && currentUser.uid) || (auth && auth.currentUser && auth.currentUser.uid) || null;
+    await updateDoc(doc(db,'classes', id), {
+      deleted: true,
+      deletedAt: Timestamp.now(),
+      deletedBy: who,
+      deleted_at: Timestamp.now(),
+      deleted_by: who
+    });
+    toast('Class moved to Recycle Bin');
+    await loadClasses();
+    renderClasses();
+    populateClassFilters && populateClassFilters();
+    renderStudents && renderStudents();
+  } catch(err){
+    console.error('delete class failed', err);
+    toast('Failed to delete class');
+  }
 }
+
 /** ---------- SUBJECTS (table view + View modal) ---------- */
 function renderSubjects(){
   if(!subjectsList) return;
@@ -2150,10 +2532,27 @@ function openEditSubjectModal(e){
 
 
 async function deleteSubject(e){
-  const id = e.target.dataset.id;
-  if(!confirm('Delete subject?')) return;
-  await deleteDoc(doc(db,'subjects',id));
-  await loadSubjects(); renderSubjects(); populateClassFilters();
+  const id = e && e.target ? e.target.dataset.id : e;
+  if(!id) return;
+  if(!confirm('Move subject to Recycle Bin?')) return;
+
+  try {
+    const who = (currentUser && currentUser.uid) || (auth && auth.currentUser && auth.currentUser.uid) || null;
+    await updateDoc(doc(db,'subjects', id), {
+      deleted: true,
+      deletedAt: Timestamp.now(),
+      deletedBy: who,
+      deleted_at: Timestamp.now(),
+      deleted_by: who
+    });
+    toast('Subject moved to Recycle Bin');
+    await loadSubjects();
+    renderSubjects();
+    populateClassFilters && populateClassFilters();
+  } catch(err){
+    console.error('delete subject failed', err);
+    toast('Failed to delete subject');
+  }
 }
 
 
@@ -3077,11 +3476,29 @@ function openEditExamModal(e){
 
 
 async function deleteExam(e){
-  const id = e.target.dataset.id;
-  if(!confirm('Delete exam?')) return;
-  await deleteDoc(doc(db,'exams',id));
-  await loadExams(); renderExams(); populateStudentsExamDropdown(); toast('Exam deleted');
+  const id = e && e.target ? e.target.dataset.id : e;
+  if(!id) return;
+  if(!confirm('Move exam to Recycle Bin?')) return;
+
+  try {
+    const who = (currentUser && currentUser.uid) || (auth && auth.currentUser && auth.currentUser.uid) || null;
+    await updateDoc(doc(db,'exams', id), {
+      deleted: true,
+      deletedAt: Timestamp.now(),
+      deletedBy: who,
+      deleted_at: Timestamp.now(),
+      deleted_by: who
+    });
+    toast('Exam moved to Recycle Bin');
+    await loadExams();
+    renderExams();
+    populateStudentsExamDropdown && populateStudentsExamDropdown();
+  } catch(err){
+    console.error('delete exam failed', err);
+    toast('Failed to delete exam');
+  }
 }
+
 
 /* Toggle publish/unpublish - uses helper fallback to update studentsLatest */
 async function togglePublishExam(e){
@@ -8782,6 +9199,33 @@ async function addPdfHeader(doc, titleText){
 /* ------------------------
   Users (admin) CRUD
 -------------------------*/
+/* ------------------------
+  Users (admin) CRUD - role-aware
+-------------------------*/
+/* ------------------------
+  Users (admin) CRUD - role-aware (fetch & merge users + admin)
+-------------------------*/
+
+// returns { ref: DocumentReference, snap: DocumentSnapshot, collectionName: 'users'|'admin' }
+// snap may be null if not found
+async function getDocRefForId(id){
+  if(!id) return { ref: null, snap: null, collectionName: null };
+  // try users
+  try {
+    const uRef = doc(db, 'users', id);
+    const uSnap = await getDoc(uRef);
+    if(uSnap.exists()) return { ref: uRef, snap: uSnap, collectionName: 'users' };
+  } catch(e) { console.warn('users lookup failed', e); }
+  // try admin
+  try {
+    const aRef = doc(db, 'admin', id);
+    const aSnap = await getDoc(aRef);
+    if(aSnap.exists()) return { ref: aRef, snap: aSnap, collectionName: 'admin' };
+  } catch(e) { console.warn('admin lookup failed', e); }
+  // not found
+  return { ref: null, snap: null, collectionName: null };
+}
+
 async function renderUsers(){
   let page = document.getElementById('pageUsers');
   if(!page){
@@ -8792,48 +9236,220 @@ async function renderUsers(){
     main && main.appendChild(page);
   }
 
-  // load users
-  let users = [];
-  try{
-    const snap = await getDocs(collection(db,'users'));
-    users = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-  }catch(err){
-    console.error('load users failed', err);
+  // Determine current user & role
+  const authUser = (typeof currentUser !== 'undefined' && currentUser) || (auth && auth.currentUser) || null;
+  const currentUid = authUser ? (authUser.uid || '') : '';
+  // role from localStorage or from user's doc
+  let currentRole = localStorage.getItem('verifiedRole') || null;
+
+  // try to load role from users collection if missing
+  if(!currentRole && currentUid){
+    try{
+      const snap = await getDocs(query(collection(db,'users'), where('uid','==', currentUid)));
+      if(snap && snap.size>0){
+        currentRole = snap.docs[0].data().role || null;
+        if(currentRole) localStorage.setItem('verifiedRole', currentRole);
+      }
+    }catch(e){ console.warn('get current role failed', e); }
   }
 
+  // load users from both 'users' and 'admin' collections and merge them
+  let allRecords = [];
+  try{
+    const [usersSnap, adminSnap] = await Promise.all([
+      getDocs(collection(db,'users')).catch(e => { console.warn('users read failed', e); return { docs: [] }; }),
+      getDocs(collection(db,'admin')).catch(e => { console.warn('admin read failed', e); return { docs: [] }; })
+    ]);
+
+    const usersArr = usersSnap.docs.map(d => ({ id: d.id, ...d.data(), _source: 'users' }));
+    const adminsArr = adminSnap.docs.map(d => ({ id: d.id, ...d.data(), _source: 'admin' }));
+
+    // merge by uid if present, otherwise by email
+    const map = new Map();
+    const addToMap = (u) => {
+      const key = (u.uid && u.uid.toString()) || (u.email && u.email.toLowerCase()) || u.id;
+      if(!key) return;
+      const existing = map.get(key) || {};
+      // merge fields: prefer users collection fields, but let admin collection provide role/name if missing
+      const merged = { ...existing, ...u };
+      map.set(key, merged);
+    };
+
+    usersArr.forEach(addToMap);
+    adminsArr.forEach(addToMap);
+
+    allRecords = Array.from(map.values())
+      .map(u => {
+        // normalize role and email lowercase for consistent checks
+        if(u.email) u.email = (u.email || '').trim();
+        if(!u.role) u.role = u.isAdmin ? 'admin' : (u.role || '');
+        return u;
+      })
+      .filter(u => !u.deleted); // exclude soft-deleted
+  }catch(err){
+    console.error('load users failed', err);
+    toast('Failed to load users');
+  }
+
+  // sort users by role then email (superadmins first)
+  allRecords.sort((a,b) => {
+    const roleOrder = (r) => r === 'superadmin' ? 0 : (r === 'admin' ? 1 : 2);
+    const ra = roleOrder(a.role), rb = roleOrder(b.role);
+    if(ra !== rb) return ra - rb;
+    return (a.email || '').localeCompare(b.email || '');
+  });
+
+  const users = allRecords;
+
   page.innerHTML = `
-    <div class="page-header" style="display:flex;align-items:center;gap:8px">
+    <div class="page-header users-top">
       <button id="addUserBtn" class="btn btn-primary">+ Add Admin</button>
-      <input id="usersSearch" placeholder="Search users" style="margin-left:auto" />
+      <div class="total" id="usersTotal">${users.length} users</div>
+      <input id="usersSearch" class="users-search" placeholder="Search users (email, name, uid)" />
     </div>
+
+    <!-- table for desktop -->
+    <div id="usersTableContainer">
+      <table class="users-table" id="usersTable">
+        <thead>
+          <tr><th style="width:48px">No</th><th>Email</th><th style="width:160px">Role</th><th style="width:150px">Actions</th></tr>
+        </thead>
+        <tbody id="usersTbody"></tbody>
+      </table>
+    </div>
+
+    <!-- cards for mobile -->
+    <div class="card-list" id="usersCardList"></div>
+
     <div id="usersList"></div>
   `;
 
   document.getElementById('addUserBtn').onclick = openAddUserModal;
-  document.getElementById('usersSearch').oninput = () => renderUsersList(users);
+  document.getElementById('usersSearch').oninput = () => renderUsersList(users, currentUid, currentRole);
 
-  renderUsersList(users);
+  renderUsersList(users, currentUid, currentRole);
 }
 
-function renderUsersList(users){
+
+
+function canPerformAction(currentRole, currentUid, targetUser){
+  // default deny
+  const targetRole = targetUser.role || 'admin';
+  const targetUid = targetUser.uid || targetUser.id || '';
+
+  // nobody can delete a superadmin
+  if(targetRole === 'superadmin') {
+    return { canEdit: currentRole === 'superadmin', canDelete: false };
+  }
+
+  // nobody can delete themselves
+  if(currentUid && targetUid && currentUid === targetUid){
+    return { canEdit: true, canDelete: false };
+  }
+
+  // if current is superadmin -> can edit/delete admins, but cannot delete other superadmins (already handled)
+  if(currentRole === 'superadmin'){
+    return { canEdit: true, canDelete: true };
+  }
+
+  // if current is admin -> can edit/delete other admins, but cannot edit/delete superadmin (handled above)
+  if(currentRole === 'admin'){
+    // can't delete or edit superadmin (handled),
+    return { canEdit: targetRole === 'admin', canDelete: targetRole === 'admin' };
+  }
+
+  // fallback: no permissions
+  return { canEdit: false, canDelete: false };
+}
+
+function renderUsersList(users, currentUid, currentRole){
   const q = (document.getElementById('usersSearch') && document.getElementById('usersSearch').value || '').trim().toLowerCase();
-  const list = (users || []).filter(u => !q || (u.displayName||'').toLowerCase().includes(q) || (u.email||'').toLowerCase().includes(q));
-  const container = document.getElementById('usersList');
-  if(!container) return;
-  let html = `<table style="width:100%;border-collapse:collapse"><thead><tr><th>No</th><th>Email</th><th>Name</th><th>Role</th><th>Actions</th></tr></thead><tbody>`;
-  list.forEach((u, idx) => {
-    html += `<tr style="border-bottom:1px solid #f1f5f9"><td style="padding:8px">${idx+1}</td><td style="padding:8px">${escape(u.email||'')}</td><td style="padding:8px">${escape(u.displayName||'')}</td><td style="padding:8px">${escape(u.role||'admin')}</td><td style="padding:8px"><button class="btn btn-ghost edit-user" data-id="${u.id}">Edit</button> <button class="btn btn-danger del-user" data-id="${u.id}">Delete</button></td></tr>`;
+
+  // allow matching uid too
+  const list = (users || []).filter(u => {
+    if(!q) return true;
+    const email = (u.email||'').toLowerCase();
+    const name = (u.displayName||'').toLowerCase();
+    const uid = (u.uid||u.id||'').toLowerCase();
+    return email.includes(q) || name.includes(q) || uid.includes(q);
   });
-  html += `</tbody></table>`;
-  container.innerHTML = html;
-  container.querySelectorAll('.edit-user').forEach(b => b.onclick = openEditUserModal);
-  container.querySelectorAll('.del-user').forEach(b => b.onclick = deleteUser);
+
+  // update total
+  const totalEl = document.getElementById('usersTotal');
+  if(totalEl) totalEl.textContent = `${list.length} users`;
+
+  // Desktop table (show Email, Name, Role, Actions=Edit+Delete)
+  const tbody = document.getElementById('usersTbody');
+  if(tbody){
+    tbody.innerHTML = '';
+    list.forEach((u, idx) => {
+      const perms = canPerformAction(currentRole, currentUid, u);
+      const editDisabled = !perms.canEdit;
+      const delDisabled = !perms.canDelete;
+
+      // ensure displayName/email normalized for table
+      const emailHtml = escape(u.email || '');
+      const nameHtml = escape(u.displayName || '');
+      const roleHtml = escape(u.role || 'admin');
+
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td style="padding:8px">${idx+1}</td>
+        <td style="padding:8px">${emailHtml}</td>
+        <td style="padding:8px">${nameHtml}</td>
+        <td style="padding:8px"><span class="role-pill">${roleHtml}</span></td>
+        <td style="padding:8px">
+          <!-- desktop shows Edit + Delete only (no View) -->
+          <button class="action-btn btn-edit" data-id="${u.id}" title="Edit" ${editDisabled ? 'disabled' : ''}>${svgEdit()}</button>
+          <button class="action-btn btn-del" data-id="${u.id}" title="Delete" ${delDisabled ? 'disabled' : ''}>${svgDelete()}</button>
+        </td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+    // wire buttons
+    tbody.querySelectorAll('.btn-edit').forEach(b => b.onclick = openEditUserModal);
+    tbody.querySelectorAll('.btn-del').forEach(b => b.onclick = deleteUser);
+  }
+
+  // Mobile cards (compact): ONLY show View icon on actions, no role shown and compact layout
+  const cardList = document.getElementById('usersCardList');
+  if(cardList){
+    cardList.innerHTML = '';
+    list.forEach((u, idx) => {
+      const emailText = (u.email || '');
+      const nameText = (u.displayName || '');
+      // safe initial: prefer displayName[0] else email[0] else 'U'
+      const initial = (((u.displayName || '').charAt(0)) || ((u.email || '').charAt(0)) || 'U').toUpperCase();
+
+      const card = document.createElement('div');
+      card.className = 'user-card';
+      card.innerHTML = `
+        <div class="left">
+          <div style="width:40px;height:40px;border-radius:8px;background:linear-gradient(135deg,#e6eef8,#dbeafe);display:grid;place-items:center;font-weight:600">${escape(initial)}</div>
+          <div>
+            <div style="font-weight:600">${escape(emailText)}</div>
+            <div class="meta" style="display:none">${escape(nameText)}</div> <!-- hidden per request -->
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px">
+          <!-- mobile: only View button visible -->
+          <button class="btn-icon btn-view" data-id="${u.id}" title="View">${svgView()}</button>
+        </div>
+      `;
+      cardList.appendChild(card);
+    });
+
+    cardList.querySelectorAll('.btn-view').forEach(b => b.onclick = openViewUserModal);
+  }
 }
+
 
 function openAddUserModal(){
+  // Only allow creating Admins; role select limited to 'admin' - you said you'll add other types later
   const html = `
     <div style="display:grid;grid-template-columns:1fr;gap:8px">
-      <div><label>Email</label><input id="newUserEmail" /></div>
+      <div><label>Email</label><input id="newUserEmail" type="email" /></div>
       <div><label>Name</label><input id="newUserName" /></div>
       <div><label>Role</label><select id="newUserRole"><option value="admin">Admin</option></select></div>
     </div>
@@ -8850,11 +9466,17 @@ function openAddUserModal(){
     const role = modalBody.querySelector('#newUserRole').value;
     if(!email) return toast('Email required');
     try{
-      const payload = { email, displayName: name || '', role, createdAt: Timestamp.now(), createdBy: currentUser ? currentUser.uid : null };
+      const payload = {
+        email,
+        displayName: name || '',
+        role,
+        createdAt: Timestamp.now(),
+        createdBy: (currentUser && currentUser.uid) || (auth && auth.currentUser && auth.currentUser.uid) || null
+      };
       const ref = await addDoc(collection(db,'users'), payload);
       toast('Admin added');
       closeModal();
-      renderUsers(); // reload list
+      renderUsers();
     }catch(err){
       console.error('add admin failed', err);
       toast('Failed to add');
@@ -8862,29 +9484,97 @@ function openAddUserModal(){
   };
 }
 
-async function openEditUserModal(e){
-  const id = e.target.dataset.id;
+async function openViewUserModal(e){
+  const id = (e && e.target && e.target.dataset && e.target.dataset.id) || (e && e.currentTarget && e.currentTarget.dataset && e.currentTarget.dataset.id);
   if(!id) return;
-  const snap = await getDoc(doc(db,'users', id));
-  if(!snap.exists()) return toast('User not found');
+  // find correct doc ref/snap
+  const { ref, snap } = await getDocRefForId(id);
+  if(!snap || !snap.exists()) return toast('User not found');
   const u = { id: snap.id, ...snap.data() };
+
+  // determine actions allowed for current user
+  const authUser = (typeof currentUser !== 'undefined' && currentUser) || (auth && auth.currentUser) || null;
+  const currentUid = authUser ? authUser.uid : '';
+  const currentRole = localStorage.getItem('verifiedRole') || null;
+  const perms = canPerformAction(currentRole, currentUid, u);
+
+  const html = `
+    <div style="display:grid;grid-template-columns:1fr;gap:8px">
+      <div><label>Name</label><div style="padding:8px;border-radius:8px;background:#fff">${escape(u.displayName||'')}</div></div>
+      <div><label>Email</label><div style="padding:8px;border-radius:8px;background:#fff">${escape(u.email||'')}</div></div>
+      <div><label>Role</label><div style="padding:8px;border-radius:8px;background:#fff">${escape(u.role||'admin')}</div></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
+        <button id="viewClose" class="btn btn-ghost">Close</button>
+        <button id="viewEdit" class="btn btn-primary" ${perms.canEdit ? '' : 'disabled'}>${svgEdit()} Edit</button>
+        <button id="viewDelete" class="btn btn-danger" ${perms.canDelete ? '' : 'disabled'}>${svgDelete()} Delete</button>
+      </div>
+    </div>
+  `;
+  showModal('View User', html);
+  modalBody.querySelector('#viewClose').onclick = closeModal;
+  modalBody.querySelector('#viewEdit').onclick = (perms.canEdit) ? (ev => {
+    closeModal();
+    const fake = { target: { dataset: { id } } };
+    openEditUserModal(fake);
+  }) : null;
+  modalBody.querySelector('#viewDelete').onclick = (perms.canDelete) ? (() => {
+    closeModal();
+    const fake = { target: { dataset: { id } } };
+    deleteUser(fake);
+  }) : null;
+}
+
+
+async function openEditUserModal(e){
+  const id = (e && e.target && e.target.dataset && e.target.dataset.id) || (e && e.currentTarget && e.currentTarget.dataset && e.currentTarget.dataset.id);
+  if(!id) return;
+  const { ref, snap, collectionName } = await getDocRefForId(id);
+  if(!snap || !snap.exists()) return toast('User not found');
+  const u = { id: snap.id, ...snap.data() };
+
+  // check permissions
+  const authUser = (typeof currentUser !== 'undefined' && currentUser) || (auth && auth.currentUser) || null;
+  const currentUid = authUser ? authUser.uid : '';
+  const currentRole = localStorage.getItem('verifiedRole') || null;
+  const perms = canPerformAction(currentRole, currentUid, u);
+  if(!perms.canEdit) return toast('You are not allowed to edit this user');
+
   const html = `
     <div style="display:grid;grid-template-columns:1fr;gap:8px">
       <div><label>Name</label><input id="editUserName" value="${escape(u.displayName||'')}" /></div>
-      <div><label>Role</label><input id="editUserRole" value="${escape(u.role||'admin')}" /></div>
+      <div><label>Role</label>
+        <select id="editUserRole">
+          <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Admin</option>
+          <option value="superadmin" ${u.role === 'superadmin' ? 'selected' : ''}>Super Admin</option>
+        </select>
+      </div>
     </div>
     <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
       <button id="editUserClose" class="btn btn-ghost">Close</button>
       <button id="editUserSave" class="btn btn-primary">Save</button>
     </div>
   `;
-  showModal('Edit Admin', html);
+  showModal('Edit User', html);
   modalBody.querySelector('#editUserClose').onclick = closeModal;
   modalBody.querySelector('#editUserSave').onclick = async () => {
     const name = modalBody.querySelector('#editUserName').value.trim();
     const role = modalBody.querySelector('#editUserRole').value.trim();
+
+    // UI-level re-check:
+    const perms2 = canPerformAction(localStorage.getItem('verifiedRole'), currentUid, { ...u, role });
+    if(!perms2.canEdit) {
+      toast('You are not allowed to perform this change');
+      return;
+    }
+
     try{
-      await updateDoc(doc(db,'users', id), { displayName: name, role, updatedAt: Timestamp.now(), updatedBy: currentUser ? currentUser.uid : null });
+      // write to correct collection reference
+      await updateDoc(ref, {
+        displayName: name,
+        role,
+        updatedAt: Timestamp.now(),
+        updatedBy: currentUid || null
+      });
       toast('Updated');
       closeModal();
       renderUsers();
@@ -8896,18 +9586,38 @@ async function openEditUserModal(e){
 }
 
 async function deleteUser(e){
-  const id = e.target.dataset.id;
+  const id = (e && e.target && e.target.dataset && e.target.dataset.id) || (e && e.currentTarget && e.currentTarget.dataset && e.currentTarget.dataset.id);
   if(!id) return;
-  if(!confirm('Delete admin?')) return;
+  const { ref, snap } = await getDocRefForId(id);
+  if(!snap || !snap.exists()) return toast('User not found');
+  const u = { id: snap.id, ...snap.data() };
+
+  const authUser = (typeof currentUser !== 'undefined' && currentUser) || (auth && auth.currentUser) || null;
+  const currentUid = authUser ? authUser.uid : '';
+  const currentRole = localStorage.getItem('verifiedRole') || null;
+  const perms = canPerformAction(currentRole, currentUid, u);
+  if(!perms.canDelete) return toast('You are not allowed to delete this user');
+
+  // Confirm
+  if(!confirm('Move user to Recycle Bin? This is soft-delete and can be restored later.')) return;
+
   try{
-    await deleteDoc(doc(db,'users', id));
-    toast('Deleted');
+    // soft-delete: mark as deleted and store who deleted
+    await updateDoc(ref, {
+      deleted: true,
+      deletedAt: Timestamp.now(),
+      deletedBy: currentUid || null
+    });
+    toast('Moved to Recycle Bin');
     renderUsers();
   }catch(err){
     console.error('delete admin failed', err);
     toast('Failed to delete');
   }
 }
+
+
+
 
 /* ------------------------
   Header wiring (add tabs: Dashboard, Payments, Attendance, Users)
