@@ -2709,14 +2709,15 @@ async function renderStudents(){
 
   // MOBILE: search + Add side-by-side; rows are two-line (name, then id + class)
   if(isMobileViewport()){
+    // build header (search + add) and a second line that shows the total (mobile only)
     let html = `
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px">
         <div style="flex:1;display:flex;gap:8px;align-items:center">
-          <input id="_mobileSearch" placeholder="Search students..." value="${escape(studentsSearch && studentsSearch.value||'')}" style="flex:1;padding:6px;border-radius:6px;border:1px solid #e6eef8" />
-          <button id="_mobileAdd" class="btn btn-primary" style="white-space:nowrap">Add Student</button>
+          <input id="_mobileSearch" placeholder="Search students..." value="${escape(studentsSearch && studentsSearch.value||'')}" style="flex:1;padding:8px;border-radius:8px;border:1px solid #e6eef8" />
+          <button id="_mobileAdd" class="btn btn-primary" style="white-space:nowrap">+ Add Student</button>
         </div>
-        <div style="margin-left:8px;text-align:right"><strong>Total: ${total}</strong></div>
       </div>
+      <div style="margin-bottom:8px;font-size:13px;color:#374151"><strong>Total students: ${total}</strong></div>
       <div id="studentsMobileList">
     `;
 
@@ -2743,23 +2744,39 @@ async function renderStudents(){
     html += `</div>`;
     studentsList.innerHTML = html;
 
-    // wire mobile search + add
-    const mobileSearch = document.getElementById('_mobileSearch');
-    const mobileAdd = document.getElementById('_mobileAdd');
-    if(mobileSearch){
-      mobileSearch.oninput = (ev) => {
-        if(studentsSearch) studentsSearch.value = ev.currentTarget.value;
-        renderStudents();
-      };
-    }
-    if(mobileAdd && typeof openAddStudent !== 'undefined' && openAddStudent){
-      mobileAdd.onclick = () => { openAddStudent.click(); };
+    // --- Attach mobile handlers ONCE using delegation to avoid duplicates ---
+    if(!studentsList.dataset.mobileHandlersAttached){
+      // click delegation for mobile Add and More buttons
+      studentsList.addEventListener('click', function(ev){
+        const t = ev.target;
+        if(!t) return;
+        if(t.id === '_mobileAdd' || t.closest && t.closest('#_mobileAdd')){
+          // open Add Student modal (reuses your existing openAddStudent)
+          if(typeof openAddStudent !== 'undefined' && openAddStudent) openAddStudent.click();
+          return;
+        }
+        if(t.classList && t.classList.contains('mobile-more')){
+          const sid = t.dataset.id;
+          openViewStudentModal({ target: { dataset: { id: sid } } });
+          return;
+        }
+      });
+
+      // input delegation for mobile search
+      studentsList.addEventListener('input', function(ev){
+        const t = ev.target;
+        if(!t) return;
+        if(t.id === '_mobileSearch'){
+          if(studentsSearch) studentsSearch.value = t.value;
+          // debounce not strictly required, but quick guard: call renderStudents directly
+          renderStudents();
+        }
+      });
+
+      // mark handlers attached so we don't add them again
+      studentsList.dataset.mobileHandlersAttached = '1';
     }
 
-    // wire "More" buttons to open view modal
-    studentsList.querySelectorAll('.mobile-more').forEach(b => {
-      b.onclick = (ev) => openViewStudentModal({ target: { dataset: { id: ev.currentTarget.dataset.id } } });
-    });
     return;
   }
 
@@ -2807,6 +2824,7 @@ async function renderStudents(){
   studentsList.querySelectorAll('.edit-stu').forEach(b=> b.addEventListener('click', openEditStudentModal));
   studentsList.querySelectorAll('.del-stu').forEach(b=> b.addEventListener('click', deleteOrUnblockStudent));
 }
+
 
 /* ---------- view student modal (updated delete flow) ---------- */
 async function openViewStudentModal(e){
@@ -2940,7 +2958,6 @@ function openEditStudentModal(e){
     </div>
     <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
       <button id="cancelStu" class="btn btn-ghost">Cancel</button>
-      <button id="addResult" class="btn btn-ghost">Add/Edit Result</button>
       <button id="saveStu" class="btn btn-primary">Save</button>
     </div>
   `);
