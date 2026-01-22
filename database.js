@@ -2648,18 +2648,53 @@ teachersSubjectFilter && (teachersSubjectFilter.onchange = renderTeachers);
 
 /** async renderStudents (awaits exam totals when the filter is set) */
 
+/* ---------- Small helpers used by student UI (minimal, safe) ---------- */
+// if your project already has `escape` or `escapeHtml`, this will reuse it
 
-/** view student modal (keeps existing fields; adds Edit/Delete actions) */
+function setButtonLoading(btn, loading, loadingText = 'Saving...'){
+  if(!btn) return;
+  if(loading){
+    btn.disabled = true;
+    btn.dataset._orig = btn.innerHTML;
+    btn.innerHTML = loadingText;
+  } else {
+    btn.disabled = false;
+    if(btn.dataset._orig){
+      btn.innerHTML = btn.dataset._orig;
+      delete btn.dataset._orig;
+    }
+  }
+}
 
+/** small modal confirm (replaces native confirm for delete) */
+function modalConfirm(title, message){
+  return new Promise(resolve => {
+    const html = `
+      <div style="padding:8px 0">
+        <div style="margin-bottom:12px">${escape(message)}</div>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+          <button id="_modalCancel" class="btn btn-ghost">Cancel</button>
+          <button id="_modalConfirm" class="btn btn-danger">Confirm</button>
+        </div>
+      </div>
+    `;
+    showModal(title, html);
+    const cancelBtn = modalBody.querySelector('#_modalCancel');
+    const confirmBtn = modalBody.querySelector('#_modalConfirm');
+    const cleanup = (res) => { try{ closeModal(); }catch(e){} resolve(res); };
+    cancelBtn.onclick = () => cleanup(false);
+    confirmBtn.onclick = () => cleanup(true);
+  });
+}
+
+
+/* ---------- renderStudents (updated) ---------- */
 async function renderStudents(){
   if(!studentsList) return;
   const q = (studentsSearch && studentsSearch.value||'').trim().toLowerCase();
   const classFilterVal = (studentsClassFilter && studentsClassFilter.value) || '';
-  const examFilter = (studentsExamForTotals && studentsExamForTotals.value) || '';
 
-  if(examFilter && typeof loadExamTotalsForExam === 'function'){
-    try { await loadExamTotalsForExam(examFilter); } catch(e){ console.warn('loadExamTotalsForExam failed', e); }
-  }
+  // removed any exam totals logic entirely (per request)
 
   let filtered = (studentsCache || []).filter(s=>{
     // exclude soft-deleted students
@@ -2669,30 +2704,57 @@ async function renderStudents(){
     if(!q) return true;
     return (s.fullName||'').toLowerCase().includes(q) || (s.phone||'').toLowerCase().includes(q) || (s.studentId||'').toLowerCase().includes(q);
   });
-  
 
   const total = filtered.length;
 
-  // mobile: compact list
+  // MOBILE: search + Add side-by-side; rows are two-line (name, then id + class)
   if(isMobileViewport()){
-    let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-        <strong>Total students: ${total}</strong>
-        <div class="muted">Mobile view: tap "More" to open student</div>
-      </div><div id="studentsMobileList">`;
+    let html = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px">
+        <div style="flex:1;display:flex;gap:8px;align-items:center">
+          <input id="_mobileSearch" placeholder="Search students..." value="${escape(studentsSearch && studentsSearch.value||'')}" style="flex:1;padding:6px;border-radius:6px;border:1px solid #e6eef8" />
+          <button id="_mobileAdd" class="btn btn-primary" style="white-space:nowrap">Add Student</button>
+        </div>
+        <div style="margin-left:8px;text-align:right"><strong>Total: ${total}</strong></div>
+      </div>
+      <div id="studentsMobileList">
+    `;
+
     filtered.forEach((s, idx) => {
       const sid = escape(s.studentId || s.id || '');
-      const name = escape(s.fullName || '');
-      html += `<div class="mobile-row" style="display:flex;justify-content:space-between;align-items:center;padding:10px;border-bottom:1px solid #f1f5f9">
-        <div style="display:flex;gap:10px;align-items:center">
-          <div style="min-width:28px;text-align:center;font-weight:700">${idx+1}</div>
-          <div style="min-width:90px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${sid}</div>
-          <div style="min-width:120px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${name}</div>
+      const name = escape(s.fullName || '—');
+      const cls = escape(s.classId || '—');
+      html += `
+        <div class="mobile-row" style="padding:10px;border-bottom:1px solid #f1f5f9">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div style="display:flex;gap:10px;align-items:center;flex:1;min-width:0">
+              <div style="min-width:28px;text-align:center;font-weight:700">${idx+1}</div>
+              <div style="min-width:0;overflow:hidden">
+                <div style="font-weight:600;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${name}</div>
+                <div style="font-size:12px;color:#667085;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">ID: ${sid} · Class: ${cls}</div>
+              </div>
+            </div>
+            <div style="margin-left:8px"><button class="btn btn-ghost btn-sm mobile-more" data-id="${escape(s.studentId||s.id||'')}">⋮</button></div>
+          </div>
         </div>
-        <div><button class="btn btn-ghost btn-sm mobile-more" data-id="${escape(s.studentId||s.id||'')}">⋮</button></div>
-      </div>`;
+      `;
     });
+
     html += `</div>`;
     studentsList.innerHTML = html;
+
+    // wire mobile search + add
+    const mobileSearch = document.getElementById('_mobileSearch');
+    const mobileAdd = document.getElementById('_mobileAdd');
+    if(mobileSearch){
+      mobileSearch.oninput = (ev) => {
+        if(studentsSearch) studentsSearch.value = ev.currentTarget.value;
+        renderStudents();
+      };
+    }
+    if(mobileAdd && typeof openAddStudent !== 'undefined' && openAddStudent){
+      mobileAdd.onclick = () => { openAddStudent.click(); };
+    }
 
     // wire "More" buttons to open view modal
     studentsList.querySelectorAll('.mobile-more').forEach(b => {
@@ -2701,10 +2763,10 @@ async function renderStudents(){
     return;
   }
 
-  // desktop: keep original table layout
+  // DESKTOP: same table but WITHOUT Total column
   let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
       <strong>Total students: ${total}</strong>
-      <div class="muted">Columns: No, ID, Name, Parent, Class, Total</div>
+      <div class="muted">Columns: No, ID, Name, Parent, Class</div>
     </div>`;
 
   html += `<div style="overflow:auto"><table style="width:100%;border-collapse:collapse">
@@ -2715,7 +2777,6 @@ async function renderStudents(){
         <th style="padding:8px">Name</th>
         <th style="padding:8px;width:160px">Parent</th>
         <th style="padding:8px;width:120px">Class</th>
-        <th style="padding:8px;width:100px">Total</th>
         <th style="padding:8px;width:220px">Actions</th>
       </tr>
     </thead><tbody>`;
@@ -2724,17 +2785,12 @@ async function renderStudents(){
     const sid = escape(s.studentId || s.id || '');
     const parent = escape(s.parentPhone || s.motherName || '—');
     const cls = escape(s.classId || '—');
-    let totalDisplay = '—';
-    if(examFilter && examTotalsCache[examFilter] && examTotalsCache[examFilter][s.studentId]) {
-      totalDisplay = escape(String(examTotalsCache[examFilter][s.studentId].total || '—'));
-    }
     html += `<tr style="border-bottom:1px solid #f1f5f9">
       <td style="padding:8px;vertical-align:middle">${idx+1}</td>
       <td style="padding:8px;vertical-align:middle">${sid}</td>
       <td style="padding:8px;vertical-align:middle">${escape(s.fullName||'')}</td>
       <td style="padding:8px;vertical-align:middle">${parent}</td>
       <td style="padding:8px;vertical-align:middle">${cls}</td>
-      <td style="padding:8px;vertical-align:middle">${totalDisplay}</td>
       <td style="padding:8px;vertical-align:middle">
         <button class="btn btn-ghost btn-sm view-stu" data-id="${escape(s.studentId||s.id||'')}">View</button>
         <button class="btn btn-ghost btn-sm edit-stu" data-id="${escape(s.studentId||s.id||'')}">Edit</button>
@@ -2752,6 +2808,7 @@ async function renderStudents(){
   studentsList.querySelectorAll('.del-stu').forEach(b=> b.addEventListener('click', deleteOrUnblockStudent));
 }
 
+/* ---------- view student modal (updated delete flow) ---------- */
 async function openViewStudentModal(e){
   const id = (e && e.target) ? e.target.dataset.id : (e && e.dataset ? e.dataset.id : e);
   if(!id) return;
@@ -2791,25 +2848,36 @@ async function openViewStudentModal(e){
     openEditStudentModal({ target:{ dataset:{ id: s.studentId || s.id } } });
   };
   document.getElementById('viewStuDel').onclick = async () => {
+    const delBtn = document.getElementById('viewStuDel');
     if(s.status === 'deleted'){
-      await updateDoc(doc(db,'students', s.studentId), { status:'active' });
-      await setDoc(doc(db,'studentsLatest', s.studentId), { blocked:false }, { merge:true });
-      await loadStudents(); renderStudents(); toast(`${s.fullName} unblocked`);
-      closeModal();
+      setButtonLoading(delBtn, true, 'Unblocking...');
+      try{
+        await updateDoc(doc(db,'students', s.studentId), { status:'active' });
+        await setDoc(doc(db,'studentsLatest', s.studentId), { blocked:false }, { merge:true });
+        await loadStudents(); renderStudents(); toast(`${s.fullName} unblocked`);
+        closeModal();
+      }catch(err){ console.error(err); toast('Failed to unblock'); }
+      setButtonLoading(delBtn, false);
       return;
     }
-    if(!confirm('Delete student? This will mark student as deleted and block public access.')) return;
-    await updateDoc(doc(db,'students', s.studentId), { status:'deleted' });
-    await setDoc(doc(db,'studentsLatest', s.studentId), { blocked:true, blockMessage:'You are fired' }, { merge:true });
-    await loadStudents(); renderStudents(); toast(`${s.fullName} deleted and blocked`);
-    closeModal();
+
+    const ok = await modalConfirm('Confirm delete', 'Delete student? This will mark student as deleted and move to recycle (blocked).');
+    if(!ok) return;
+
+    setButtonLoading(delBtn, true, 'Deleting...');
+    try{
+      await updateDoc(doc(db,'students', s.studentId), { status:'deleted' });
+      await setDoc(doc(db,'studentsLatest', s.studentId), { blocked:true, blockMessage:'Removed by admin' }, { merge:true });
+      await loadStudents(); renderStudents(); toast(`${s.fullName} deleted and blocked`);
+      closeModal();
+    }catch(err){ console.error(err); toast('Failed to delete'); }
+    setButtonLoading(delBtn, false);
   };
 }
 
-
-/* ---------- Students create/edit (styling improved, logic preserved) ---------- */
+/* ---------- Add student (save button loading + prevent duplicate clicks) ---------- */
 openAddStudent && (openAddStudent.onclick = () => {
-  const options = classesCache.map(c=>`<option value="${escape(c.name)}">${escape(c.name)}</option>`).join('');
+  const options = (classesCache || []).map(c=>`<option value="${escape(c.name)}">${escape(c.name)}</option>`).join('');
   showModal('Add Student', `
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
       <div><label>Student ID</label><input id="stuId" placeholder="e.g. 12345" /></div>
@@ -2829,30 +2897,35 @@ openAddStudent && (openAddStudent.onclick = () => {
   `);
 
   modalBody.querySelector('#cancelStu').onclick = closeModal;
-  modalBody.querySelector('#saveStu').onclick = async () => {
-    let id = modalBody.querySelector('#stuId').value.trim();
-    const name = modalBody.querySelector('#stuName').value.trim();
-    const mother = modalBody.querySelector('#stuMother').value.trim();
-    const phone = modalBody.querySelector('#stuPhone').value.trim();
-    const parentPhone = modalBody.querySelector('#stuParentPhone').value.trim();
-    const age = Number(modalBody.querySelector('#stuAge').value) || null;
-    const gender = (modalBody.querySelector('#stuGender').value || null);
-    const fee = modalBody.querySelector('#stuFee').value ? Number(modalBody.querySelector('#stuFee').value) : null;
-    const classId = modalBody.querySelector('#stuClass').value;
-    if(!name) return alert('Name required');
-    if(gender && !['Male','Female'].includes(gender)) return alert('Gender must be Male or Female');
-    if(!id) id = await generateDefaultId('students','STD',9);
-    await setDoc(doc(db,'students',id), { studentId:id, fullName:name, motherName: mother || '', phone, parentPhone: parentPhone || '', age, gender: gender || null, fee: fee, classId, status:'active' });
-    closeModal(); await loadStudents(); renderStudents(); toast(`${name} created`);
+  modalBody.querySelector('#saveStu').onclick = async (ev) => {
+    const btn = ev.currentTarget;
+    try{
+      setButtonLoading(btn, true, 'Saving...');
+      let id = modalBody.querySelector('#stuId').value.trim();
+      const name = modalBody.querySelector('#stuName').value.trim();
+      const mother = modalBody.querySelector('#stuMother').value.trim();
+      const phone = modalBody.querySelector('#stuPhone').value.trim();
+      const parentPhone = modalBody.querySelector('#stuParentPhone').value.trim();
+      const age = Number(modalBody.querySelector('#stuAge').value) || null;
+      const gender = (modalBody.querySelector('#stuGender').value || null);
+      const fee = modalBody.querySelector('#stuFee').value ? Number(modalBody.querySelector('#stuFee').value) : null;
+      const classId = modalBody.querySelector('#stuClass').value;
+      if(!name){ alert('Name required'); setButtonLoading(btn, false); return; }
+      if(gender && !['Male','Female'].includes(gender)){ alert('Gender must be Male or Female'); setButtonLoading(btn, false); return; }
+      if(!id) id = await generateDefaultId('students','STD',9);
+      await setDoc(doc(db,'students',id), { studentId:id, fullName:name, motherName: mother || '', phone, parentPhone: parentPhone || '', age, gender: gender || null, fee: fee, classId, status:'active' });
+      closeModal(); await loadStudents(); renderStudents(); toast(`${name} created`);
+    }catch(err){ console.error(err); toast('Failed to create'); }
+    setButtonLoading(btn, false);
   };
 });
 
-/* openEditStudentModal expects event-like parameter with dataset.id */
+/* ---------- Edit student (save button loading) ---------- */
 function openEditStudentModal(e){
   const id = e && e.target ? e.target.dataset.id : e;
   const s = studentsCache.find(x=>x.studentId===id || x.id===id);
   if(!s) return toast && toast('Student not found');
-  const options = classesCache.map(c=>`<option value="${escape(c.name)}" ${c.name===s.classId?'selected':''}>${escape(c.name)}</option>`).join('');
+  const options = (classesCache || []).map(c=>`<option value="${escape(c.name)}" ${c.name===s.classId?'selected':''}>${escape(c.name)}</option>`).join('');
   showModal('Edit Student', `
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
       <div><label>Student ID</label><input id="stuId" value="${escape(s.studentId)}" disabled /></div>
@@ -2875,37 +2948,55 @@ function openEditStudentModal(e){
   modalBody.querySelector('#cancelStu').onclick = closeModal;
   modalBody.querySelector('#addResult').onclick = async () => { closeModal(); await openStudentResultModalFor(s); };
 
-  modalBody.querySelector('#saveStu').onclick = async () => {
-    const name = modalBody.querySelector('#stuName').value.trim();
-    const mother = modalBody.querySelector('#stuMother').value.trim();
-    const phone = modalBody.querySelector('#stuPhone').value.trim();
-    const parentPhone = modalBody.querySelector('#stuParentPhone').value.trim();
-    const age = Number(modalBody.querySelector('#stuAge').value) || null;
-    const gender = (modalBody.querySelector('#stuGender').value || null);
-    const fee = modalBody.querySelector('#stuFee').value ? Number(modalBody.querySelector('#stuFee').value) : null;
-    const classId = modalBody.querySelector('#stuClass').value;
-    if(!name) return alert('Name required');
-    if(gender && !['Male','Female'].includes(gender)) return alert('Gender must be Male or Female');
-    await updateDoc(doc(db,'students',s.studentId), { fullName:name, motherName: mother || '', phone, parentPhone: parentPhone || '', age, gender: gender || null, fee: fee, classId });
-    closeModal(); await loadStudents(); renderStudents(); toast(`${name} updated`);
+  modalBody.querySelector('#saveStu').onclick = async (ev) => {
+    const btn = ev.currentTarget;
+    try{
+      setButtonLoading(btn, true, 'Saving...');
+      const name = modalBody.querySelector('#stuName').value.trim();
+      const mother = modalBody.querySelector('#stuMother').value.trim();
+      const phone = modalBody.querySelector('#stuPhone').value.trim();
+      const parentPhone = modalBody.querySelector('#stuParentPhone').value.trim();
+      const age = Number(modalBody.querySelector('#stuAge').value) || null;
+      const gender = (modalBody.querySelector('#stuGender').value || null);
+      const fee = modalBody.querySelector('#stuFee').value ? Number(modalBody.querySelector('#stuFee').value) : null;
+      const classId = modalBody.querySelector('#stuClass').value;
+      if(!name){ alert('Name required'); setButtonLoading(btn, false); return; }
+      if(gender && !['Male','Female'].includes(gender)){ alert('Gender must be Male or Female'); setButtonLoading(btn, false); return; }
+      await updateDoc(doc(db,'students',s.studentId), { fullName:name, motherName: mother || '', phone, parentPhone: parentPhone || '', age, gender: gender || null, fee: fee, classId });
+      closeModal(); await loadStudents(); renderStudents(); toast(`${name} updated`);
+    }catch(err){ console.error(err); toast('Failed to update'); }
+    setButtonLoading(btn, false);
   };
 }
 
-
+/* ---------- delete/unblock from list (desktop) - modalConfirm + loading ---------- */
 async function deleteOrUnblockStudent(e){
   const id = e.target.dataset.id;
   const s = studentsCache.find(x=>x.studentId===id || x.id===id);
   if(!s) return;
+  const btn = e.target;
+
   if(s.status === 'deleted'){
-    await updateDoc(doc(db,'students',s.studentId), { status:'active' });
-    await setDoc(doc(db,'studentsLatest', s.studentId), { blocked:false }, { merge:true });
-    await loadStudents(); renderStudents(); toast(`${s.fullName} unblocked`);
+    setButtonLoading(btn, true, 'Unblocking...');
+    try{
+      await updateDoc(doc(db,'students',s.studentId), { status:'active' });
+      await setDoc(doc(db,'studentsLatest', s.studentId), { blocked:false }, { merge:true });
+      await loadStudents(); renderStudents(); toast(`${s.fullName} unblocked`);
+    }catch(err){ console.error(err); toast('Failed to unblock'); }
+    setButtonLoading(btn, false);
     return;
   }
-  if(!confirm('Delete student? This will mark student as deleted and block public access.')) return;
-  await updateDoc(doc(db,'students',s.studentId), { status:'deleted' });
-  await setDoc(doc(db,'studentsLatest', s.studentId), { blocked:true, blockMessage:'You are fired' }, { merge:true });
-  await loadStudents(); renderStudents(); toast(`${s.fullName} deleted and blocked`);
+
+  const ok = await modalConfirm('Confirm delete', 'Delete student? This will mark student as deleted and move to recycle (blocked).');
+  if(!ok) return;
+
+  setButtonLoading(btn, true, 'Deleting...');
+  try{
+    await updateDoc(doc(db,'students',s.studentId), { status:'deleted' });
+    await setDoc(doc(db,'studentsLatest', s.studentId), { blocked:true, blockMessage:'Removed by admin' }, { merge:true });
+    await loadStudents(); renderStudents(); toast(`${s.fullName} deleted and blocked`);
+  }catch(err){ console.error(err); toast('Failed to delete'); }
+  setButtonLoading(btn, false);
 }
 
 
