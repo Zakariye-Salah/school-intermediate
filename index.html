@@ -18,7 +18,7 @@
 
     .card { background:#fff;border-radius:12px;padding:12px;box-shadow:var(--card-shadow);margin-bottom:12px;box-sizing:border-box }
     .small-card{padding:10px}
-    .btn { display:inline-flex; align-items:center; gap:8px; border-radius:10px; padding:8px 12px; font-weight:700; border:1px solid rgba(11,116,255,0.12); background:#fff; cursor:pointer; font-size:var(--btn-font) }
+    .btn { display:inline-flex; align-items:center; gap:8px; border-radius:10px; padding:8px 12px; font-weight:700; border:1px solid #0b74ff1f; background:#fff; cursor:pointer; font-size:var(--btn-font) }
     .btn-primary{background:var(--primary);color:#fff;border-color:var(--primary)}
     .btn-ghost{background:#fff;color:var(--text);border-color:#e6eefc}
     .icon { width:18px; height:18px; display:inline-block; vertical-align:middle }
@@ -210,6 +210,31 @@
   font-size:11px;
   padding:3px 7px;
 }
+}
+
+/* Top10 / medal styles */
+.top10-grid { display:flex; flex-direction:column; gap:10px; }
+.top10-row { display:flex; gap:12px; align-items:center; padding:8px; border-radius:10px; border:1px solid rgba(11,116,255,0.05); background:linear-gradient(180deg,#ffffff,#fbfdff); box-shadow:0 6px 18px rgba(11,116,255,0.03); }
+.top10-medal { width:56px; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+.medal { width:46px; height:46px; display:inline-grid; place-items:center; border-radius:999px; font-size:20px; box-shadow:0 10px 28px rgba(2,6,23,0.06); }
+.medal-gold { background:linear-gradient(135deg,#ffd54f,#ffb300); color:#0f172a; border:3px solid rgba(255,255,255,0.7); }
+.medal-silver { background:linear-gradient(135deg,#e0e7ff,#c7d2fe); color:#0f172a; border:3px solid rgba(255,255,255,0.7); }
+.medal-bronze { background:linear-gradient(135deg,#ffd9b8,#ffb08f); color:#0f172a; border:3px solid rgba(255,255,255,0.7); }
+.top10-info { flex:1; min-width:0; display:flex; flex-direction:column; gap:4px; }
+.top10-name { font-weight:900; font-size:1rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.top10-meta { font-size:12px; color:var(--muted); font-weight:800; }
+.top10-score { font-weight:900; color:var(--primary); font-size:1rem; flex-shrink:0; }
+
+/* highlight top3 a bit more */
+.top10-row.top3 { border-color: rgba(11,116,255,0.12); transform: translateY(0); }
+.top10-row.top3 .top10-name { font-size:1.02rem; }
+
+/* mobile tweaks */
+@media (max-width:520px){
+  .top10-row { padding:10px; gap:10px; }
+  .medal, .top10-medal { width:40px; height:40px; font-size:18px; }
+  .top10-score { font-size:0.98rem; }
+  .top10-name { font-size:0.98rem; }
 }
 
   </style>
