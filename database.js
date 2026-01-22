@@ -80,7 +80,30 @@ let subjectsCache = [];
 let examsCache = [];
 let teachersCache = []; // NEW
 let examTotalsCache = {}; // examId -> { studentId: payload }
+
+
+/* ---------------------------
+   New UI refs: dashboard/payments/attendance/users
+   --------------------------- */
+   const tabDashboard = document.getElementById('tabDashboard');
+   const tabPayments = document.getElementById('tabPayments');
+   const tabAttendance = document.getElementById('tabAttendance');
+   const tabUsers = document.getElementById('tabUsers');
+   
+   const pageDashboard = document.getElementById('pageDashboard');
+   const pagePayments = document.getElementById('pagePayments');
+   const pageAttendance = document.getElementById('pageAttendance');
+   const pageUsers = document.getElementById('pageUsers');
+
+   
+   // Tab wiring: show page + call render function if available
+if(tabDashboard) tabDashboard.onclick = async () => { showPage('dashboard'); if(typeof renderDashboard === 'function') try{ await renderDashboard(); }catch(e){ console.error('renderDashboard failed', e); } };
+if(tabPayments) tabPayments.onclick = async () => { showPage('payments'); if(typeof renderPayments === 'function') try{ await renderPayments(); }catch(e){ console.error('renderPayments failed', e); } };
+if(tabAttendance) tabAttendance.onclick = async () => { showPage('attendance'); if(typeof renderAttendance === 'function') try{ await renderAttendance(); }catch(e){ console.error('renderAttendance failed', e); } };
+if(tabUsers) tabUsers.onclick = async () => { showPage('users'); if(typeof renderUsers === 'function') try{ await renderUsers(); }catch(e){ console.error('renderUsers failed', e); } };
+
 /* UI helpers */
+
 
 const recycleTypeFilter = document.getElementById('recycleTypeFilter');
 const recycleSearch = document.getElementById('recycleSearch');
@@ -207,11 +230,43 @@ btnLogout.onclick = async ()=>{ await signOut(auth); window.location.href='login
 /* data loading */
 async function loadAll(){
   // fetch everything fresh
-  
   await Promise.all([loadClasses(), loadSubjects(), loadStudents(), loadExams(), loadTeachers()]);
-  populateClassFilters(); populateStudentsExamDropdown(); populateTeachersSubjectFilter();
-  renderStudents(); renderClasses(); renderSubjects(); renderExams(); renderTeachers();
+
+  // populate filters / dropdowns
+  populateClassFilters();
+  populateStudentsExamDropdown();
+  populateTeachersSubjectFilter();
+
+  // Render existing pages so caches and lists are available for dashboard
+  try {
+    // These renderers are existing; keep calling them (they may be no-ops if not defined)
+    if (typeof renderStudents === 'function') renderStudents();
+    if (typeof renderClasses === 'function') renderClasses();
+    if (typeof renderSubjects === 'function') renderSubjects();
+    if (typeof renderExams === 'function') renderExams();
+    if (typeof renderTeachers === 'function') renderTeachers();
+  } catch (err) {
+    console.warn('one or more render*() calls failed during loadAll()', err);
+  }
+
+  // --- NEW: make Dashboard the initial page after load ---
+  try {
+    if (typeof renderDashboard === 'function') {
+      // allow renderDashboard to prepare its UI (it may read the caches above)
+      await renderDashboard({ defaultFilter: 'This Month' });
+    }
+  } catch (err) {
+    console.error('renderDashboard failed in loadAll()', err);
+  }
+
+  // finally show dashboard page (showPage handles activating the correct tab)
+  try {
+    showPage('dashboard');
+  } catch (e) {
+    console.warn('showPage failed when trying to show dashboard', e);
+  }
 }
+
 async function loadClasses(){
   const snap = await getDocs(collection(db,'classes'));
   classesCache = snap.docs.map(d=>({ id:d.id, ...d.data() }));
@@ -337,11 +392,12 @@ async function fetchDeletedFromCollection(collectionName){
  * collectionsToCheck can be subset (filter by type)
  */
 async function fetchAllDeleted(collectionsToCheck){
-  const collections = collectionsToCheck || ['students','teachers','classes','subjects','exams','transactions','users','announcements'];
+  // default include staff + transactions (expenses) too
+  const collections = collectionsToCheck || ['students','teachers','classes','subjects','exams','staff','transactions','users','announcements'];
   const promises = collections.map(c => fetchDeletedFromCollection(c));
   const results = await Promise.all(promises);
   const flat = results.flat();
-  // normalize for display: provide title / subtitle fields
+  // ... rest remains unchanged (mapping each item to title/details)
   return flat.map(item => {
     const d = item.data || {};
     let title = '', details = '';
@@ -366,9 +422,19 @@ async function fetchAllDeleted(collectionsToCheck){
         title = d.name || d.id || 'Exam';
         details = (d.classes && d.classes.join(', ')) || '';
         break;
+      case 'staff':
+        title = d.fullName || d.staffId || d.id || 'Staff';
+        details = d.role || d.position || '';
+        break;
       case 'transactions':
-        title = d.description || (d.type ? `${d.type} (${d.target_type || ''})` : `Transaction ${item.id}`);
-        details = `Amount: ${d.amount || d.amount_cents || ''}`;
+        // detect expenses vs other transactions
+        if(d.target_type === 'expense' || d.type === 'expense' || d.subtype === 'expense'){
+          title = d.note || d.expense_name || `Expense ${item.id}`;
+          details = `Amount: ${d.amount || d.amount_cents || ''}`;
+        } else {
+          title = d.description || (d.type ? `${d.type} (${d.target_type || ''})` : `Transaction ${item.id}`);
+          details = `Amount: ${d.amount || d.amount_cents || ''}`;
+        }
         break;
       case 'users':
         title = d.displayName || d.email || d.name || item.id;
@@ -383,8 +449,8 @@ async function fetchAllDeleted(collectionsToCheck){
         details = '';
     }
 
-    // deletedAt normalization: convert Firestore Timestamp to Date
-    let deletedAt = d.deletedAt || d.deleted_at || d.deletedAt || d.deletedAt || d.deleted_at || null;
+    // deletedAt normalization
+    let deletedAt = d.deletedAt || d.deleted_at || d.deletedAt || d.deletedAt || d.deletedAt || null;
     if(deletedAt && deletedAt.seconds) deletedAt = new Date(deletedAt.seconds * 1000);
     if(deletedAt && deletedAt.toDate) { try { deletedAt = deletedAt.toDate(); } catch(e){} }
     if(!deletedAt) deletedAt = d.deletedAtTimestamp || null;
@@ -400,6 +466,7 @@ async function fetchAllDeleted(collectionsToCheck){
     };
   });
 }
+
 
 /**
  * Render Recycle Bin list
@@ -441,11 +508,12 @@ async function renderRecycleBin(){
   const total = filtered.length;
   if(recycleCounts) {
     const parts = [`Total deleted: ${total}`];
-    for(const k of ['students','teachers','classes','subjects','exams','transactions','users','announcements']){
+    for(const k of ['students','teachers','classes','subjects','exams','staff','transactions','users','announcements']){
       if(counts[k]) parts.push(`${k}: ${counts[k]}`);
     }
     recycleCounts.textContent = parts.join(' • ');
   }
+  
 
   // render table (desktop)
   if(recycleTbody){
@@ -2594,10 +2662,14 @@ async function renderStudents(){
   }
 
   let filtered = (studentsCache || []).filter(s=>{
+    // exclude soft-deleted students
+    if(s.deleted === true) return false;
+    if(s.status === 'deleted') return false;
     if(classFilterVal && s.classId !== classFilterVal) return false;
     if(!q) return true;
     return (s.fullName||'').toLowerCase().includes(q) || (s.phone||'').toLowerCase().includes(q) || (s.studentId||'').toLowerCase().includes(q);
   });
+  
 
   const total = filtered.length;
 
@@ -5098,6 +5170,56 @@ async function openViewTransactionsModal(btnOrEvent){
   modalBody.querySelectorAll('.del-tx').forEach(b => b.addEventListener('click', ev => deleteTransaction(ev.currentTarget)));
 }
 
+// SOFT DELETE EXPENSE (transaction)
+async function deleteExpense(e){
+  const id =
+    (e?.target?.dataset?.id) ||
+    (e?.currentTarget?.dataset?.id) ||
+    (typeof e === 'string' ? e : null);
+
+  if(!id) return;
+  if(!confirm('Move expense to Recycle Bin?')) return;
+
+  try {
+    const snap = await getDoc(doc(db,'transactions', id));
+    if(!snap.exists()) return toast('Expense not found');
+
+    const tx = snap.data();
+    const who =
+      (currentUser && currentUser.uid) ||
+      (auth && auth.currentUser && auth.currentUser.uid) ||
+      null;
+
+    // 🔁 reverse balance if this expense affected totals
+    if(tx.amount_cents && tx.amount_cents > 0){
+      await updateTargetBalanceGeneric(
+        tx.target_type || 'expense',
+        tx.target_id || null,
+        tx.amount_cents
+      );
+    }
+
+    // ✅ SOFT DELETE
+    await updateDoc(doc(db,'transactions', id), {
+      is_deleted: true,
+      deleted_at: Timestamp.now(),
+      deleted_by: who
+    });
+
+    toast('Expense moved to Recycle Bin');
+
+    // refresh UI
+    if(typeof loadTransactions === 'function') await loadTransactions();
+    if(typeof renderPaymentsList === 'function') renderPaymentsList('expenses');
+    if(typeof renderDashboard === 'function') renderDashboard();
+
+  } catch(err){
+    console.error('deleteExpense failed', err);
+    toast('Failed to delete expense');
+  }
+}
+
+
 
 /* ---------- Inline SVG helpers: edit/delete icons ---------- */
 function svgEdit(){
@@ -5363,6 +5485,55 @@ async function renderPayments(){
   // initial view
   await renderPaymentsList('students');
 }
+// Robust id extractor for button handlers (handles clicking SVGs/inner elements)
+function getButtonIdFromEvent(ev){
+  if(!ev) return null;
+  // prefer dataset on currentTarget (the element the handler attached to)
+  if(ev.currentTarget && ev.currentTarget.dataset && ev.currentTarget.dataset.id) return ev.currentTarget.dataset.id;
+  // fallback to target.dataset (if handler attached to parent click)
+  if(ev.target && ev.target.dataset && ev.target.dataset.id) return ev.target.dataset.id;
+  // fallback to nearest button with data-id
+  const btn = ev.target && ev.target.closest ? ev.target.closest('[data-id]') : null;
+  return btn && btn.dataset ? btn.dataset.id : null;
+}
+
+// Soft-delete staff (use instead of deleteDoc)
+async function deleteStaff(e){
+  // accept event, element, or id string
+  const id = (e && e.target && e.target.dataset && e.target.dataset.id)
+           || (e && e.currentTarget && e.currentTarget.dataset && e.currentTarget.dataset.id)
+           || (e && e.dataset && e.dataset.id)
+           || (typeof e === 'string' ? e : null);
+  if(!id) return;
+  if(!confirm('Move staff to Recycle Bin?')) return;
+
+  try {
+    const who = (currentUser && currentUser.uid) || (auth && auth.currentUser && auth.currentUser.uid) || null;
+    await updateDoc(doc(db,'staff', id), {
+      deleted: true,
+      deletedAt: Timestamp.now(),
+      deletedBy: who,
+      deleted_at: Timestamp.now(),
+      deleted_by: who,
+      updatedAt: Timestamp.now()
+    });
+
+    // ensure local cache is refreshed if loader exists
+    if(typeof loadStaff === 'function') await loadStaff();
+    if(typeof loadTransactions === 'function') await loadTransactions();
+
+    toast('Staff moved to Recycle Bin');
+
+    // refresh lists & recycle UI
+    renderPaymentsList && renderPaymentsList('staff');
+    // if recycle page is open, refresh it so the item appears immediately
+    if(typeof renderRecycleBin === 'function') await renderRecycleBin();
+  } catch(err){
+    console.error('deleteStaff failed', err);
+    toast('Failed to delete staff');
+  }
+}
+
 
 /* ---------- renderPaymentsList (mobile-first, updated layout) ---------- */
 async function renderPaymentsList(view = 'students'){
@@ -5698,12 +5869,15 @@ async function renderPaymentsList(view = 'students'){
       listRoot.querySelectorAll('.pay-btn').forEach(b => b.addEventListener('click', ev => openPayModal(ev.currentTarget)));
       listRoot.querySelectorAll('.adj-btn').forEach(b => b.addEventListener('click', ev => openAdjustmentModal(ev.currentTarget)));
       listRoot.querySelectorAll('.view-trans-btn').forEach(b => b.addEventListener('click', ev => openViewTransactionsModal(ev.currentTarget)));
-      listRoot.querySelectorAll('.edit-staff').forEach(b => b.addEventListener('click', ev => toast('Edit staff not implemented - tell me if you want it')));
+// wherever you previously had edit-staff toast:
+listRoot.querySelectorAll('.edit-staff').forEach(b => b.addEventListener('click', ev => openEditStaffModal(ev.currentTarget)));
+
+
+      
       listRoot.querySelectorAll('.del-staff').forEach(b => b.addEventListener('click', async (e)=> {
-        const id = e.currentTarget.dataset.id;
-        if(!confirm('Delete staff?')) return;
-        try{ await deleteDoc(doc(db,'staff', id)); toast('Staff deleted'); await loadStaff(); renderPaymentsList('staff'); }catch(err){ console.error(err); toast('Failed to delete'); }
+        await deleteStaff(e);toast('Staff moved in recycle bin');
       }));
+      
       return;
     }
     }
@@ -5789,13 +5963,18 @@ modalBody.querySelectorAll('.view-trans-btn')
   .forEach(b => b.addEventListener('click', e => openViewTransactionsModal(e.currentTarget)));
 
 
+  // and inside modals where you previously wired edit-staff:
+modalBody.querySelectorAll('.edit-staff').forEach(bb => bb.addEventListener('click', ev => openEditStaffModal(ev.currentTarget)));
 
-        modalBody.querySelectorAll('.edit-staff').forEach(bb => bb.addEventListener('click', ev => toast('Edit staff not implemented - tell me if you want it')));
-        modalBody.querySelectorAll('.del-staff').forEach(bb => bb.addEventListener('click', async ev => {
-          const sid = ev.currentTarget.dataset.id;
-          if(!confirm('Delete staff?')) return;
-          try{ await deleteDoc(doc(db,'staff', sid)); toast('Staff deleted'); await loadStaff(); renderPaymentsList('staff'); }catch(err){ console.error(err); toast('Failed to delete'); }
-        }));
+// inside modal wiring for staff "del-staff"
+modalBody.querySelectorAll('.del-staff').forEach(bb => bb.addEventListener('click', async ev => {
+  const sid = ev.currentTarget.dataset.id || getButtonIdFromEvent(ev);
+  if(!sid) return;
+  if(!confirm('Move staff to Recycle Bin?')) return;
+  await deleteStaff(sid);
+  closeModal();
+}));
+
       }));
 
       return;
@@ -5830,15 +6009,26 @@ modalBody.querySelectorAll('.view-trans-btn')
   html += `</tbody></table></div>`;
   listRoot.innerHTML = html;
 
-  listRoot.querySelectorAll('.pay-btn').forEach(b => b.addEventListener('click', ev => openPayModal(ev.currentTarget)));
-  listRoot.querySelectorAll('.adj-btn').forEach(b => b.addEventListener('click', ev => openAdjustmentModal(ev.currentTarget)));
-  listRoot.querySelectorAll('.view-trans-btn').forEach(b => b.addEventListener('click', ev => openViewTransactionsModal(ev.currentTarget)));
-  listRoot.querySelectorAll('.edit-staff').forEach(b => b.addEventListener('click', ev => toast('Edit staff not implemented - tell me if you want it')));
-  listRoot.querySelectorAll('.del-staff').forEach(b => b.addEventListener('click', async (e)=> {
-    const id = e.currentTarget.dataset.id;
-    if(!confirm('Delete staff?')) return;
-    try{ await deleteDoc(doc(db,'staff', id)); toast('Staff deleted'); await loadStaff(); renderPaymentsList('staff'); }catch(err){ console.error(err); toast('Failed to delete'); }
-  }));
+  // after listRoot.innerHTML = html; (desktop staff table)
+listRoot.querySelectorAll('.pay-btn').forEach(b => b.addEventListener('click', ev => openPayModal(ev.currentTarget)));
+listRoot.querySelectorAll('.adj-btn').forEach(b => b.addEventListener('click', ev => openAdjustmentModal(ev.currentTarget)));
+listRoot.querySelectorAll('.view-trans-btn').forEach(b => b.addEventListener('click', ev => openViewTransactionsModal(ev.currentTarget)));
+
+// EDIT staff (desktop) -> open edit modal (pass element/currentTarget)
+listRoot.querySelectorAll('.edit-staff').forEach(b => b.addEventListener('click', ev => {
+  // openEditStaffModal accepts event/element/id, so pass the button element
+  openEditStaffModal(ev.currentTarget);
+}));
+
+// DEL staff (desktop) -> soft-delete via deleteStaff (pass element/currentTarget)
+listRoot.querySelectorAll('.del-staff').forEach(b => b.addEventListener('click', ev => {
+  // call deleteStaff with element so id extraction works consistently
+  deleteStaff(ev.currentTarget).catch(err => { console.error(err); toast('Failed to move staff'); });
+}));
+
+
+
+
   return;
 
   }
@@ -5886,7 +6076,14 @@ modalBody.querySelectorAll('.view-trans-btn')
         modalBody.querySelectorAll('.reesto-expense').forEach(bb => bb.addEventListener('click', ev => openAdjustmentModal(ev.currentTarget)));
         modalBody.querySelectorAll('.view-expense').forEach(bb => bb.addEventListener('click', ev => openViewTransactionsModal(ev.currentTarget)));
         modalBody.querySelectorAll('.edit-expense').forEach(bb => bb.addEventListener('click', ev => openEditTransactionModal(ev.currentTarget)));
-        modalBody.querySelectorAll('.del-expense').forEach(bb => bb.addEventListener('click', ev => deleteTransaction(ev.currentTarget)));
+        modalBody.querySelectorAll('.del-expense').forEach(bb => bb.addEventListener('click', async ev => {
+          const tid = ev.currentTarget.dataset.id || getButtonIdFromEvent(ev);
+          if(!tid) return;
+          await deleteTransaction(tid);
+          closeModal();
+        }));
+        
+
       }));
 
       return;
@@ -5914,11 +6111,17 @@ rows.forEach((tx, idx) => {
 html += `</tbody></table></div>`;
 listRoot.innerHTML = html;
 
+// after listRoot.innerHTML = html; (desktop expenses table)
 listRoot.querySelectorAll('.pay-expense').forEach(b => b.addEventListener('click', ev => openPayModal(ev.currentTarget)));
 listRoot.querySelectorAll('.reesto-expense').forEach(b => b.addEventListener('click', ev => openAdjustmentModal(ev.currentTarget)));
 listRoot.querySelectorAll('.view-expense').forEach(b => b.addEventListener('click', ev => openViewTransactionsModal(ev.currentTarget)));
+
+// edit expense -> openEditTransactionModal with element
 listRoot.querySelectorAll('.edit-expense').forEach(b => b.addEventListener('click', ev => openEditTransactionModal(ev.currentTarget)));
+
+// delete expense -> deleteTransaction with element
 listRoot.querySelectorAll('.del-expense').forEach(b => b.addEventListener('click', ev => deleteTransaction(ev.currentTarget)));
+
 return;  }
 }
 
@@ -6113,21 +6316,88 @@ async function doExport(format){
 }
 
 
+/* --- Edit staff modal --- */
+async function openEditStaffModal(src){
+  const id =
+    (src && src.target && src.target.dataset && src.target.dataset.id) ||
+    (src && src.currentTarget && src.currentTarget.dataset && src.currentTarget.dataset.id) ||
+    (src && src.dataset && src.dataset.id) ||
+    (typeof src === 'string' ? src : null);
+
+  if(!id){ toast('Staff id missing'); return; }
+
+  const snap = await getDoc(doc(db,'staff', id));
+  if(!snap.exists()) return toast('Staff not found');
+  const staff = { id: snap.id, ...snap.data() };
+
+  const html = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div><label>Full name</label><input id="staffName" value="${escape(staff.fullName||'')}" /></div>
+      <div><label>Role</label><input id="staffRole" value="${escape(staff.role||'')}" /></div>
+      <div><label>Phone</label><input id="staffPhone" value="${escape(staff.phone||'')}" /></div>
+      <div><label>Salary (decimal)</label><input id="staffSalary" type="number" step="0.01" value="${((staff.salary_cents||staff.salary||0)/100).toFixed(2)}" /></div>
+      <div style="grid-column:1 / -1"><label>Note</label><input id="staffNote" value="${escape(staff.note||'')}" /></div>
+    </div>
+    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
+      <button id="staffEditClose" class="btn btn-ghost">Close</button>
+      <button id="staffEditSave" class="btn btn-primary">Save</button>
+    </div>
+  `;
+  showModal('Edit Staff', html);
+
+  modalBody.querySelector('#staffEditClose').onclick = closeModal;
+  modalBody.querySelector('#staffEditSave').onclick = async () => {
+    try{
+      const newName = modalBody.querySelector('#staffName').value.trim();
+      const newRole = modalBody.querySelector('#staffRole').value.trim();
+      const newPhone = modalBody.querySelector('#staffPhone').value.trim();
+      const salaryDecimal = Number(modalBody.querySelector('#staffSalary').value || 0);
+      const newSalaryCents = Math.round(salaryDecimal * 100);
+      const newNote = modalBody.querySelector('#staffNote').value.trim();
+
+      await updateDoc(doc(db,'staff', id), {
+        fullName: newName || null,
+        role: newRole || null,
+        phone: newPhone || null,
+        salary_cents: newSalaryCents,
+        salary: (newSalaryCents? (newSalaryCents/100) : null),
+        note: newNote || null,
+        edited_at: Timestamp.now(),
+        edited_by: currentUser ? currentUser.uid : null
+      });
+
+      toast('Staff updated');
+      closeModal();
+      if(typeof loadStaff === 'function') await loadStaff();
+      renderPaymentsList && renderPaymentsList('staff');
+    }catch(err){
+      console.error('edit staff failed', err);
+      toast('Failed to save staff');
+    }
+  };
+}
 
 
 /* --- Edit transaction modal --- */
-async function openEditTransactionModal(e){
-  const txId = e.target.dataset.id;
-  if(!txId) return;
+async function openEditTransactionModal(src){
+  // support: event, element, currentTarget, dataset, or id string
+  const txId =
+    (src && src.target && src.target.dataset && src.target.dataset.id) ||
+    (src && src.currentTarget && src.currentTarget.dataset && src.currentTarget.dataset.id) ||
+    (src && src.dataset && src.dataset.id) ||
+    (typeof src === 'string' ? src : null);
+
+  if(!txId) { toast('Transaction id missing'); return; }
+
   const txSnap = await getDoc(doc(db,'transactions', txId));
   if(!txSnap.exists()) return toast('Transaction not found');
   const tx = { id: txSnap.id, ...txSnap.data() };
 
-  // modal fields
+  // modal fields (amount shown as decimal, not formatted currency)
   const monthsOptions = Array.from({length:12}, (_,i)=>`<option value="${i+1}">${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][i]}</option>`).join('');
   const html = `
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-      <div><label>Amount</label><input id="editAmount" type="number" step="0.01" value="${c2p(tx.amount_cents||0)}" /></div>
+      <div><label>Amount (e.g. 12.34)</label><input id="editAmount" type="number" step="0.01" value="${((tx.amount_cents||0)/100).toFixed(2)}" /></div>
       <div><label>Type</label><input id="editType" value="${escape(tx.type||'')}" /></div>
       <div><label>Months (multi)</label><select id="editMonths" multiple size="6">${monthsOptions}</select></div>
       <div><label>Payment Method</label><input id="editMethod" value="${escape(tx.payment_method||'')}" /></div>
@@ -6156,7 +6426,9 @@ async function openEditTransactionModal(e){
   modalBody.querySelector('#editClose').onclick = closeModal;
   modalBody.querySelector('#editSave').onclick = async () => {
     try{
-      const newAmountCents = p2c(modalBody.querySelector('#editAmount').value);
+      // accept numeric input (in decimal), convert to cents
+      const rawAmt = modalBody.querySelector('#editAmount').value;
+      const newAmountCents = Math.round((Number(rawAmt) || 0) * 100);
       const newType = modalBody.querySelector('#editType').value.trim();
       const newMonths = Array.from(selectMonths.selectedOptions).map(o => o.value);
       const newMethod = modalBody.querySelector('#editMethod').value.trim();
@@ -6164,28 +6436,25 @@ async function openEditTransactionModal(e){
       const newPayer = modalBody.querySelector('#editPayer').value.trim();
       const newNote = modalBody.querySelector('#editNote').value.trim();
 
-      // if type affects balance (monthly or salary) we must compute delta and apply
-      const affectsBalance = (tx.type === 'monthly' || tx.type === 'salary') && (newType === tx.type); // only if type remains one that affects balance
-      if(affectsBalance){
-        // original amount was tx.amount_cents; previously we applied effect (e.g., subtracted from balance). We need to apply difference: delta = old - new (we add delta to balance because old was applied)
-        const delta = (tx.amount_cents || 0) - newAmountCents; // if positive -> add to balance; if negative -> subtract
-        await updateTargetBalanceGeneric(tx.target_type, tx.target_id, delta);
+      // compute balance effects
+      const oldType = tx.type;
+      if((oldType === 'monthly' || oldType === 'salary') && (newType === oldType)){
+        const delta = (tx.amount_cents || 0) - newAmountCents; // add delta to balance
+        if(delta !== 0) await updateTargetBalanceGeneric(tx.target_type, tx.target_id, delta);
       } else {
-        // also handle case where original affected but new doesn't: we must reverse original effect
-        if(tx.type === 'monthly' || tx.type === 'salary'){
-          // reverse original effect completely
+        // reverse original effect if it affected balance
+        if(oldType === 'monthly' || oldType === 'salary'){
           await updateTargetBalanceGeneric(tx.target_type, tx.target_id, (tx.amount_cents || 0));
         }
-        // if original not affecting but new type affects, apply new effect (subtract)
+        // apply new effect if new type affects balance
         if(newType === 'monthly' || newType === 'salary'){
           await updateTargetBalanceGeneric(tx.target_type, tx.target_id, -newAmountCents);
         }
       }
 
-      // save transaction edits and audit fields
       await updateDoc(doc(db,'transactions', tx.id), {
         amount_cents: newAmountCents,
-        type: newType,
+        type: newType || null,
         payment_method: newMethod || null,
         mobile_provider: newProvider || null,
         payer_phone: newPayer || null,
@@ -6195,12 +6464,12 @@ async function openEditTransactionModal(e){
         edited_at: Timestamp.now()
       });
 
-      await toast('Transaction updated');
+      toast('Transaction updated');
       closeModal();
-      await loadTransactions();
-      renderPaymentsList('students');
-      renderPaymentsList('teachers');
-      renderPaymentsList('staff');
+      if(typeof loadTransactions === 'function') await loadTransactions();
+      renderPaymentsList && renderPaymentsList('expenses');
+      renderPaymentsList && renderPaymentsList('students');
+      renderPaymentsList && renderPaymentsList('teachers');
       renderDashboard && renderDashboard();
     }catch(err){
       console.error('edit transaction failed', err);
@@ -6209,33 +6478,52 @@ async function openEditTransactionModal(e){
   };
 }
 
+
 /* --- Delete/soft-delete transaction --- */
 async function deleteTransaction(e){
-  const id = e.target.dataset.id;
+  // accept event, element or id string
+  const id = (e && e.target && e.target.dataset && e.target.dataset.id)
+           || (e && e.currentTarget && e.currentTarget.dataset && e.currentTarget.dataset.id)
+           || (e && e.dataset && e.dataset.id)
+           || (typeof e === 'string' ? e : null);
   if(!id) return;
   if(!confirm('Delete Transaction? This will reverse balance effects if applicable. Proceed?')) return;
   try{
     const snap = await getDoc(doc(db,'transactions', id));
     if(!snap.exists()) return toast('Transaction not found');
     const tx = { id: snap.id, ...snap.data() };
+
     // reverse effect if affected balance (monthly or salary)
     if(tx.type === 'monthly' || tx.type === 'salary'){
       // original subtract was applied when created -> add it back
       await updateTargetBalanceGeneric(tx.target_type, tx.target_id, (tx.amount_cents || 0));
     }
-    // soft-delete
-    await updateDoc(doc(db,'transactions', id), { is_deleted: true, deleted_by: currentUser ? currentUser.uid : null, deleted_at: Timestamp.now() });
-    await toast('Transaction deleted');
-    await loadTransactions();
-    renderPaymentsList('students');
-    renderPaymentsList('teachers');
-    renderPaymentsList('staff');
+
+    // soft-delete the transaction (expenses are here too)
+    await updateDoc(doc(db,'transactions', id), {
+      is_deleted: true,
+      deleted_by: (currentUser && currentUser.uid) || (auth && auth.currentUser && auth.currentUser.uid) || null,
+      deleted_at: Timestamp.now(),
+      updatedAt: Timestamp.now()
+    });
+
+    toast('Transaction moved to Recycle Bin');
+
+    // refresh caches & UI
+    if(typeof loadTransactions === 'function') await loadTransactions();
+    renderPaymentsList && renderPaymentsList('expenses');
+    renderPaymentsList && renderPaymentsList('students');
+    renderPaymentsList && renderPaymentsList('teachers');
     renderDashboard && renderDashboard();
+
+    // refresh recycle bin UI if visible
+    if(typeof renderRecycleBin === 'function') await renderRecycleBin();
   }catch(err){
     console.error('delete transaction failed', err);
     toast('Failed to delete transaction');
   }
 }
+
 
 /* ---------- renderDashboard (rich admin dashboard) ---------- */
 
@@ -9619,34 +9907,6 @@ async function deleteUser(e){
 
 
 
-/* ------------------------
-  Header wiring (add tabs: Dashboard, Payments, Attendance, Users)
--------------------------*/
-(function wireHeaderTabs(){
-  try{
-    const nav = document.querySelector('.tabs');
-    if(!nav) return;
-    if(!document.getElementById('tabDashboard')){
-      const btn = document.createElement('button'); btn.id='tabDashboard'; btn.className='tab'; btn.textContent='Dashboard';
-      nav.insertBefore(btn, nav.firstChild);
-      btn.onclick = ()=>{ renderDashboard(); showPage && showPage('dashboard'); };
-    }
-    if(!document.getElementById('tabPayments')){
-      const btn = document.createElement('button'); btn.id='tabPayments'; btn.className='tab'; btn.textContent='Payments';
-      nav.appendChild(btn);
-      btn.onclick = ()=>{ renderPayments(); showPage && showPage('payments'); };
-    }
-    if(!document.getElementById('tabAttendance')){
-      const btn = document.createElement('button'); btn.id='tabAttendance'; btn.className='tab'; btn.textContent='Attendance';
-      nav.appendChild(btn);
-      btn.onclick = ()=>{ renderAttendance(); showPage && showPage('attendance'); };
-    }
-    if(!document.getElementById('tabUsers')){
-      const btn = document.createElement('button'); btn.id='tabUsers'; btn.className='tab'; btn.textContent='Users';
-      nav.appendChild(btn);
-      btn.onclick = ()=>{ renderUsers(); showPage && showPage('users'); };
-    }
-  }catch(err){ console.warn('wireHeaderTabs failed', err); }
-})();
+
 
 /* End of payments/attendance/users additions */
