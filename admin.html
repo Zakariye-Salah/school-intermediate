@@ -557,6 +557,150 @@
 @media (max-width:720px){
   .ann-controls .header-new span { display:none; } /* compact on small screens */
 }
+/* Users UI - responsive (improved header layout) */
+.users-top {
+  display:flex;
+  align-items:center;
+  gap:10px;
+  margin-bottom:12px;
+  flex-wrap:nowrap;         /* keep items on one row if possible */
+  overflow:hidden;          /* prevent ugly wrapping to multiple rows */
+}
+
+/* Controls inside header */
+.users-top #addUserBtn {
+  flex: 0 0 auto;
+  white-space:nowrap;
+  padding:8px 12px;
+}
+.users-top .total {
+  flex: 0 0 auto;
+  font-weight:600;
+  background:linear-gradient(90deg,#eef2ff,#fff);
+  padding:6px 10px;
+  border-radius:10px;
+  font-size:14px;
+  min-width:60px;
+  text-align:center;
+}
+
+/* search grows to use remaining space but won't force wrap */
+.users-top .users-search {
+  flex: 1 1 220px;   /* grow/shrink, prefer 220px */
+  min-width:120px;
+  max-width:100%;
+  padding:8px;
+  border-radius:8px;
+  border:1px solid #e6eef8;
+  box-sizing:border-box;
+}
+
+/* fallback: if the screen is very narrow, allow it to wrap cleanly */
+@media (max-width:360px) {
+  .users-top { flex-wrap:wrap; gap:8px; }
+  .users-top .users-search { flex-basis:100%; }
+  .users-top .total { order:2; }
+}
+
+/* rest of your styles (kept as before) */
+.users-table {
+  width:100%;
+  border-collapse:collapse;
+  font-size:14px;
+}
+.users-table thead th {
+  text-align:left;
+  padding:10px;
+  color:#475569;
+  font-weight:600;
+  border-bottom:1px solid #e6eef8;
+}
+.users-table tbody td {
+  padding:10px;
+  border-bottom:1px solid rgba(15,23,42,0.04);
+  vertical-align:middle;
+}
+.action-btn {
+  display:inline-flex;
+  gap:8px;
+  align-items:center;
+  border:0;
+  background:transparent;
+  cursor:pointer;
+  padding:6px;
+  border-radius:8px;
+}
+.action-btn[disabled] {
+  opacity:.45;
+  cursor:not-allowed;
+}
+.btn-icon {
+  display:inline-grid;
+  place-items:center;
+  width:36px;
+  height:36px;
+  border-radius:8px;
+  background:transparent;
+  border:1px solid rgba(15,23,42,0.02);
+}
+.card-list {
+  display:grid;
+  gap:10px;
+}
+.user-card {
+  padding:10px;
+  border-radius:10px;
+  border:1px solid rgba(15,23,42,0.04);
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+}
+.user-card .left { display:flex;align-items:center;gap:10px; }
+.user-card .meta { font-size:13px; color:#334155; }
+.user-card .role-pill {
+  padding:6px 8px;
+  border-radius:999px;
+  font-size:12px;
+  background:#f1f5f9;
+  color:#0f1724;
+}
+
+/* mobile-only: show cards, hide table */
+@media (max-width:780px) {
+  .users-table { display:none; }
+  .card-list { display:block; }
+}
+/* desktop-only: show table, hide cards */
+@media (min-width:781px) {
+  .card-list { display:none; }
+}
+
+
+@media (max-width:780px){
+  /* hide desktop action buttons on mobile in case they appear */
+  .users-table .action-btn, .user-card .action-btn { display:none !important; }
+  /* ensure mobile btn-icon View is visible */
+  .user-card .btn-icon { display:inline-grid; }
+}
+@media (min-width:781px){
+  /* hide mobile-only view icon in desktop cards */
+  .user-card .btn-icon.btn-view { display:none; }
+}
+
+/* Recycle Bin styles */
+#recycleTable .muted { color:#6b7280; }
+.recycle-type-pill { padding:6px 8px; border-radius:999px; background:#f1f5f9; font-weight:700; font-size:12px; }
+.recycled-meta { color:#6b7280; font-size:13px; }
+.recycle-actions .btn { margin-left:6px; }
+@media (max-width:780px) {
+  #recycleTableContainer { display:none; }
+  #recycleCardList { display:block; }
+}
+@media (min-width:781px) {
+  #recycleCardList { display:none; }
+}
+
 
 </style>
 
@@ -582,6 +726,8 @@
     <button id="tabAnnouncements" class="tab">Announcements</button>
 
 
+<!-- Add to nav -->
+<button id="tabRecycle" class="tab">Recycle Bin</button>
 
 
   </nav>
@@ -645,6 +791,51 @@
       </div>
     </section>
     
+    <!-- Recycle Bin page -->
+<section id="pageRecycle" class="page" style="display:none; padding:12px;">
+  <div class="page-header" style="align-items:flex-start; gap:8px; flex-wrap:wrap;">
+    <div style="display:flex;gap:8px;align-items:center">
+      <select id="recycleTypeFilter">
+        <option value="all">All types</option>
+        <option value="students">Students</option>
+        <option value="teachers">Teachers</option>
+        <option value="classes">Classes</option>
+        <option value="subjects">Subjects</option>
+        <option value="exams">Exams</option>
+        <option value="transactions">Transactions</option>
+        <option value="users">Users</option>
+        <option value="announcements">Announcements</option>
+      </select>
+      <input id="recycleSearch" placeholder="Search (name, email, id)"/>
+    </div>
+
+    <div style="display:flex;gap:8px;align-items:center;margin-left:auto">
+      <label style="font-size:13px;color:#6b7280">Deleted from</label>
+      <input id="recycleDateFrom" type="date" />
+      <label style="font-size:13px;color:#6b7280">to</label>
+      <input id="recycleDateTo" type="date" />
+      <button id="recycleApplyFilters" class="btn btn-ghost">Apply</button>
+      <button id="recycleRestoreAll" class="btn btn-primary">Restore All</button>
+      <button id="recycleDeleteAll" class="btn btn-danger">Delete All</button>
+    </div>
+  </div>
+
+  <div id="recycleCounts" style="margin:8px 0;color:#374151;font-weight:700"></div>
+
+  <!-- table view (desktop) -->
+  <div id="recycleTableContainer" style="overflow:auto">
+    <table class="users-table" id="recycleTable" style="width:100%">
+      <thead>
+        <tr><th style="width:48px">No</th><th>Type</th><th>Title / Name</th><th>Details</th><th style="width:180px">Deleted</th><th style="width:180px">Actions</th></tr>
+      </thead>
+      <tbody id="recycleTbody"></tbody>
+    </table>
+  </div>
+
+  <!-- cards for mobile -->
+  <div id="recycleCardList" class="card-list" style="margin-top:12px"></div>
+</section>
+
 
   </main>
 
