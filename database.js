@@ -1747,18 +1747,16 @@ function populateTeachersSubjectFilter(){
   }
 }
 
-/* renderTeachers: desktop includes Subjects column; mobile shows name + ID & Subjects (no email) */
+/* ---------- TEACHERS (mobile row salary pinned right before more icon) ---------- */
 function renderTeachers(){
   if(!teachersList) return;
   const total = (teachersCache || []).length;
 
   const q = (teachersSearch && teachersSearch.value||'').trim().toLowerCase();
   const subjFilter = (teachersSubjectFilter && teachersSubjectFilter.value) || '';
-  // read mobile class filter value if present
   const mobileClassVal = (document.getElementById('_mobileTeacherClass') && document.getElementById('_mobileTeacherClass').value) || '';
   let list = (teachersCache || []).slice();
   list = list.filter(t => {
-    // filter by mobile class if set (teachers have t.classes array)
     if(mobileClassVal && !((t.classes || []).includes(mobileClassVal))) return false;
     if(subjFilter && (!(t.subjects || []).includes(subjFilter))) return false;
     if(!q) return true;
@@ -1773,7 +1771,6 @@ function renderTeachers(){
       if(openAddTeacher) openAddTeacher.style.display = 'none';
     } catch(e){}
 
-    // build subject options and class options
     const subjOptions = (subjectsCache || []).map(s=>`<option value="${escape(s.name||s.id)}">${escape(s.name||s.id)}</option>`).join('');
     const classOptions = (classesCache || []).map(c=>`<option value="${escape(c.name)}">${escape(c.name)}</option>`).join('');
 
@@ -1825,26 +1822,27 @@ function renderTeachers(){
       });
       const subsText = subsArr.length ? escape(subsArr.join(', ')) : '—';
 
+      // layout: left block (index + name + id/subjects) | salary container (fixed, right) | more button
       html += `
         <div class="mobile-row" style="padding:10px;border-bottom:1px solid #f1f5f9">
-          <div style="display:flex;justify-content:space-between;align-items:flex-start">
-            <div style="display:flex;gap:12px;align-items:flex-start;flex:1;min-width:0">
-              <div style="min-width:28px;text-align:center;font-weight:700;margin-top:2px">${idx+1}</div>
-              <div style="min-width:0;overflow:hidden">
-                <!-- name row: name (left) + salary (right, light green) -->
-                <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
-                  <div style="font-weight:600;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${name}</div>
-                  <div style="font-weight:600;font-size:13px;color:#10b981;white-space:nowrap;margin-left:8px">${salaryVal !== '—' ? '$' + salaryVal : '—'}</div>
-                </div>
+          <div style="display:flex;align-items:flex-start;gap:12px">
+            <div style="min-width:28px;text-align:center;font-weight:700;margin-top:2px">${idx+1}</div>
 
-                <!-- ID and subjects on one line: ID {id} · {subjects} (subjects light blue) -->
-                <div style="font-size:12px;color:#667085;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:4px">
-                  ID ${id} &middot; <span style="color:#60a5fa">${subsText}</span>
-                </div>
+            <div style="flex:1;min-width:0;overflow:hidden">
+              <div style="font-weight:600;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${name}</div>
+
+              <div style="font-size:12px;color:#667085;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:6px">
+                ID ${id} &middot; <span style="color:#60a5fa">${subsText}</span>
               </div>
             </div>
 
-            <div style="margin-left:8px"><button type="button" class="btn btn-ghost btn-sm mobile-teacher-more" data-id="${escape(t.id||t.teacherId||'')}">⋮</button></div>
+            <div style="flex:0 0 auto;min-width:70px;text-align:right;margin-left:8px;font-weight:600;font-size:13px;color:#10b981">
+              ${salaryVal !== '—' ? '$' + salaryVal : '—'}
+            </div>
+
+            <div style="margin-left:8px;flex:0 0 auto">
+              <button type="button" class="btn btn-ghost btn-sm mobile-teacher-more" data-id="${escape(t.id||t.teacherId||'')}">⋮</button>
+            </div>
           </div>
         </div>
       `;
@@ -1855,24 +1853,20 @@ function renderTeachers(){
 
     // --- Attach mobile handlers ONCE using delegation to avoid duplicates ---
     if(!teachersList.dataset.mobileHandlersAttached){
-      // click delegation for mobile Add, More, and clear class icon
       teachersList.addEventListener('click', function(ev){
         const el = ev.target;
         if(!el) return;
-        // Add button
         if(el.id === '_mobileAddTeacher' || (el.closest && el.closest('#_mobileAddTeacher'))){
           if(ev.preventDefault) ev.preventDefault();
           if(typeof openAddTeacher !== 'undefined' && openAddTeacher) openAddTeacher.click();
           return;
         }
-        // More / view
         if(el.classList && el.classList.contains('mobile-teacher-more')){
           const sid = el.dataset.id;
           if(ev.preventDefault) ev.preventDefault();
           openViewTeacherModal({ target: { dataset: { id: sid } } });
           return;
         }
-        // Clear class
         if(el.id === '_mobileClearClass' || (el.closest && el.closest('#_mobileClearClass'))){
           if(ev.preventDefault) ev.preventDefault();
           const sel = document.getElementById('_mobileTeacherClass');
@@ -1882,7 +1876,6 @@ function renderTeachers(){
         }
       });
 
-      // input delegation for mobile search
       teachersList.addEventListener('input', function(ev){
         const t = ev.target;
         if(!t) return;
@@ -1892,7 +1885,6 @@ function renderTeachers(){
         }
       });
 
-      // change delegation for mobile class & subject selects
       teachersList.addEventListener('change', function(ev){
         const t = ev.target;
         if(!t) return;
@@ -2518,10 +2510,17 @@ function renderSubjects(){
   });
 
   const total = list.length;
+  const mobile = isMobileViewport();
+
+  // hide the top page header controls on mobile to avoid duplicate header
+  try{
+    if(subjectSearch) subjectSearch.style.display = mobile ? 'none' : '';
+    if(openAddSubject) openAddSubject.style.display = mobile ? 'none' : '';
+  } catch(e){}
 
   // MOBILE
-  if(isMobileViewport()){
-    // header: search + add side-by-side
+  if(mobile){
+    // header: search + add side-by-side (only on mobile)
     let html = `
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
         <input id="_mobileSubjectSearch" placeholder="Search subjects..." value="${escape(subjectSearch && subjectSearch.value||'')}" style="flex:1;padding:10px;border-radius:10px;border:1px solid #e6eef8" />
@@ -2536,7 +2535,7 @@ function renderSubjects(){
     list.forEach((s, idx) => {
       const id = escape(s.id || '');
       const name = escape(s.name || '');
-      // mobile: show name then id below it
+      // mobile: show name then id below it (id is light blue text)
       html += `<div style="padding:10px;border-bottom:1px solid #f1f5f9;display:flex;justify-content:space-between;align-items:flex-start">
         <div style="display:flex;gap:12px;align-items:flex-start;flex:1;min-width:0">
           <div style="min-width:28px;text-align:center;font-weight:700;margin-top:2px">${idx+1}</div>
@@ -2570,7 +2569,7 @@ function renderSubjects(){
         }
       });
 
-      // search input
+      // mobile search sync
       subjectsList.addEventListener('input', function(ev){
         const t = ev.target;
         if(!t) return;
@@ -2586,7 +2585,7 @@ function renderSubjects(){
     return;
   }
 
-  // DESKTOP (unchanged layout except buttons use loading helper)
+  // DESKTOP (desktop header remains in page HTML)
   let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
       <strong>Total subjects: ${total}</strong>
       <div class="muted">Columns: No, ID, Subject</div>
@@ -2625,6 +2624,8 @@ function renderSubjects(){
   subjectsList.querySelectorAll('.edit-sub').forEach(b=> b.onclick = openEditSubjectModal);
   subjectsList.querySelectorAll('.del-sub').forEach(b=> b.onclick = deleteSubject);
 }
+
+
 
 /* ---------- View subject modal (unchanged but closes properly) ---------- */
 function openViewSubjectModal(e){
@@ -3213,7 +3214,7 @@ async function deleteOrUnblockStudent(e){
    function renderExams(){
     if(!examsList) return;
   
-    // ensure sort control exists (same as before)
+    // ensure sort control exists
     const controlsId = 'examControlsArea';
     let controls = document.getElementById(controlsId);
     if(!controls && pageExams){
@@ -3232,12 +3233,13 @@ async function deleteOrUnblockStudent(e){
     const classFilterVal = (examClassFilter && examClassFilter.value) || '';
     examsList.innerHTML = '';
   
-    let list = examsCache.slice();
+    let list = (examsCache || []).slice();
+  
     // filter
     list = list.filter(e => {
       if(classFilterVal && (!e.classes || !e.classes.includes(classFilterVal))) return false;
       if(!q) return true;
-      return (e.name||'').toLowerCase().includes(q);
+      return (e.name||'').toLowerCase().includes(q) || (String(e.id||'')).toLowerCase().includes(q);
     });
   
     // sort
@@ -3253,29 +3255,36 @@ async function deleteOrUnblockStudent(e){
       list.sort((a,b)=> (b.name||'').localeCompare(a.name||''));
     }
   
-    // mobile vs desktop switch
     const mobile = (typeof isMobileViewport === 'function') ? isMobileViewport() : (window.matchMedia && window.matchMedia('(max-width:768px)').matches);
   
     if(mobile){
-      // compact mobile list but show FULL exam name (wrap, no ellipsis)
+      // Mobile list: show name (wrap), id, status pill, subjects, classes, More button opens modal
       let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
         <strong>Total exams: ${list.length}</strong>
         <div class="muted">Tap More for exam details</div>
       </div><div id="examsMobileList">`;
   
       list.forEach((e, idx) => {
-        const statusLabel = (e.status === 'published') ? 'Published' : (e.status === 'deactivated' ? 'Deactivated' : 'Unpublished');
-        html += `<div style="padding:12px;border-bottom:1px solid #f1f5f9;display:flex;flex-direction:column;gap:6px">
-          <div style="font-weight:800;display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
+        const status = e.status === 'published' ? 'Published' : (e.status === 'deactivated' ? 'Deactivated' : 'Unpublished');
+        const statusBg = e.status === 'published' ? '#059669' : (e.status === 'deactivated' ? '#dc2626' : '#dc2626');
+        const subjNames = (e.subjects || []).map(s => s.name || s).slice(0,6).join(', ') || 'No subjects';
+        const classesText = (e.classes && e.classes.length) ? e.classes.join(', ') : 'All classes';
+        html += `<div style="padding:12px;border-bottom:1px solid #f1f5f9;display:flex;flex-direction:column;gap:8px">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
             <div style="display:flex;gap:8px;align-items:flex-start;flex:1;min-width:0">
               <div style="min-width:26px;text-align:center;font-weight:700">${idx+1}</div>
-              <!-- FULL name allowed: wrap and break-word -->
-              <div style="flex:1;white-space:normal;word-break:break-word;">${escape(e.name||'')}</div>
+              <div style="flex:1;white-space:normal;word-break:break-word;min-width:0">
+                <div style="font-weight:800">${escape(e.name||'')}</div>
+                <div style="margin-top:6px;font-size:12px;color:#60a5fa">ID: ${escape(e.id || '')}</div>
+                <div style="margin-top:8px;font-size:13px;color:#374151">Subjects: <span style="color:#60a5fa">${escape(subjNames)}</span></div>
+                <div style="margin-top:6px;font-size:12px;color:#6b7280">Classes: ${escape(classesText)}</div>
+              </div>
             </div>
-            <div style="text-align:right;flex-shrink:0"><small class="muted">${escape(statusLabel)}</small></div>
-          </div>
-          <div style="display:flex;justify-content:flex-end">
-            <button class="btn btn-ghost btn-sm mobile-exam-more" data-id="${escape(e.id)}">⋮</button>
+  
+            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0">
+              <div style="background:${statusBg};color:#fff;padding:4px 8px;border-radius:8px;font-weight:700;font-size:12px">${escape(status)}</div>
+              <div><button class="btn btn-ghost btn-sm mobile-exam-more" data-id="${escape(e.id)}">⋮</button></div>
+            </div>
           </div>
         </div>`;
       });
@@ -3291,35 +3300,47 @@ async function deleteOrUnblockStudent(e){
       return;
     }
   
-    // Desktop: original rows (keeps actions)
+    // DESKTOP view: more complete rows, status pill + buttons (View/Open/Edit/Delete/Publish)
     for(const e of list){
-      const div = document.createElement('div'); div.className='row';
       const status = e.status || 'draft';
+      const statusBg = status === 'published' ? '#059669' : (status === 'deactivated' ? '#dc2626' : '#dc2626');
       const classesText = e.classes && e.classes.length ? e.classes.join(', ') : 'All classes';
       const dateText = e.date ? (new Date(e.date.seconds ? e.date.seconds*1000 : e.date)).toLocaleDateString() : '';
-      div.innerHTML = `<div class="meta">
-          <strong>${escape(e.name)} ${status==='published'?'<span style="color:#059669">(published)</span>':status==='deactivated'?'<span style="color:#dc2626">(deactivated)</span>':'(unpublished)'}</strong>
-          <small>${escape(classesText)} • ${escape(dateText)}</small>
+      const subjText = (e.subjects || []).map(s => s.name || s).join(', ') || 'No subjects';
+  
+      const div = document.createElement('div'); div.className='row';
+      div.style.display = 'flex';
+      div.style.justifyContent = 'space-between';
+      div.style.alignItems = 'center';
+      div.style.padding = '10px 0';
+      div.style.borderBottom = '1px solid #f1f5f9';
+      div.innerHTML = `<div style="flex:1;min-width:0">
+          <strong style="display:block">${escape(e.name)}</strong>
+          <div style="font-size:13px;color:#6b7280;margin-top:6px">ID: ${escape(e.id||'')} · ${escape(classesText)} · ${escape(dateText)}</div>
+          <div style="font-size:13px;color:#374151;margin-top:6px">Subjects: <span style="color:#60a5fa">${escape(subjText)}</span></div>
         </div>
-        <div>
+        <div style="display:flex;gap:8px;align-items:center;flex-shrink:0">
+          <div style="background:${statusBg};color:#fff;padding:6px 10px;border-radius:8px;font-weight:700;font-size:12px">${escape(status === 'published' ? 'Published' : (status === 'deactivated' ? 'Deactivated' : 'Unpublished'))}</div>
+          <button class="btn btn-ghost btn-sm view-exam" data-id="${escape(e.id)}">View</button>
           <button class="btn btn-ghost btn-sm open-exam" data-id="${escape(e.id)}">Open</button>
           <button class="btn btn-ghost btn-sm edit-exam" data-id="${escape(e.id)}">Edit</button>
           <button class="btn btn-danger btn-sm del-exam" data-id="${escape(e.id)}">Delete</button>
-          <button class="btn btn-primary btn-sm pub-exam" data-id="${escape(e.id)}">${e.status==='published'?'Unpublish':'Publish'}</button>
+          <button class="btn btn-primary btn-sm pub-exam" data-id="${escape(e.id)}">${e.status === 'published' ? 'Unpublish' : 'Publish'}</button>
         </div>`;
       examsList.appendChild(div);
     }
   
-    document.querySelectorAll('.open-exam').forEach(b=>b.onclick = openExam);
-    document.querySelectorAll('.edit-exam').forEach(b=>b.onclick = openEditExamModal);
-    document.querySelectorAll('.del-exam').forEach(b=>b.onclick = deleteExam);
-    document.querySelectorAll('.pub-exam').forEach(b=>b.onclick = togglePublishExam);
+    // wire actions
+    document.querySelectorAll('.view-exam').forEach(b => b.onclick = (ev) => openExamModal(ev.currentTarget.dataset.id));
+    document.querySelectorAll('.open-exam').forEach(b => b.onclick = openExam);
+    document.querySelectorAll('.edit-exam').forEach(b => b.onclick = openEditExamModal);
+    document.querySelectorAll('.del-exam').forEach(b => b.onclick = deleteExam);
+    document.querySelectorAll('.pub-exam').forEach(b => b.onclick = togglePublishExam);
   }
 
 /* ---------- openExamModal (show exam details + footer actions) ---------- */
 async function openExamModal(examId){
   if(!examId) return;
-  // try cached exam, fallback to DB fetch
   let ex = examsCache.find(x => x.id === examId);
   if(!ex){
     try {
@@ -3330,17 +3351,22 @@ async function openExamModal(examId){
   }
 
   const statusLabel = ex.status === 'published' ? 'Published' : (ex.status === 'deactivated' ? 'Deactivated' : 'Unpublished');
+  const statusBg = ex.status === 'published' ? '#059669' : (ex.status === 'deactivated' ? '#dc2626' : '#dc2626');
   const classesText = (ex.classes && ex.classes.length) ? ex.classes.join(', ') : 'All classes';
   const dateText = ex.date ? (new Date(ex.date.seconds ? ex.date.seconds*1000 : ex.date)).toLocaleDateString() : '—';
+  const subjText = (ex.subjects || []).map(s => s.name || s).join(', ') || 'No subjects';
 
   const html = `
     <div style="display:grid;grid-template-columns:1fr;gap:8px">
       <div><strong>Exam</strong><div class="muted">${escape(ex.name||'')}</div></div>
-      <div><strong>Status</strong><div class="muted">${escape(statusLabel)}</div></div>
+      <div><strong>ID</strong><div class="muted">${escape(ex.id||'')}</div></div>
+      <div><strong>Status</strong><div style="background:${statusBg};color:#fff;padding:6px 8px;border-radius:8px;display:inline-block;margin-top:6px">${escape(statusLabel)}</div></div>
       <div><strong>Classes assigned</strong><div class="muted">${escape(classesText)}</div></div>
+      <div><strong>Subjects</strong><div class="muted">${escape(subjText)}</div></div>
       <div><strong>Date</strong><div class="muted">${escape(dateText)}</div></div>
+      <div><strong>Created</strong><div class="muted">${ex.createdAt ? (new Date(ex.createdAt.seconds ? ex.createdAt.seconds*1000 : ex.createdAt)).toLocaleString() : '—'}</div></div>
     </div>
-    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
+    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">
       <button class="btn btn-ghost" id="examModalOpen">Open</button>
       <button class="btn btn-ghost" id="examModalEdit">Edit</button>
       <button class="btn btn-danger" id="examModalDelete">Delete</button>
@@ -3351,42 +3377,55 @@ async function openExamModal(examId){
 
   showModal(`${escape(ex.name||'Exam')}`, html);
 
-  // wire buttons
   const openBtn = document.getElementById('examModalOpen');
   const editBtn = document.getElementById('examModalEdit');
   const delBtn = document.getElementById('examModalDelete');
   const toggleBtn = document.getElementById('examModalToggle');
   const closeBtn = document.getElementById('examModalClose');
 
-  if(openBtn) openBtn.onclick = () => {
-    closeModal();
-    // reuse original openExam navigator
-    openExam({ target: { dataset: { id: ex.id } } });
-  };
-  if(editBtn) editBtn.onclick = () => {
-    closeModal();
-    openEditExamModal({ target: { dataset: { id: ex.id } } });
-  };
-  if(delBtn) delBtn.onclick = async () => {
-    if(!confirm('Delete exam?')) return;
-    await deleteExam({ target: { dataset: { id: ex.id } } });
-    closeModal();
-  };
-  if(toggleBtn) toggleBtn.onclick = async () => {
-    await togglePublishExam({ target: { dataset: { id: ex.id } } });
-    // refresh UI in modal and list
-    await loadExams();
-    renderExams();
-    // update modal - replace status text and toggle label
-    const newEx = examsCache.find(x=>x.id===ex.id) || ex;
-    const newStatus = newEx.status === 'published' ? 'Published' : (newEx.status === 'deactivated' ? 'Deactivated' : 'Unpublished');
-    const newLabel = newEx.status === 'published' ? 'Unpublish' : 'Publish';
-    // update DOM elements safely
+  if(openBtn) openBtn.onclick = () => { closeModal(); openExam({ target: { dataset: { id: ex.id } } }); };
+  if(editBtn) editBtn.onclick = () => { closeModal(); openEditExamModal({ target: { dataset: { id: ex.id } } }); };
+  if(delBtn) delBtn.onclick = async (ev) => {
+    if(delBtn) delBtn.onclick = async () => {
+      const ok = await modalConfirm(
+        'Move Exam to Recycle Bin',
+        `Are you sure you want to move <strong>${escape(ex.name)}</strong> into the Recycle Bin?`
+      );
+      if(!ok) return;
+    
+      setButtonLoading(delBtn, true, 'Deleting...');
+      try {
+        await deleteExam({ target:{ dataset:{ id: ex.id } }, currentTarget: delBtn });
+        closeModal();
+      } catch(err){
+        console.error(err);
+        toast('Delete failed');
+      }
+      setButtonLoading(delBtn, false);
+    };
+        setButtonLoading(delBtn, true, 'Deleting...');
     try {
-      // replace the modal by reopening with fresh data
+      await deleteExam({ target:{ dataset:{ id: ex.id } } });
+      closeModal();
+    } catch(err){
+      console.error(err);
+      toast('Delete failed');
+    }
+    setButtonLoading(delBtn, false);
+  };
+  if(toggleBtn) toggleBtn.onclick = async (ev) => {
+    setButtonLoading(toggleBtn, true, ex.status === 'published' ? 'Unpublishing...' : 'Publishing...');
+    try {
+      await togglePublishExam({ target: { dataset: { id: ex.id } }, currentTarget: toggleBtn });
+      // refresh exam modal with fresh data
+      await loadExams();
       closeModal();
       openExamModal(ex.id);
-    } catch(e){ console.error(e); }
+    } catch(err){
+      console.error(err);
+      toast('Publish toggle failed');
+    }
+    setButtonLoading(toggleBtn, false);
   };
   if(closeBtn) closeBtn.onclick = closeModal;
 }
@@ -3399,8 +3438,8 @@ async function openExamModal(examId){
 }
 
 /* create / edit / delete / publish exam (same UI) */
-openAddExam.onclick = () => {
-  // build exam list for linking (exclude current - not applicable here)
+openAddExam && (openAddExam.onclick = () => {
+  // build examSubjects & examClasses HTML (same as earlier)
   const examLinkOptions = examsCache.map(e => `<option value="${e.id}">${escape(e.name)} ${e.status==='published'?'(published)':''}</option>`).join('');
   const subjHtml = subjectsCache.map(s => {
     const defMax = s.max || 100;
@@ -3411,7 +3450,6 @@ openAddExam.onclick = () => {
       <small style="margin-left:6px;color:#6b7280">max</small>
     </label>`;
   }).join('');
-
   const classHtml = classesCache.map(c => `<label style="display:inline-block;margin-right:6px"><input type="checkbox" class="exam-cls" data-name="${escape(c.name)}" checked /> ${escape(c.name)}</label>`).join('');
 
   showModal('Create Exam', `
@@ -3427,14 +3465,15 @@ openAddExam.onclick = () => {
     <label style="margin-top:8px">Subjects (each has its own max)</label><div id="examSubjects">${subjHtml || '<div class="muted">No subjects</div>'}</div>
     <div style="margin-top:8px"><button id="toggleChkClasses" class="btn btn-ghost btn-sm">Uncheck All Classes</button></div>
     <label style="margin-top:8px">Classes</label><div id="examClasses">${classHtml || '<div class="muted">No classes</div>'}</div>
-  <div style="margin-top:8px">
-  <label><input type="checkbox" id="enableAssignment" /> Enable Assignment</label>
-  <label><input type="checkbox" id="enableQuiz" /> Enable Quiz</label>
-  <label><input type="checkbox" id="enableMonthly" /> Enable Monthly</label>
-  <label><input type="checkbox" id="enableCW1" /> Enable CW1</label>
-  <label><input type="checkbox" id="enableCW2" /> Enable CW2</label>
-  <label><input type="checkbox" id="enableExam" checked disabled /> Enable Exam</label>
-</div>
+
+    <div style="margin-top:8px">
+      <label><input type="checkbox" id="enableAssignment" /> Enable Assignment</label>
+      <label><input type="checkbox" id="enableQuiz" /> Enable Quiz</label>
+      <label><input type="checkbox" id="enableMonthly" /> Enable Monthly</label>
+      <label><input type="checkbox" id="enableCW1" /> Enable CW1</label>
+      <label><input type="checkbox" id="enableCW2" /> Enable CW2</label>
+      <label><input type="checkbox" id="enableExam" checked disabled /> Enable Exam</label>
+    </div>
 
     <div style="margin-top:12px"><button id="saveExam" class="btn btn-primary">Create</button> <button id="cancelExam" class="btn btn-ghost">Cancel</button></div>
   `);
@@ -3544,77 +3583,85 @@ openAddExam.onclick = () => {
       if(maxInput) maxInput.value = String(n);
     });
   };
+  // Save handler with loading:
+  modalBody.querySelector('#saveExam').onclick = async function(ev){
+    const btn = ev && ev.currentTarget ? ev.currentTarget : this;
+    setButtonLoading(btn, true, 'Saving...');
+    try{
+      const name = document.getElementById('examName').value.trim();
+      const date = document.getElementById('examDate').value || null;
+      const linkedFrom = modalBody.querySelector('#linkFromExam').value || null;
+      if(!name){ toast('Name required'); setButtonLoading(btn, false); return; }
 
-  // Save handler
-  document.getElementById('saveExam').onclick = async () => {
-    const name = document.getElementById('examName').value.trim();
-    const date = document.getElementById('examDate').value || null;
-    const linkedFrom = modalBody.querySelector('#linkFromExam').value || null;
-    if(!name) return alert('Name required');
+      const chosenSubjects = Array.from(modalBody.querySelectorAll('#examSubjects input.exam-sub:checked')).map(i=>{
+        const nm = i.dataset.name;
+        const maxInput = modalBody.querySelector(`#examSubjects input.exam-sub-max[data-name="${nm}"]`);
+        const maxVal = maxInput ? Number(maxInput.value || i.dataset.defaultMax) : Number(i.dataset.defaultMax);
+        return { name: nm, max: Math.max(0, maxVal) };
+      });
 
-    // chosen subjects only from checked (and enabled) inputs
-    const chosenSubjects = Array.from(modalBody.querySelectorAll('#examSubjects input.exam-sub:checked')).map(i=>{
-      const nm = i.dataset.name;
-      const maxInput = modalBody.querySelector(`#examSubjects input.exam-sub-max[data-name="${nm}"]`);
-      const maxVal = maxInput ? Number(maxInput.value || i.dataset.defaultMax) : Number(i.dataset.defaultMax);
-      return { name: nm, max: Math.max(0, maxVal) };
-    });
-
-    // validation: ensure each chosen subject max + linked.max <= 100 (if linked)
-    if(linkedFrom){
-      const linkedSnap = await getDoc(doc(db,'exams', linkedFrom));
-      if(linkedSnap.exists()){
-        const linked = linkedSnap.data();
-        const linkedMap = new Map((linked.subjects||[]).map(s=>[s.name, s.max||0]));
-        for(const cs of chosenSubjects){
-          const linkedMax = linkedMap.get(cs.name) || 0;
-          if((linkedMax + cs.max) > 100){
-            return alert(`Subject ${cs.name} combined max (${linkedMax + cs.max}) exceeds 100. Adjust values.`);
+      // validation vs linked (if present)
+      if(linkedFrom){
+        const linkedSnap = await getDoc(doc(db,'exams', linkedFrom));
+        if(linkedSnap.exists()){
+          const linked = linkedSnap.data();
+          const linkedMap = new Map((linked.subjects||[]).map(s=>[s.name, s.max||0]));
+          for(const cs of chosenSubjects){
+            const linkedMax = linkedMap.get(cs.name) || 0;
+            if((linkedMax + cs.max) > 100){
+              toast(`Subject ${cs.name} combined max (${linkedMax + cs.max}) exceeds 100.`);
+              setButtonLoading(btn, false);
+              return;
+            }
           }
         }
       }
+
+      const chosenClasses = Array.from(modalBody.querySelectorAll('#examClasses input.exam-cls:checked')).map(i=> i.dataset.name );
+      const payloadComponents = {
+        assignment: Boolean(document.getElementById('enableAssignment').checked),
+        quiz: Boolean(document.getElementById('enableQuiz').checked),
+        monthly: Boolean(document.getElementById('enableMonthly').checked),
+        cw1: Boolean(document.getElementById('enableCW1').checked),
+        cw2: Boolean(document.getElementById('enableCW2').checked),
+        exam: true
+      };
+
+      const payload = {
+        name,
+        date: date ? new Date(date) : null,
+        status: 'draft',
+        classes: chosenClasses,
+        subjects: chosenSubjects,
+        components: payloadComponents,
+        createdAt: Timestamp.now(),
+        createdBy: currentUser && currentUser.uid ? currentUser.uid : null
+      };
+      if(linkedFrom) payload.linkedExamId = linkedFrom;
+
+      await addDoc(collection(db,'exams'), payload);
+      toast('Exam created');
+      closeModal();
+      await loadExams();
+      renderExams();
+      populateStudentsExamDropdown && populateStudentsExamDropdown();
+      showPage('exams');
+    }catch(err){
+      console.error('create exam failed', err);
+      toast('Failed to create exam');
     }
-
-    const chosenClasses = Array.from(modalBody.querySelectorAll('#examClasses input.exam-cls:checked')).map(i=> i.dataset.name );
-    const enableAssignment = Boolean(document.getElementById('enableAssignment').checked);
-    const enableQuiz = Boolean(document.getElementById('enableQuiz').checked);
-    const enableMonthly = Boolean(document.getElementById('enableMonthly').checked);
-    const enableExam = Boolean(document.getElementById('enableExam').checked);
-
-          // force exam enabled & include cw1/cw2
-const enableCW1 = Boolean(document.getElementById('enableCW1').checked);
-const enableCW2 = Boolean(document.getElementById('enableCW2').checked);
-// always keep exam true (locked)
-const payloadComponents = { assignment: enableAssignment, quiz: enableQuiz, monthly: enableMonthly, cw1: enableCW1, cw2: enableCW2, exam: true };
-    const payload = {
-      name,
-      date: date ? new Date(date) : null,
-      status: 'draft',
-      classes: chosenClasses,
-      subjects: chosenSubjects,
-      // components: { assignment: enableAssignment, quiz: enableQuiz, monthly: enableMonthly, exam: enableExam },
-
-
-components: payloadComponents,
-
-      createdAt: Timestamp.now(),
-      createdBy: currentUser.uid
-    };
-    if(linkedFrom) payload.linkedExamId = linkedFrom;
-
-    await addDoc(collection(db,'exams'), payload);
-    closeModal(); await loadExams(); renderExams(); populateStudentsExamDropdown(); toast('Exam created');
+    setButtonLoading(btn, false);
   };
 
-  document.getElementById('cancelExam').onclick = closeModal;
-};
+  modalBody.querySelector('#cancelExam').onclick = closeModal;
+});
 
 
 /* ---------- Replace openEditExamModal ---------- */
 function openEditExamModal(e){
-  const id = e.target ? e.target.dataset.id : e; // support calling with id directly
+  const id = e.target ? e.target.dataset.id : e;
   const ex = examsCache.find(x=>x.id===id);
-  if(!ex) return;
+  if(!ex) return toast && toast('Exam not found');
 
   // compute exam subject name set (original exam selection)
   const exSubjectMap = new Map((ex.subjects || []).map(s => [s.name, s.max || 0]));
@@ -3785,68 +3832,85 @@ function openEditExamModal(e){
     });
   };
 
-  // Save handler
-  document.getElementById('saveExam').onclick = async ()=> {
-    const name = document.getElementById('examName').value.trim();
-    const date = document.getElementById('examDate').value || null;
-    const linkedFrom = modalBody.querySelector('#linkFromExam').value || null;
-    if(!name) return alert('Name required');
+  // after building modal HTML exactly as your earlier code did, wire save:
+  modalBody.querySelector('#saveExam').onclick = async function(ev){
+    const btn = ev && ev.currentTarget ? ev.currentTarget : this;
+    setButtonLoading(btn, true, 'Saving...');
+    try{
+      const name = document.getElementById('examName').value.trim();
+      const date = document.getElementById('examDate').value || null;
+      if(!name){ toast('Name required'); setButtonLoading(btn, false); return; }
 
-    const chosenSubjects = Array.from(modalBody.querySelectorAll('#examSubjects input.exam-sub:checked')).map(i=>{
-      const nm = i.dataset.name;
-      const maxInput = modalBody.querySelector(`#examSubjects input.exam-sub-max[data-name="${nm}"]`);
-      const maxVal = maxInput ? Number(maxInput.value || i.dataset.defaultMax) : Number(i.dataset.defaultMax);
-      return { name: nm, max: Math.max(0, maxVal) };
-    });
+      const chosenSubjects = Array.from(modalBody.querySelectorAll('#examSubjects input.exam-sub:checked')).map(i=>{
+        const nm = i.dataset.name;
+        const maxInput = modalBody.querySelector(`#examSubjects input.exam-sub-max[data-name="${nm}"]`);
+        const maxVal = maxInput ? Number(maxInput.value || i.dataset.defaultMax) : Number(i.dataset.defaultMax);
+        return { name: nm, max: Math.max(0, maxVal) };
+      });
 
-    // validation vs linked
-    if(linkedFrom){
-      const linkedSnap = await getDoc(doc(db,'exams', linkedFrom));
-      if(linkedSnap.exists()){
-        const linked = linkedSnap.data();
-        const linkedMap = new Map((linked.subjects||[]).map(s=>[s.name, s.max||0]));
-        for(const cs of chosenSubjects){
-          const linkedMax = linkedMap.get(cs.name) || 0;
-          if((linkedMax + cs.max) > 100){
-            return alert(`Subject ${cs.name} combined max (${linkedMax + cs.max}) exceeds 100. Adjust values.`);
-          }
-        }
-      }
+      const chosenClasses = Array.from(modalBody.querySelectorAll('#examClasses input.exam-cls:checked')).map(i=> i.dataset.name );
+      const payloadComponents = {
+        assignment: Boolean(document.getElementById('enableAssignment').checked),
+        quiz: Boolean(document.getElementById('enableQuiz').checked),
+        monthly: Boolean(document.getElementById('enableMonthly').checked),
+        cw1: Boolean(document.getElementById('enableCW1').checked),
+        cw2: Boolean(document.getElementById('enableCW2').checked),
+        exam: true
+      };
+
+      await updateDoc(doc(db,'exams',ex.id), {
+        name,
+        date: date ? new Date(date) : null,
+        subjects: chosenSubjects,
+        classes: chosenClasses,
+        components: payloadComponents,
+        linkedExamId: modalBody.querySelector('#linkFromExam').value || null,
+        updatedAt: Timestamp.now(),
+        updatedBy: currentUser && currentUser.uid ? currentUser.uid : null
+      });
+
+      toast('Exam updated');
+      closeModal();
+      await loadExams();
+      renderExams();
+      populateStudentsExamDropdown && populateStudentsExamDropdown();
+      showPage('exams');
+    }catch(err){
+      console.error('update exam failed', err);
+      toast('Failed to update exam');
     }
-
-    const chosenClasses = Array.from(modalBody.querySelectorAll('#examClasses input.exam-cls:checked')).map(i=> i.dataset.name );
-    const enableAssignment = Boolean(document.getElementById('enableAssignment').checked);
-    const enableQuiz = Boolean(document.getElementById('enableQuiz').checked);
-    const enableMonthly = Boolean(document.getElementById('enableMonthly').checked);
-    const enableCW1 = Boolean(document.getElementById('enableCW1').checked);
-    const enableCW2 = Boolean(document.getElementById('enableCW2').checked);
-    // exam locked -> always true
-    const enableExam = true;
-    
-
-    await updateDoc(doc(db,'exams',ex.id), {
-      name,
-      date: date ? new Date(date) : null,
-      subjects: chosenSubjects,
-      classes: chosenClasses,
-      components: { assignment: enableAssignment, quiz: enableQuiz, monthly: enableMonthly, cw1: enableCW1, cw2: enableCW2, exam: enableExam },
-      linkedExamId: linkedFrom || null
-    });
-    closeModal(); await loadExams(); renderExams(); populateStudentsExamDropdown(); toast('Exam updated');
+    setButtonLoading(btn, false);
   };
 
-  document.getElementById('cancelExam').onclick = closeModal;
+  modalBody.querySelector('#cancelExam').onclick = closeModal;
 }
 
+/* ---------- deleteExam (uses modalConfirm) ---------- */
 
 
 async function deleteExam(e){
   const id = e && e.target ? e.target.dataset.id : e;
   if(!id) return;
-  if(!confirm('Move exam to Recycle Bin?')) return;
+
+  // find exam name
+  const ex = examsCache.find(x => x.id === id);
+  const examName = ex ? ex.name : 'this exam';
+
+  const ok = await modalConfirm(
+    'Move Exam to Recycle Bin',
+    `Are you sure you want to move <strong>${escape(examName)}</strong> into the Recycle Bin?`
+  );
+  if(!ok) return;
+
+  const btn = (e && e.currentTarget) || null;
+  if(btn) setButtonLoading(btn, true, 'Deleting...');
 
   try {
-    const who = (currentUser && currentUser.uid) || (auth && auth.currentUser && auth.currentUser.uid) || null;
+    const who =
+      (currentUser && currentUser.uid) ||
+      (auth && auth.currentUser && auth.currentUser.uid) ||
+      null;
+
     await updateDoc(doc(db,'exams', id), {
       deleted: true,
       deletedAt: Timestamp.now(),
@@ -3854,32 +3918,57 @@ async function deleteExam(e){
       deleted_at: Timestamp.now(),
       deleted_by: who
     });
+
     toast('Exam moved to Recycle Bin');
     await loadExams();
     renderExams();
     populateStudentsExamDropdown && populateStudentsExamDropdown();
+    showPage('exams');
+
   } catch(err){
     console.error('delete exam failed', err);
     toast('Failed to delete exam');
   }
+
+  if(btn) setButtonLoading(btn, false);
 }
+
+
 
 
 /* Toggle publish/unpublish - uses helper fallback to update studentsLatest */
 async function togglePublishExam(e){
-  const id = e.target.dataset.id;
-  const exSnap = await getDoc(doc(db,'exams',id));
-  if(!exSnap.exists()) return;
-  const ex = exSnap.data();
-  if(ex.status === 'published'){
-    await updateDoc(doc(db,'exams',id), { status:'draft' });
-    await fallbackStudentsLatestForUnpublishedExam(id);
-    await loadExams(); renderExams(); toast('Exam unpublished');
-    return;
+  // accepts either event or { target: { dataset: { id } } } or id string
+  let id, btn;
+  if(typeof e === 'string') id = e;
+  else if(e && e.target && e.target.dataset) { id = e.target.dataset.id; btn = e.currentTarget || e.target; }
+  else if(e && e.currentTarget && e.currentTarget.dataset) { id = e.currentTarget.dataset.id; btn = e.currentTarget; }
+
+  if(!id) return toast && toast('No exam id');
+
+  try{
+    if(btn) setButtonLoading(btn, true, 'Updating...');
+    // find exam in cache
+    const ex = examsCache.find(x => x.id === id) || (await (async ()=>{
+      const snap = await getDoc(doc(db,'exams',id));
+      return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+    })());
+    if(!ex) throw new Error('Exam not found');
+
+    const newStatus = (ex.status === 'published') ? 'draft' : 'published';
+    const updatePayload = { status: newStatus };
+    if(newStatus === 'published') updatePayload.publishedAt = Timestamp.now();
+    await updateDoc(doc(db,'exams', id), updatePayload);
+    await loadExams();
+    renderExams();
+    showPage('exams');
+    toast(newStatus === 'published' ? 'Exam published' : 'Exam unpublished');
+  }catch(err){
+    console.error('togglePublishExam failed', err);
+    toast('Publish/unpublish failed');
+  } finally {
+    if(btn) setButtonLoading(btn, false);
   }
-  if(ex.status === 'deactivated') return alert('Deactivated exam cannot be published');
-  await publishExam(id);
-  await loadExams(); renderExams(); toast('Exam published');
 }
 
 /* ---------- Replace publishExam ---------- */
