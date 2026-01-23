@@ -1733,65 +1733,24 @@ function countStudentsInClass(className){
 
 /** ---------- TEACHERS (table view + View modal) ---------- */
 
+/* ---------- Teachers: updated render + modals (prevent full-page reload) ---------- */
+
+/* populate teachers subject filter (keeps subjectsCache) */
+function populateTeachersSubjectFilter(){
+  if(!teachersSubjectFilter) return;
+  teachersSubjectFilter.innerHTML = '<option value="">All subjects</option>';
+  for(const s of (subjectsCache || [])){
+    const opt = document.createElement('option');
+    opt.value = s.name || s.id;
+    opt.textContent = s.name || s.id;
+    teachersSubjectFilter.appendChild(opt);
+  }
+}
+
+/* renderTeachers: desktop includes Subjects column; mobile shows name + ID & Subjects (no email) */
 function renderTeachers(){
   if(!teachersList) return;
   const total = (teachersCache || []).length;
-
-  if(isMobileViewport()){
-    let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-      <strong>Total teachers: ${total}</strong>
-      <div class="muted">Mobile: tap View</div>
-    </div><div id="teachersMobileList">`;
-    const q = (teachersSearch && teachersSearch.value||'').trim().toLowerCase();
-    const subjFilter = (teachersSubjectFilter && teachersSubjectFilter.value) || '';
-    let list = (teachersCache || []).slice();
-    list = list.filter(t => {
-      if(subjFilter && (!(t.subjects || []).includes(subjFilter))) return false;
-      if(!q) return true;
-      return (t.fullName||'').toLowerCase().includes(q) || (t.phone||'').toLowerCase().includes(q) || (String(t.id||t.teacherId||'')).toLowerCase().includes(q) || ((t.email||'').toLowerCase().includes(q));
-    });
-
-    list.forEach((t, idx) => {
-      const id = escape(t.id || t.teacherId || '');
-      const name = escape(t.fullName || '');
-      const email = escape(t.email || '—');
-      html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px;border-bottom:1px solid #f1f5f9">
-        <div style="display:flex;gap:12px;align-items:center">
-          <div style="min-width:28px;text-align:center;font-weight:700">${idx+1}</div>
-          <div style="min-width:90px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${id}</div>
-          <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${name}</div>
-        </div>
-        <div style="display:flex;align-items:center;gap:8px">
-          <div style="min-width:160px;text-align:right;font-size:0.9rem;color:#555">${email}</div>
-          <div><button class="btn btn-ghost btn-sm mobile-teacher-view" data-id="${escape(t.id||t.teacherId||'')}">⋮</button></div>
-        </div>
-      </div>`;
-    });
-    html += `</div>`;
-    teachersList.innerHTML = html;
-
-    teachersList.querySelectorAll('.mobile-teacher-view').forEach(b=>{
-      b.onclick = (ev) => openViewTeacherModal({ target:{ dataset:{ id: ev.currentTarget.dataset.id } }});
-    });
-    return;
-  }
-
-  // desktop table (with Email column)
-  let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-      <strong>Total teachers: ${total}</strong>
-      <div class="muted">Showing ID, Name, Salary, Email — click View for more</div>
-    </div>`;
-  html += `<div style="overflow:auto"><table style="width:100%;border-collapse:collapse">
-    <thead>
-      <tr style="text-align:left;border-bottom:1px solid #e6eef8">
-        <th style="padding:8px;width:48px">No</th>
-        <th style="padding:8px;width:140px">ID</th>
-        <th style="padding:8px">Name</th>
-        <th style="padding:8px;width:160px">Email</th>
-        <th style="padding:8px;width:120px">Salary</th>
-        <th style="padding:8px;width:220px">Actions</th>
-      </tr>
-    </thead><tbody>`;
 
   const q = (teachersSearch && teachersSearch.value||'').trim().toLowerCase();
   const subjFilter = (teachersSubjectFilter && teachersSubjectFilter.value) || '';
@@ -1802,21 +1761,142 @@ function renderTeachers(){
     return (t.fullName||'').toLowerCase().includes(q) || (t.phone||'').toLowerCase().includes(q) || (String(t.id||t.teacherId||'')).toLowerCase().includes(q) || ((t.email||'').toLowerCase().includes(q));
   });
 
+  // MOBILE
+  if(isMobileViewport()){
+    try {
+      if(teachersSearch) teachersSearch.style.display = 'none';
+      if(teachersSubjectFilter) teachersSubjectFilter.style.display = 'none';
+      if(openAddTeacher) openAddTeacher.style.display = 'none';
+    } catch(e){}
+
+    const subjOptions = (subjectsCache || []).map(s=>`<option value="${escape(s.name||s.id)}">${escape(s.name||s.id)}</option>`).join('');
+    let html = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px">
+        <div style="flex:1;display:flex;gap:8px;align-items:center">
+          <input id="_mobileTeacherSearch" placeholder="Search teachers..." value="${escape(teachersSearch && teachersSearch.value||'')}" style="flex:1;padding:8px;border-radius:8px;border:1px solid #e6eef8" />
+          <select id="_mobileTeacherSubject" style="padding:8px;border-radius:8px;border:1px solid #e6eef8;white-space:nowrap">
+            <option value="">All subjects</option>
+            ${subjOptions}
+          </select>
+          <button type="button" id="_mobileAddTeacher" class="btn btn-primary" style="white-space:nowrap">+ Add Teacher</button>
+        </div>
+        <div style="margin-left:8px;text-align:right"><strong>Total: ${total}</strong></div>
+      </div>
+      <div id="teachersMobileList">
+    `;
+
+    list.forEach((t, idx) => {
+      const id = escape(t.id || t.teacherId || '');
+      const name = escape(t.fullName || '—');
+      const subs = (t.subjects || []).map(sid => {
+        const found = (subjectsCache||[]).find(x => x.id === sid || x.name === sid);
+        return found ? found.name : sid;
+      }).join(', ') || '—';
+      html += `
+        <div class="mobile-row" style="padding:10px;border-bottom:1px solid #f1f5f9">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div style="display:flex;gap:12px;align-items:center;flex:1;min-width:0">
+              <div style="min-width:28px;text-align:center;font-weight:700">${idx+1}</div>
+              <div style="min-width:0;overflow:hidden">
+                <div style="font-weight:600;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${name}</div>
+                <div style="font-size:12px;color:#667085;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">ID: ${id} · Subjects: ${escape(subs)}</div>
+              </div>
+            </div>
+            <div style="margin-left:8px"><button type="button" class="btn btn-ghost btn-sm mobile-teacher-more" data-id="${escape(t.id||t.teacherId||'')}">⋮</button></div>
+          </div>
+        </div>
+      `;
+    });
+
+    html += `</div>`;
+    teachersList.innerHTML = html;
+
+    // attach mobile handlers once (delegation) to avoid duplicates
+    if(!teachersList.dataset.mobileHandlersAttached){
+      teachersList.addEventListener('click', function(ev){
+        const t = ev.target;
+        if(!t) return;
+        if(t.id === '_mobileAddTeacher' || (t.closest && t.closest('#_mobileAddTeacher'))){
+          // prevent default (safety) and open modal
+          if(ev.preventDefault) ev.preventDefault();
+          if(typeof openAddTeacher !== 'undefined' && openAddTeacher) openAddTeacher.click();
+          return;
+        }
+        if(t.classList && t.classList.contains('mobile-teacher-more')){
+          const sid = t.dataset.id;
+          if(ev.preventDefault) ev.preventDefault();
+          openViewTeacherModal({ target: { dataset: { id: sid } } });
+          return;
+        }
+      });
+
+      teachersList.addEventListener('input', function(ev){
+        const t = ev.target;
+        if(!t) return;
+        if(t.id === '_mobileTeacherSearch'){
+          if(teachersSearch) teachersSearch.value = t.value;
+          renderTeachers();
+        }
+      });
+
+      teachersList.addEventListener('change', function(ev){
+        const t = ev.target;
+        if(!t) return;
+        if(t.id === '_mobileTeacherSubject'){
+          if(teachersSubjectFilter) teachersSubjectFilter.value = t.value;
+          renderTeachers();
+        }
+      });
+
+      teachersList.dataset.mobileHandlersAttached = '1';
+    }
+
+    return;
+  }
+
+  // DESKTOP: restore page header visibility (if it was hidden earlier)
+  try {
+    if(teachersSearch) teachersSearch.style.display = '';
+    if(teachersSubjectFilter) teachersSubjectFilter.style.display = '';
+    if(openAddTeacher) openAddTeacher.style.display = '';
+  } catch(e){}
+
+  // Desktop table with Subjects column
+  let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <strong>Total teachers: ${total}</strong>
+      <div class="muted">Showing ID, Name, Subjects, Salary — click View for more</div>
+    </div>`;
+  html += `<div style="overflow:auto"><table style="width:100%;border-collapse:collapse">
+    <thead>
+      <tr style="text-align:left;border-bottom:1px solid #e6eef8">
+        <th style="padding:8px;width:48px">No</th>
+        <th style="padding:8px;width:140px">ID</th>
+        <th style="padding:8px">Name</th>
+        <th style="padding:8px;width:200px">Subjects</th>
+        <th style="padding:8px;width:120px">Salary</th>
+        <th style="padding:8px;width:220px">Actions</th>
+      </tr>
+    </thead><tbody>`;
+
   list.forEach((t, idx) => {
     const id = escape(t.id || t.teacherId || '');
     const name = escape(t.fullName || '');
-    const email = escape(t.email || '—');
     const salary = (typeof t.salary !== 'undefined' && t.salary !== null) ? escape(String(t.salary)) : '—';
+    const subsText = (t.subjects || []).map(sid => {
+      const found = (subjectsCache||[]).find(x => x.id === sid || x.name === sid);
+      return found ? found.name : sid;
+    }).join(', ') || '—';
+
     html += `<tr style="border-bottom:1px solid #f1f5f9">
       <td style="padding:8px;vertical-align:middle">${idx+1}</td>
       <td style="padding:8px;vertical-align:middle">${id}</td>
       <td style="padding:8px;vertical-align:middle">${name}</td>
-      <td style="padding:8px;vertical-align:middle">${email}</td>
+      <td style="padding:8px;vertical-align:middle;max-width:240px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">${escape(subsText)}</td>
       <td style="padding:8px;vertical-align:middle">${salary}</td>
       <td style="padding:8px;vertical-align:middle">
-        <button class="btn btn-ghost btn-sm view-teacher" data-id="${id}">View</button>
-        <button class="btn btn-ghost btn-sm edit-teacher" data-id="${id}">Edit</button>
-        <button class="btn btn-danger btn-sm del-teacher" data-id="${id}">Delete</button>
+        <button type="button" class="btn btn-ghost btn-sm view-teacher" data-id="${id}">View</button>
+        <button type="button" class="btn btn-ghost btn-sm edit-teacher" data-id="${id}">Edit</button>
+        <button type="button" class="btn btn-danger btn-sm del-teacher" data-id="${id}">Delete</button>
       </td>
     </tr>`;
   });
@@ -1824,12 +1904,13 @@ function renderTeachers(){
   html += `</tbody></table></div>`;
   teachersList.innerHTML = html;
 
+  // desktop wiring
   teachersList.querySelectorAll('.view-teacher').forEach(b => b.onclick = openViewTeacherModal);
   teachersList.querySelectorAll('.edit-teacher').forEach(b => b.onclick = openEditTeacherModal);
   teachersList.querySelectorAll('.del-teacher').forEach(b => b.onclick = deleteTeacher);
 }
 
-
+/* ---------- View teacher modal (delete uses modalConfirm + loading) ---------- */
 async function openViewTeacherModal(e){
   const id = (e && e.target) ? e.target.dataset.id : (e && e.dataset ? e.dataset.id : e);
   if(!id) return;
@@ -1843,11 +1924,7 @@ async function openViewTeacherModal(e){
   if(!t) return toast('Teacher not found');
 
   const classesText = (t.classes && t.classes.length) ? t.classes.join(', ') : 'No classes';
-  const subsText = (t.subjects && t.subjects.length) ? (t.subjects.map(s=>{
-    // try map id -> subject.name if subjectsCache contains id
-    const found = (subjectsCache||[]).find(x => x.id === s || x.name === s);
-    return found ? found.name : s;
-  }).join(', ')) : 'No subjects';
+  const subsText = (t.subjects && t.subjects.length) ? (t.subjects.map(s=>{ const found = (subjectsCache||[]).find(x => x.id === s || x.name === s); return found ? found.name : s; }).join(', ')) : 'No subjects';
   const html = `
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
       <div><strong>ID</strong><div class="muted">${escape(t.id || t.teacherId || '')}</div></div>
@@ -1860,11 +1937,11 @@ async function openViewTeacherModal(e){
       <div style="grid-column:1 / -1"><strong>Subjects</strong><div class="muted">${escape(subsText)}</div></div>
     </div>
     <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
-      <button class="btn btn-ghost" id="viewTeacherClose">Close</button>
-      <button class="btn btn-ghost" id="viewTeacherEdit">Edit</button>
-      <button class="btn btn-ghost" id="viewTeacherSendReset">Send reset email</button>
-      <button class="btn btn-ghost" id="viewTeacherAdminReset">Admin reset (server)</button>
-      <button class="btn btn-danger" id="viewTeacherDel">Delete</button>
+      <button type="button" class="btn btn-ghost" id="viewTeacherClose">Close</button>
+      <button type="button" class="btn btn-ghost" id="viewTeacherEdit">Edit</button>
+      <button type="button" class="btn btn-ghost" id="viewTeacherSendReset">Send reset email</button>
+      <button type="button" class="btn btn-ghost" id="viewTeacherAdminReset">Admin reset (server)</button>
+      <button type="button" class="btn btn-danger" id="viewTeacherDel">Delete</button>
     </div>
   `;
   showModal(`${escape(t.fullName||'')} — Teacher`, html);
@@ -1874,24 +1951,17 @@ async function openViewTeacherModal(e){
     closeModal();
     openEditTeacherModal({ target:{ dataset:{ id: t.id || t.teacherId } }});
   };
-  modalBody.querySelector('#viewTeacherDel').onclick = async () => {
-    if(!confirm('Delete teacher?')) return;
-    await deleteTeacher({ target:{ dataset:{ id: t.id || t.teacherId } }});
-    closeModal();
-  };
 
   modalBody.querySelector('#viewTeacherSendReset').onclick = async () => {
     const email = t.email;
     if(!email) return toast('Teacher has no email set');
     await sendResetEmailFor(email);
   };
-  
 
   modalBody.querySelector('#viewTeacherAdminReset').onclick = async () => {
     const newPass = prompt('Enter new password for teacher (min 6 chars):');
     if(!newPass || newPass.length < 6) return toast('Password must be at least 6 characters');
     if(!t.authUid) return toast('Teacher has no linked auth account');
-
     try {
       const token = currentUser && currentUser.getIdToken ? await currentUser.getIdToken(true) : null;
       const resp = await fetch('/admin/setTeacherPassword', {
@@ -1899,37 +1969,29 @@ async function openViewTeacherModal(e){
         headers: { 'Content-Type':'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({ uid: t.authUid, password: newPass })
       });
-      if (!resp.ok) {
-        const txt = await resp.text();
-        console.error('admin reset failed', resp.status, txt);
-        return toast('Admin reset failed (server). Try Send reset email instead.');
-      }
+      if (!resp.ok) { const txt = await resp.text(); console.error('admin reset failed', resp.status, txt); return toast('Admin reset failed (server).'); }
       toast('Password updated via admin API');
-    } catch(err){
-      console.error(err);
-      toast('Admin reset API not available');
-    }
+    } catch(err){ console.error(err); toast('Admin reset API not available'); }
+  };
+
+  modalBody.querySelector('#viewTeacherDel').onclick = async (ev) => {
+    if(ev && ev.preventDefault) ev.preventDefault();
+    const delBtn = modalBody.querySelector('#viewTeacherDel');
+    const ok = await modalConfirm('Confirm delete', 'Move teacher to Recycle Bin?');
+    if(!ok) return;
+    setButtonLoading(delBtn, true, 'Deleting...');
+    try{
+      const who = (currentUser && currentUser.uid) || (auth && auth.currentUser && auth.currentUser.uid) || null;
+      await updateDoc(doc(db,'teachers', t.id), { deleted: true, deletedAt: Timestamp.now(), deletedBy: who });
+      toast('Teacher moved to Recycle Bin');
+      await loadTeachers(); renderTeachers();
+      closeModal();
+    } catch(err){ console.error('delete teacher failed', err); toast('Failed to delete teacher'); }
+    setButtonLoading(delBtn, false);
   };
 }
 
-
-/* ---------- Ensure teachers subject/class filter is populated ---------- */
-function populateTeachersSubjectFilter(){
-  // ensure subjectsCache and classesCache are available
-  if(teachersSubjectFilter){
-    teachersSubjectFilter.innerHTML = '<option value="">All subjects</option>';
-    for(const s of (subjectsCache || [])){
-      const opt = document.createElement('option');
-      opt.value = s.name;
-      opt.textContent = s.name;
-      teachersSubjectFilter.appendChild(opt);
-    }
-  }
-  // no dedicated teachersClassFilter element in your snippet, but ensure classes are available for teacher modals
-  // (class options will be read from classesCache when opening create/edit teacher modal)
-}
-
-/* ---------- Teachers create/edit (default TEC00001) ---------- */
+/* ---------- Add teacher (save button loading, now prevents default submit) ---------- */
 function openAddTeacherModal(){
   const classOptions = (classesCache || []).map(c => `<option value="${escape(c.name)}">${escape(c.name)}</option>`).join('');
   const subjectOptions = (subjectsCache || []).map(s => `<option value="${escape(s.name)}">${escape(s.name)}</option>`).join('');
@@ -1946,74 +2008,212 @@ function openAddTeacherModal(){
       <div style="grid-column:1 / -1"><label>Assign subjects (select multiple)</label><select id="teacherSubjects" multiple size="6" style="width:100%">${subjectOptions}</select></div>
     </div>
     <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
-      <button id="cancelTeacher" class="btn btn-ghost">Cancel</button>
-      <button id="saveTeacher" class="btn btn-primary">Save</button>
+      <button type="button" id="cancelTeacher" class="btn btn-ghost">Cancel</button>
+      <button type="button" id="saveTeacher" class="btn btn-primary">Save</button>
     </div>
   `);
 
-  modalBody.querySelector('#cancelTeacher').onclick = closeModal;
+  modalBody.querySelector('#cancelTeacher').onclick = (ev) => { if(ev && ev.preventDefault) ev.preventDefault(); closeModal(); };
 
-  modalBody.querySelector('#saveTeacher').onclick = async () => {
-    let id = modalBody.querySelector('#teacherId').value.trim();
-    const name = (modalBody.querySelector('#teacherName').value || '').trim();
-    const phone = (modalBody.querySelector('#teacherPhone').value || '').trim();
-    const parentPhone = (modalBody.querySelector('#teacherParentPhone').value || '').trim();
-    const salaryVal = modalBody.querySelector('#teacherSalary').value;
-    const salary = salaryVal ? Number(salaryVal) : null;
-    const emailRaw = (modalBody.querySelector('#teacherEmail').value || '').trim();
-    const email = emailRaw ? emailRaw.toLowerCase() : '';
-    const password = modalBody.querySelector('#teacherPassword').value || '';
-    const classesSelected = Array.from(modalBody.querySelectorAll('#teacherClasses option:checked')).map(o => o.value);
-    const subjectsSelected = Array.from(modalBody.querySelectorAll('#teacherSubjects option:checked')).map(o => o.value);
+  modalBody.querySelector('#saveTeacher').onclick = async (ev) => {
+    if(ev && ev.preventDefault) ev.preventDefault();
+    const btn = ev.currentTarget;
+    try{
+      setButtonLoading(btn, true, 'Saving...');
+      let id = modalBody.querySelector('#teacherId').value.trim();
+      const name = (modalBody.querySelector('#teacherName').value || '').trim();
+      const phone = (modalBody.querySelector('#teacherPhone').value || '').trim();
+      const parentPhone = (modalBody.querySelector('#teacherParentPhone').value || '').trim();
+      const salaryVal = modalBody.querySelector('#teacherSalary').value;
+      const salary = salaryVal ? Number(salaryVal) : null;
+      const emailRaw = (modalBody.querySelector('#teacherEmail').value || '').trim();
+      const email = emailRaw ? emailRaw.toLowerCase() : '';
+      const password = modalBody.querySelector('#teacherPassword').value || '';
+      const classesSelected = Array.from(modalBody.querySelectorAll('#teacherClasses option:checked')).map(o => o.value);
+      const subjectsSelected = Array.from(modalBody.querySelectorAll('#teacherSubjects option:checked')).map(o => o.value);
 
-    if(!name) return toast('Teacher name is required');
+      if(!name){ toast('Teacher name is required'); setButtonLoading(btn, false); return; }
+      if(email && isTeacherEmailDuplicate(email)) { toast('Email already used by another teacher'); setButtonLoading(btn, false); return; }
+      if(password && password.length < 6) { toast('Password must be at least 6 characters'); setButtonLoading(btn, false); return; }
 
-    // duplicate email check (client-side)
-    if(email && isTeacherEmailDuplicate(email)) {
-      return toast('Email already used by another teacher');
-    }
+      if(!id) id = await generateDefaultId('teachers','TEC',5);
 
-    // password length check if provided
-    if(password && String(password).length < 6) return toast('Password must be at least 6 characters');
+      const payload = { id, teacherId: id, fullName: name, phone: phone||'', parentPhone: parentPhone||'', salary: salary, classes: classesSelected, subjects: subjectsSelected, createdAt: Timestamp.now(), createdBy: currentUser ? currentUser.uid : null };
+      if(email) payload.email = email;
 
-    if(!id) id = await generateDefaultId('teachers','TEC',5);
-
-    const payload = {
-      id, teacherId: id, fullName: name, phone: phone || '', parentPhone: parentPhone || '',
-      salary: salary, classes: classesSelected, subjects: subjectsSelected,
-      createdAt: Timestamp.now(), createdBy: currentUser ? currentUser.uid : null
-    };
-
-    if(email) payload.email = email;
-
-    try {
-      // If email + password provided: create auth user then set authUid on teacher doc
       if(email && password){
         try {
           const userCred = await createUserWithEmailAndPassword(auth, email, password);
           payload.authUid = userCred.user.uid;
         } catch(err){
-          // createUserWithEmailAndPassword may fail when the email is already used in Firebase Auth.
           console.warn('createUserWithEmailAndPassword failed', err);
-          // show better message
-          if(err && err.code === 'auth/email-already-in-use') {
-            return toast('Email already exists in Auth. Use a different email or remove existing account.');
-          }
-          // If other error, continue but inform user
-          toast('Failed to create auth user (teacher will be created without login).');
+          if(err && err.code === 'auth/email-already-in-use') { toast('Email already exists in Auth. Teacher saved without auth link.'); }
+          else toast('Failed to create auth user (teacher will be created without login).');
         }
       }
 
-      // save teacher doc
       await setDoc(doc(db,'teachers', id), payload);
       toast('Teacher created');
       closeModal();
-      await loadTeachers(); renderTeachers();
-    } catch(err){
-      console.error('create teacher failed', err);
-      toast('Failed to create teacher');
-    }
+      await loadTeachers();
+      renderTeachers();
+      showPage('teachers'); // ← FORCE stay on Teachers
+      // refresh teachers only (no page reload)
+    } catch(err){ console.error('create teacher failed', err); toast('Failed to create teacher'); }
+    setButtonLoading(btn, false);
   };
+}
+
+/* ---------- Edit teacher (save button loading, refresh teachers only) ---------- */
+async function openEditTeacherModal(e){
+  const id = e && e.target ? e.target.dataset.id : e;
+  if(!id) return;
+  let t = teachersCache.find(x => x.id === id || x.teacherId === id);
+  if(!t){
+    try{ const snap = await getDoc(doc(db,'teachers', id)); if(!snap.exists()) return toast('Teacher not found'); t = { id: snap.id, ...snap.data() }; } catch(err){ console.error(err); return toast('Failed to load teacher'); }
+  }
+
+  const classOptions = (classesCache || []).map(c => `<option value="${escape(c.name)}" ${ (t.classes||[]).includes(c.name) ? 'selected' : '' }>${escape(c.name)}</option>`).join('');
+  const subjectOptions = (subjectsCache || []).map(s => `<option value="${escape(s.name)}" ${ (t.subjects||[]).includes(s.name) ? 'selected' : '' }>${escape(s.name)}</option>`).join('');
+
+  showModal('Edit Teacher', `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div><label>Teacher ID</label><input id="teacherId" value="${escape(t.teacherId||t.id||'')}" disabled /></div>
+      <div><label>Salary</label><input id="teacherSalary" type="number" min="0" value="${escape(String(t.salary||''))}" /></div>
+      <div style="grid-column:1 / -1"><label>Full name</label><input id="teacherName" value="${escape(t.fullName||'')}" /></div>
+      <div><label>Phone</label><input id="teacherPhone" value="${escape(t.phone||'')}" /></div>
+      <div><label>Parent phone</label><input id="teacherParentPhone" value="${escape(t.parentPhone||'')}" /></div>
+      <div><label>Email</label><input id="teacherEmail" type="email" value="${escape(t.email||'')}" /></div>
+      <div><label>New password (optional)</label><input id="teacherNewPassword" type="password" placeholder="Leave blank to keep current password" /></div>
+      <div style="grid-column:1 / -1"><label>Assign classes (select multiple)</label><select id="teacherClasses" multiple size="6" style="width:100%">${classOptions}</select></div>
+      <div style="grid-column:1 / -1"><label>Assign subjects (select multiple)</label><select id="teacherSubjects" multiple size="6" style="width:100%">${subjectOptions}</select></div>
+    </div>
+    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
+      <button type="button" id="cancelTeacher" class="btn btn-ghost">Cancel</button>
+      <button type="button" id="sendReset" class="btn btn-ghost">Send password reset email</button>
+      <button type="button" id="adminReset" class="btn btn-ghost">Admin reset password</button>
+      <button type="button" id="updateTeacher" class="btn btn-primary">Save</button>
+    </div>
+  `);
+
+  modalBody.querySelector('#cancelTeacher').onclick = (ev) => { if(ev && ev.preventDefault) ev.preventDefault(); closeModal(); };
+
+  modalBody.querySelector('#sendReset').onclick = async () => {
+    const email = (modalBody.querySelector('#teacherEmail').value || '').trim().toLowerCase();
+    if(!email) return toast('Teacher has no email set');
+    await sendResetEmailFor(email);
+  };
+
+  modalBody.querySelector('#adminReset').onclick = async () => {
+    const newPass = (modalBody.querySelector('#teacherNewPassword').value || '').trim();
+    if(!newPass || newPass.length < 6) return toast('Enter a new password of at least 6 characters to admin-reset');
+    if(!t.authUid) return toast('Teacher has no linked auth account.');
+    try{
+      const token = currentUser && currentUser.getIdToken ? await currentUser.getIdToken(true) : null;
+      const resp = await fetch('/admin/setTeacherPassword', {
+        method:'POST',
+        headers:{ 'Content-Type':'application/json', ...(token?{Authorization:`Bearer ${token}`}:{}) },
+        body: JSON.stringify({ uid: t.authUid, password: newPass })
+      });
+      if(!resp.ok){ toast('Admin reset failed (server)'); }
+      else toast('Password updated via admin API');
+    } catch(err){ console.error(err); toast('Admin reset API not available'); }
+  };
+
+  modalBody.querySelector('#updateTeacher').onclick = async (ev) => {
+    if(ev && ev.preventDefault) ev.preventDefault();
+    const btn = ev.currentTarget;
+    try{
+      setButtonLoading(btn, true, 'Saving...');
+      const name = (modalBody.querySelector('#teacherName').value || '').trim();
+      const phone = (modalBody.querySelector('#teacherPhone').value || '').trim();
+      const parentPhone = (modalBody.querySelector('#teacherParentPhone').value || '').trim();
+      const salaryVal = modalBody.querySelector('#teacherSalary').value;
+      const salary = salaryVal ? Number(salaryVal) : null;
+      const emailRaw = (modalBody.querySelector('#teacherEmail').value || '').trim();
+      const email = emailRaw ? emailRaw.toLowerCase() : '';
+      const newPass = (modalBody.querySelector('#teacherNewPassword').value || '').trim();
+      const classesSelected = Array.from(modalBody.querySelectorAll('#teacherClasses option:checked')).map(o => o.value);
+      const subjectsSelected = Array.from(modalBody.querySelectorAll('#teacherSubjects option:checked')).map(o => o.value);
+
+      if(!name){ toast('Teacher name is required'); setButtonLoading(btn, false); return; }
+      if(email && isTeacherEmailDuplicate(email, t.id)) { toast('Email already used by another teacher'); setButtonLoading(btn, false); return; }
+      if(newPass && newPass.length < 6) { toast('New password must be at least 6 characters'); setButtonLoading(btn, false); return; }
+
+      if(email && !t.authUid && newPass){
+        try {
+          const uc = await createUserWithEmailAndPassword(auth, email, newPass);
+          t.authUid = uc.user.uid;
+        } catch(err){
+          console.warn('createUserDuringUpdate failed', err);
+          if(err && err.code === 'auth/email-already-in-use') toast('Email exists in Auth; saved without linking auth.');
+          else toast('Failed to create auth user; saved without auth link.');
+        }
+      }
+
+      await updateDoc(doc(db,'teachers', t.id), {
+        fullName: name, phone: phone||'', parentPhone: parentPhone||'', salary: salary,
+        classes: classesSelected, subjects: subjectsSelected, email: email||'', updatedAt: Timestamp.now(), updatedBy: currentUser ? currentUser.uid : null,
+        ...(t.authUid ? { authUid: t.authUid } : {})
+      });
+
+      if(newPass && t.authUid){
+        try {
+          const token = currentUser && currentUser.getIdToken ? await currentUser.getIdToken(true) : null;
+          const resp = await fetch('/admin/setTeacherPassword', {
+            method:'POST',
+            headers:{ 'Content-Type':'application/json', ...(token?{Authorization:`Bearer ${token}`}:{}) },
+            body: JSON.stringify({ uid: t.authUid, password: newPass })
+          });
+          if(!resp.ok){
+            const em = email || t.email;
+            if(em) { await sendPasswordResetEmail(auth, em); toast('Saved. Admin reset not available — reset email sent.'); }
+            else toast('Saved. Admin reset not available (no email).');
+          } else {
+            toast('Saved and password updated via admin API');
+          }
+        } catch(err){
+          console.warn('admin reset failed in update flow', err);
+          const em = email || t.email;
+          if(em) { await sendPasswordResetEmail(auth, em); toast('Saved. Admin reset failed — reset email sent.'); }
+          else toast('Saved. Admin reset failed (no email).');
+        }
+      } else {
+        toast('Teacher updated');
+      }
+
+      closeModal();
+      await loadTeachers(); renderTeachers(); // refresh teachers only
+    } catch(err){
+      console.error('update teacher failed', err); toast('Failed to update teacher');
+    }
+    setButtonLoading(btn, false);
+  };
+}
+
+/* ---------- Delete teacher (used by desktop rows) ---------- */
+async function deleteTeacher(e){
+  if(e && e.preventDefault) e.preventDefault();
+  const id = e && e.target ? e.target.dataset.id : e;
+  if(!id) return;
+  const ok = await modalConfirm('Confirm delete', 'Move teacher to Recycle Bin?');
+  if(!ok) return;
+  const btn = (e && e.currentTarget) || null;
+  if(btn) setButtonLoading(btn, true, 'Deleting...');
+  try {
+    const who = (currentUser && currentUser.uid) || (auth && auth.currentUser && auth.currentUser.uid) || null;
+    await updateDoc(doc(db,'teachers', id), { deleted: true, deletedAt: Timestamp.now(), deletedBy: who });
+    toast('Teacher moved to Recycle Bin');
+    await loadTeachers(); renderTeachers();
+  } catch(err){
+    console.error('delete teacher failed', err); toast('Failed to delete teacher');
+  }
+  if(btn) setButtonLoading(btn, false);
+}
+
+/* ensure add button wired (prevent default to avoid accidental form submit) */
+if(typeof openAddTeacher !== 'undefined' && openAddTeacher){
+  openAddTeacher.onclick = (ev) => { if(ev && ev.preventDefault) ev.preventDefault(); openAddTeacherModal(); };
 }
 
 
@@ -2043,209 +2243,8 @@ async function sendResetEmailFor(email) {
 
 
 
-/* Edit teacher (id may be teacher doc id) */
-async function openEditTeacherModal(e){
-  const id = e && e.target ? e.target.dataset.id : e;
-  if(!id) return;
-  let t = teachersCache.find(x => x.id === id || x.teacherId === id);
-  if(!t){
-    try {
-      const snap = await getDoc(doc(db,'teachers', id));
-      if(!snap.exists()) return toast('Teacher not found');
-      t = { id: snap.id, ...snap.data() };
-    } catch(err){ console.error(err); return toast('Failed to load teacher'); }
-  }
-
-  const classOptions = (classesCache || []).map(c => `<option value="${escape(c.name)}" ${ (t.classes||[]).includes(c.name) ? 'selected' : '' }>${escape(c.name)}</option>`).join('');
-  const subjectOptions = (subjectsCache || []).map(s => `<option value="${escape(s.name)}" ${ (t.subjects||[]).includes(s.name) ? 'selected' : '' }>${escape(s.name)}</option>`).join('');
-
-  showModal('Edit Teacher', `
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-      <div><label>Teacher ID</label><input id="teacherId" value="${escape(t.teacherId||t.id||'')}" disabled /></div>
-      <div><label>Salary</label><input id="teacherSalary" type="number" min="0" value="${escape(String(t.salary||''))}" /></div>
-      <div style="grid-column:1 / -1"><label>Full name</label><input id="teacherName" value="${escape(t.fullName||'')}" /></div>
-      <div><label>Phone</label><input id="teacherPhone" value="${escape(t.phone||'')}" /></div>
-      <div><label>Parent phone</label><input id="teacherParentPhone" value="${escape(t.parentPhone||'')}" /></div>
-      <div><label>Email</label><input id="teacherEmail" type="email" value="${escape(t.email||'')}" /></div>
-      <div><label>New password (optional)</label><input id="teacherNewPassword" type="password" placeholder="Leave blank to keep current password" /></div>
-      <div style="grid-column:1 / -1"><label>Assign classes (select multiple)</label><select id="teacherClasses" multiple size="6" style="width:100%">${classOptions}</select></div>
-      <div style="grid-column:1 / -1"><label>Assign subjects (select multiple)</label><select id="teacherSubjects" multiple size="6" style="width:100%">${subjectOptions}</select></div>
-    </div>
-
-    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
-      <button id="cancelTeacher" class="btn btn-ghost">Cancel</button>
-      <button id="sendReset" class="btn btn-ghost">Send password reset email</button>
-      <button id="adminReset" class="btn btn-ghost">Admin reset password</button>
-      <button id="updateTeacher" class="btn btn-primary">Save</button>
-    </div>
-  `);
-
-  modalBody.querySelector('#cancelTeacher').onclick = closeModal;
-
-  modalBody.querySelector('#sendReset').onclick = async () => {
-    const email = (modalBody.querySelector('#teacherEmail').value || '').trim().toLowerCase();
-    if(!email) return toast('Teacher has no email set');
-    await sendResetEmailFor(email);
-  };
-  
-
-  // Admin reset via server endpoint using Firebase Admin SDK (server must implement)
-  modalBody.querySelector('#adminReset').onclick = async () => {
-    const newPass = (modalBody.querySelector('#teacherNewPassword').value || '').trim();
-    if(!newPass || newPass.length < 6) return toast('Enter a new password of at least 6 characters to admin-reset');
-    // t.authUid should exist if we created auth account earlier; if not, we may need to create one.
-    if(!t.authUid) return toast('Teacher has no linked auth account. Create an auth account first (set email+password).');
-
-    // get ID token to authorize the admin API call (optional; server may accept other auth)
-    let idToken = null;
-    try {
-      if (currentUser && typeof currentUser.getIdToken === 'function') idToken = await currentUser.getIdToken(true);
-    } catch(e){ console.warn('getIdToken failed', e); }
-
-    // call server endpoint (you must implement on your server / cloud function)
-    try {
-      const resp = await fetch('/admin/setTeacherPassword', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(idToken ? { Authorization: `Bearer ${idToken}` } : {})
-        },
-        body: JSON.stringify({ uid: t.authUid, password: newPass })
-      });
-      if (!resp.ok) {
-        const txt = await resp.text();
-        console.error('adminReset failed', resp.status, txt);
-        return toast('Admin reset failed (server error). Falling back to reset email.');
-      }
-      toast('Password updated via admin API');
-    } catch(err){
-      console.error('adminReset call failed', err);
-      toast('Admin reset API not available — sending reset email instead');
-      // fallback to reset email
-      try {
-        const email = (modalBody.querySelector('#teacherEmail').value || '').trim().toLowerCase();
-        if(email) { await sendPasswordResetEmail(auth, email); toast('Password reset email sent (fallback)'); }
-      } catch(e2){ console.error(e2); toast('Fallback reset email failed'); }
-    }
-  };
-
-  modalBody.querySelector('#updateTeacher').onclick = async () => {
-    const name = (modalBody.querySelector('#teacherName').value || '').trim();
-    const phone = (modalBody.querySelector('#teacherPhone').value || '').trim();
-    const parentPhone = (modalBody.querySelector('#teacherParentPhone').value || '').trim();
-    const salaryVal = modalBody.querySelector('#teacherSalary').value;
-    const salary = salaryVal ? Number(salaryVal) : null;
-    const emailRaw = (modalBody.querySelector('#teacherEmail').value || '').trim();
-    const email = emailRaw ? emailRaw.toLowerCase() : '';
-    const newPass = (modalBody.querySelector('#teacherNewPassword').value || '').trim();
-    const classesSelected = Array.from(modalBody.querySelectorAll('#teacherClasses option:checked')).map(o => o.value);
-    const subjectsSelected = Array.from(modalBody.querySelectorAll('#teacherSubjects option:checked')).map(o => o.value);
-
-    if(!name) return toast('Teacher name is required');
-
-    // duplicate email check excluding current teacher
-    if(email && isTeacherEmailDuplicate(email, t.id)) {
-      return toast('Email already used by another teacher');
-    }
-
-    // if admin provided a new password in update flow, prefer adminReset endpoint or fallback to sendReset
-    if(newPass && newPass.length < 6) return toast('New password must be at least 6 characters');
-
-    try {
-      // If email provided and teacher has no authUid and admin provided a password, attempt to create auth user
-      if(email && !t.authUid && newPass){
-        try {
-          const uc = await createUserWithEmailAndPassword(auth, email, newPass);
-          // if success, attach authUid
-          t.authUid = uc.user.uid;
-        } catch(err){
-          console.warn('createUserDuringUpdate failed', err);
-          // if email exists in Auth, we cannot take it; inform admin and continue
-          if(err && err.code === 'auth/email-already-in-use') {
-            toast('Email already in use in Auth; teacher saved without linking auth.');
-          } else {
-            toast('Failed to create auth user; teacher saved without auth link.');
-          }
-        }
-      }
-
-      // update teacher document
-      await updateDoc(doc(db,'teachers', t.id), {
-        fullName: name, phone: phone || '', parentPhone: parentPhone || '', salary: salary,
-        classes: classesSelected, subjects: subjectsSelected, email: email || '', updatedAt: Timestamp.now(), updatedBy: currentUser ? currentUser.uid : null,
-        ...(t.authUid ? { authUid: t.authUid } : {})
-      });
-
-      // if admin provided a newPass and teacher has authUid, attempt admin reset call (best-effort)
-      if(newPass && t.authUid){
-        try {
-          // attempt admin-reset via server endpoint (optional)
-          const token = currentUser && currentUser.getIdToken ? await currentUser.getIdToken(true) : null;
-          const resp = await fetch('/admin/setTeacherPassword', {
-            method: 'POST',
-            headers: { 'Content-Type':'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-            body: JSON.stringify({ uid: t.authUid, password: newPass })
-          });
-          if (!resp.ok) {
-            // fallback to sendPasswordResetEmail
-            const em = email || t.email;
-            if(em) { await sendPasswordResetEmail(auth, em); toast('Saved. Admin reset not available — reset email sent.'); }
-            else toast('Saved. Admin reset not available (no email)'); 
-          } else {
-            toast('Saved and password updated via admin API');
-          }
-        } catch(err){
-          console.warn('admin reset failed in update flow', err);
-          const em = email || t.email;
-          if(em) { await sendPasswordResetEmail(auth, em); toast('Saved. Admin reset failed — reset email sent.'); }
-          else toast('Saved. Admin reset failed (no email).');
-        }
-      } else {
-        toast('Teacher updated');
-      }
-
-      closeModal();
-      await loadTeachers(); renderTeachers();
-    } catch(err){
-      console.error('update teacher failed', err);
-      toast('Failed to update teacher');
-    }
-  };
-}
 
 
-
-/* Delete teacher (keeps same behavior) */
-async function deleteTeacher(e){
-  const id = e && e.target ? e.target.dataset.id : e;
-  if(!id) return;
-  if(!confirm('Move teacher to Recycle Bin?')) return;
-
-  try {
-    const who = (currentUser && currentUser.uid) || (auth && auth.currentUser && auth.currentUser.uid) || null;
-    await updateDoc(doc(db,'teachers', id), {
-      deleted: true,
-      deletedAt: Timestamp.now(),
-      deletedBy: who,
-      deleted_at: Timestamp.now(),    // alternate name
-      deleted_by: who                 // alternate name
-    });
-    toast('Teacher moved to Recycle Bin');
-    await loadTeachers();
-    renderTeachers();
-  } catch(err){
-    console.error('delete teacher failed', err);
-    toast('Failed to delete teacher');
-  }
-}
-
-
-/* -------------------------
-  Wire buttons (defensive)
---------------------------*/
-if(typeof openAddTeacher !== 'undefined' && openAddTeacher){
-  openAddTeacher.onclick = openAddTeacherModal;
-}
 
 /** ---------- CLASSES (table view + View modal listing students) ---------- */
 function renderClasses(){
@@ -2689,7 +2688,6 @@ function modalConfirm(title, message){
 
 
 /* ---------- renderStudents (updated) ---------- */
-// Replace renderStudents() with this function
 async function renderStudents(){
   if(!studentsList) return;
   const q = (studentsSearch && studentsSearch.value||'').trim().toLowerCase();
