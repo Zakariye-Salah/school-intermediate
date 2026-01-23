@@ -2689,15 +2689,29 @@ function modalConfirm(title, message){
 
 
 /* ---------- renderStudents (updated) ---------- */
+// Replace renderStudents() with this function
 async function renderStudents(){
   if(!studentsList) return;
   const q = (studentsSearch && studentsSearch.value||'').trim().toLowerCase();
   const classFilterVal = (studentsClassFilter && studentsClassFilter.value) || '';
 
-  // removed any exam totals logic entirely (per request)
+  // If mobile, hide the top page header controls to avoid duplicates.
+  const mobile = isMobileViewport();
+  try {
+    if(mobile){
+      if(studentsSearch) studentsSearch.style.display = 'none';
+      if(openAddStudent) openAddStudent.style.display = 'none';
+      if(studentsClassFilter) studentsClassFilter.style.display = 'none';
+    } else {
+      // restore desktop header controls
+      if(studentsSearch) studentsSearch.style.display = '';
+      if(openAddStudent) openAddStudent.style.display = '';
+      if(studentsClassFilter) studentsClassFilter.style.display = '';
+    }
+  } catch(e){ /* ignore styling errors if elements missing */ }
 
+  // filter students (same logic as before)
   let filtered = (studentsCache || []).filter(s=>{
-    // exclude soft-deleted students
     if(s.deleted === true) return false;
     if(s.status === 'deleted') return false;
     if(classFilterVal && s.classId !== classFilterVal) return false;
@@ -2707,9 +2721,10 @@ async function renderStudents(){
 
   const total = filtered.length;
 
-  // MOBILE: search + Add side-by-side; rows are two-line (name, then id + class)
-  if(isMobileViewport()){
-    // build header (search + add) and a second line that shows the total (mobile only)
+  // MOBILE: single header inside the list, class filter under header, total beneath header
+  if(mobile){
+    // build mobile class select HTML (use classesCache)
+    const classOptions = (classesCache||[]).map(c=>`<option value="${escape(c.name)}">${escape(c.name)}</option>`).join('');
     let html = `
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px">
         <div style="flex:1;display:flex;gap:8px;align-items:center">
@@ -2717,7 +2732,15 @@ async function renderStudents(){
           <button id="_mobileAdd" class="btn btn-primary" style="white-space:nowrap">+ Add Student</button>
         </div>
       </div>
-      <div style="margin-bottom:8px;font-size:13px;color:#374151"><strong>Total students: ${total}</strong></div>
+
+      <div style="margin-bottom:8px;display:flex;gap:8px;align-items:center">
+        <select id="_mobileClassFilter" style="padding:8px;border-radius:8px;border:1px solid #e6eef8">
+          <option value="">All classes</option>
+          ${classOptions}
+        </select>
+        <div style="margin-left:auto;font-size:13px;color:#374151"><strong>Total: ${total}</strong></div>
+      </div>
+
       <div id="studentsMobileList">
     `;
 
@@ -2744,17 +2767,18 @@ async function renderStudents(){
     html += `</div>`;
     studentsList.innerHTML = html;
 
-    // --- Attach mobile handlers ONCE using delegation to avoid duplicates ---
+    // Attach mobile handlers once (delegation) to avoid duplicates
     if(!studentsList.dataset.mobileHandlersAttached){
-      // click delegation for mobile Add and More buttons
+      // click delegation (Add, More)
       studentsList.addEventListener('click', function(ev){
         const t = ev.target;
         if(!t) return;
-        if(t.id === '_mobileAdd' || t.closest && t.closest('#_mobileAdd')){
-          // open Add Student modal (reuses your existing openAddStudent)
+        // Add Student
+        if(t.id === '_mobileAdd' || (t.closest && t.closest('#_mobileAdd'))){
           if(typeof openAddStudent !== 'undefined' && openAddStudent) openAddStudent.click();
           return;
         }
+        // More (view)
         if(t.classList && t.classList.contains('mobile-more')){
           const sid = t.dataset.id;
           openViewStudentModal({ target: { dataset: { id: sid } } });
@@ -2768,19 +2792,27 @@ async function renderStudents(){
         if(!t) return;
         if(t.id === '_mobileSearch'){
           if(studentsSearch) studentsSearch.value = t.value;
-          // debounce not strictly required, but quick guard: call renderStudents directly
           renderStudents();
         }
       });
 
-      // mark handlers attached so we don't add them again
+      // change delegation for mobile class filter
+      studentsList.addEventListener('change', function(ev){
+        const t = ev.target;
+        if(!t) return;
+        if(t.id === '_mobileClassFilter'){
+          if(studentsClassFilter) studentsClassFilter.value = t.value;
+          renderStudents();
+        }
+      });
+
       studentsList.dataset.mobileHandlersAttached = '1';
     }
 
     return;
   }
 
-  // DESKTOP: same table but WITHOUT Total column
+  // DESKTOP: table without Total column (unchanged)
   let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
       <strong>Total students: ${total}</strong>
       <div class="muted">Columns: No, ID, Name, Parent, Class</div>
@@ -2824,6 +2856,7 @@ async function renderStudents(){
   studentsList.querySelectorAll('.edit-stu').forEach(b=> b.addEventListener('click', openEditStudentModal));
   studentsList.querySelectorAll('.del-stu').forEach(b=> b.addEventListener('click', deleteOrUnblockStudent));
 }
+
 
 
 /* ---------- view student modal (updated delete flow) ---------- */
