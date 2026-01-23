@@ -3261,6 +3261,17 @@ async function deleteOrUnblockStudent(e){
   ? isMobileViewport()
   : window.matchMedia('(max-width:768px)').matches;
 
+  // hide desktop header controls on mobile
+if(mobile){
+  if(examSearch) examSearch.style.display = 'none';
+  if(examClassFilter) examClassFilter.style.display = 'none';
+  if(controls) controls.style.display = 'none';
+} else {
+  if(examSearch) examSearch.style.display = '';
+  if(examClassFilter) examClassFilter.style.display = '';
+  if(controls) controls.style.display = '';
+}
+
 // 🚫 do NOT render desktop controls on mobile
 if(!mobile && !controls && pageExams){
   controls = document.createElement('div');
@@ -3284,15 +3295,35 @@ if(!mobile && !controls && pageExams){
 if(mobile){
   let html = `
   <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
+    <input
+      id="examSearchMobile"
+      class="input"
+      placeholder="Search exams..."
+      style="flex:1"
+    />
+    <button class="btn btn-primary btn-sm" onclick="openAddExam && openAddExam.click()">+ Add</button>
   </div>
-
-
+  
+  <div style="display:flex;gap:8px;margin-bottom:6px">
+    <select id="examClassFilterMobile" class="input" style="flex:1">
+      <option value="">All Classes</option>
+      ${(examClassFilter?.innerHTML || '')}
+    </select>
+  
+    <select id="examSortMobile" class="input">
+      <option value="date">Date</option>
+      <option value="a-z">A → Z</option>
+      <option value="z-a">Z → A</option>
+    </select>
+  </div>
+  
   <div style="text-align:right;font-size:13px;font-weight:600;color:#334155;margin-bottom:8px">
     Total exams: ${list.length}
   </div>
-
+  
   <div id="examsMobileList">
   `;
+  
 
   
       list.forEach((e, idx) => {
