@@ -1754,8 +1754,12 @@ function renderTeachers(){
 
   const q = (teachersSearch && teachersSearch.value||'').trim().toLowerCase();
   const subjFilter = (teachersSubjectFilter && teachersSubjectFilter.value) || '';
+  // read mobile class filter value if present
+  const mobileClassVal = (document.getElementById('_mobileTeacherClass') && document.getElementById('_mobileTeacherClass').value) || '';
   let list = (teachersCache || []).slice();
   list = list.filter(t => {
+    // filter by mobile class if set (teachers have t.classes array)
+    if(mobileClassVal && !((t.classes || []).includes(mobileClassVal))) return false;
     if(subjFilter && (!(t.subjects || []).includes(subjFilter))) return false;
     if(!q) return true;
     return (t.fullName||'').toLowerCase().includes(q) || (t.phone||'').toLowerCase().includes(q) || (String(t.id||t.teacherId||'')).toLowerCase().includes(q) || ((t.email||'').toLowerCase().includes(q));
@@ -1769,19 +1773,30 @@ function renderTeachers(){
       if(openAddTeacher) openAddTeacher.style.display = 'none';
     } catch(e){}
 
+    // build subject options and class options
     const subjOptions = (subjectsCache || []).map(s=>`<option value="${escape(s.name||s.id)}">${escape(s.name||s.id)}</option>`).join('');
+    const classOptions = (classesCache || []).map(c=>`<option value="${escape(c.name)}">${escape(c.name)}</option>`).join('');
+
     let html = `
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px">
         <div style="flex:1;display:flex;gap:8px;align-items:center">
           <input id="_mobileTeacherSearch" placeholder="Search teachers..." value="${escape(teachersSearch && teachersSearch.value||'')}" style="flex:1;padding:8px;border-radius:8px;border:1px solid #e6eef8" />
-          <select id="_mobileTeacherSubject" style="padding:8px;border-radius:8px;border:1px solid #e6eef8;white-space:nowrap">
-            <option value="">All subjects</option>
-            ${subjOptions}
-          </select>
-          <button type="button" id="_mobileAddTeacher" class="btn btn-primary" style="white-space:nowrap">+ Add Teacher</button>
+          <button type="button" id="_mobileAddTeacher" class="btn btn-primary" style="white-space:nowrap">+ Add</button>
         </div>
         <div style="margin-left:8px;text-align:right"><strong>Total: ${total}</strong></div>
       </div>
+
+      <div style="display:flex;gap:8px;margin-bottom:8px">
+        <select id="_mobileTeacherClass" style="flex:1;padding:8px;border-radius:8px;border:1px solid #e6eef8;min-width:120px">
+          <option value="">All classes</option>
+          ${classOptions}
+        </select>
+        <select id="_mobileTeacherSubject" style="flex:1;padding:8px;border-radius:8px;border:1px solid #e6eef8;min-width:120px">
+          <option value="">All subjects</option>
+          ${subjOptions}
+        </select>
+      </div>
+
       <div id="teachersMobileList">
     `;
 
@@ -1792,6 +1807,7 @@ function renderTeachers(){
         const found = (subjectsCache||[]).find(x => x.id === sid || x.name === sid);
         return found ? found.name : sid;
       }).join(', ') || '—';
+      // subjects displayed without "Subjects:" label; subjects text is light blue
       html += `
         <div class="mobile-row" style="padding:10px;border-bottom:1px solid #f1f5f9">
           <div style="display:flex;justify-content:space-between;align-items:center">
@@ -1799,7 +1815,9 @@ function renderTeachers(){
               <div style="min-width:28px;text-align:center;font-weight:700">${idx+1}</div>
               <div style="min-width:0;overflow:hidden">
                 <div style="font-weight:600;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${name}</div>
-                <div style="font-size:12px;color:#667085;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">ID: ${id} · Subjects: ${escape(subs)}</div>
+                <div style="font-size:12px;color:#667085;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+                  ID ${id} · <span style="color:#60a5fa">${escape(subs)}</span>
+                </div>
               </div>
             </div>
             <div style="margin-left:8px"><button type="button" class="btn btn-ghost btn-sm mobile-teacher-more" data-id="${escape(t.id||t.teacherId||'')}">⋮</button></div>
@@ -1811,25 +1829,26 @@ function renderTeachers(){
     html += `</div>`;
     teachersList.innerHTML = html;
 
-    // attach mobile handlers once (delegation) to avoid duplicates
+    // --- Attach mobile handlers ONCE using delegation to avoid duplicates ---
     if(!teachersList.dataset.mobileHandlersAttached){
+      // click delegation for mobile Add and More buttons
       teachersList.addEventListener('click', function(ev){
-        const t = ev.target;
-        if(!t) return;
-        if(t.id === '_mobileAddTeacher' || (t.closest && t.closest('#_mobileAddTeacher'))){
-          // prevent default (safety) and open modal
+        const el = ev.target;
+        if(!el) return;
+        if(el.id === '_mobileAddTeacher' || (el.closest && el.closest('#_mobileAddTeacher'))){
           if(ev.preventDefault) ev.preventDefault();
           if(typeof openAddTeacher !== 'undefined' && openAddTeacher) openAddTeacher.click();
           return;
         }
-        if(t.classList && t.classList.contains('mobile-teacher-more')){
-          const sid = t.dataset.id;
+        if(el.classList && el.classList.contains('mobile-teacher-more')){
+          const sid = el.dataset.id;
           if(ev.preventDefault) ev.preventDefault();
           openViewTeacherModal({ target: { dataset: { id: sid } } });
           return;
         }
       });
 
+      // input delegation for mobile search
       teachersList.addEventListener('input', function(ev){
         const t = ev.target;
         if(!t) return;
@@ -1839,11 +1858,16 @@ function renderTeachers(){
         }
       });
 
+      // change delegation for mobile class & subject selects
       teachersList.addEventListener('change', function(ev){
         const t = ev.target;
         if(!t) return;
         if(t.id === '_mobileTeacherSubject'){
           if(teachersSubjectFilter) teachersSubjectFilter.value = t.value;
+          renderTeachers();
+        }
+        if(t.id === '_mobileTeacherClass'){
+          // no global teachersClassFilter in your other code, so just re-render using the select's value (renderTeachers reads it)
           renderTeachers();
         }
       });
@@ -1909,6 +1933,7 @@ function renderTeachers(){
   teachersList.querySelectorAll('.edit-teacher').forEach(b => b.onclick = openEditTeacherModal);
   teachersList.querySelectorAll('.del-teacher').forEach(b => b.onclick = deleteTeacher);
 }
+
 
 /* ---------- View teacher modal (delete uses modalConfirm + loading) ---------- */
 async function openViewTeacherModal(e){
