@@ -3284,18 +3284,8 @@ if(!mobile && !controls && pageExams){
 if(mobile){
   let html = `
   <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
-    ${examSearch ? examSearch.outerHTML : ''}
-    <button class="btn btn-primary btn-sm" onclick="openAddExam && openAddExam.click()">+ Add Exam</button>
   </div>
 
-  <div style="display:flex;gap:8px;margin-bottom:6px">
-    ${examClassFilter ? examClassFilter.outerHTML : ''}
-    <select id="examSortMobile" class="input">
-      <option value="date">Sort: Date</option>
-      <option value="a-z">A → Z</option>
-      <option value="z-a">Z → A</option>
-    </select>
-  </div>
 
   <div style="text-align:right;font-size:13px;font-weight:600;color:#334155;margin-bottom:8px">
     Total exams: ${list.length}
