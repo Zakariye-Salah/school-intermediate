@@ -2820,26 +2820,25 @@ function setButtonLoading(btn, loading, loadingText = 'Saving...'){
   }
 }
 
-/** small modal confirm (replaces native confirm for delete) */
-function modalConfirm(title, message){
+function modalConfirm(title, htmlMessage){
   return new Promise(resolve => {
-    const html = `
-      <div style="padding:8px 0">
-        <div style="margin-bottom:12px">${escape(message)}</div>
-        <div style="display:flex;gap:8px;justify-content:flex-end">
-          <button id="_modalCancel" class="btn btn-ghost">Cancel</button>
-          <button id="_modalConfirm" class="btn btn-danger">Confirm</button>
-        </div>
+    showModal(title, `
+      <div style="margin-bottom:16px">${htmlMessage}</div>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button class="btn btn-ghost" id="mcCancel">Cancel</button>
+        <button class="btn btn-danger" id="mcOk">Yes</button>
       </div>
-    `;
-    showModal(title, html);
-    const cancelBtn = modalBody.querySelector('#_modalCancel');
-    const confirmBtn = modalBody.querySelector('#_modalConfirm');
-    const cleanup = (res) => { try{ closeModal(); }catch(e){} resolve(res); };
-    cancelBtn.onclick = () => cleanup(false);
-    confirmBtn.onclick = () => cleanup(true);
+    `);
+
+    document.getElementById('mcCancel').onclick = () => {
+      closeModal(); resolve(false);
+    };
+    document.getElementById('mcOk').onclick = () => {
+      closeModal(); resolve(true);
+    };
   });
 }
+
 
 
 /* ---------- renderStudents (updated) ---------- */
@@ -3233,7 +3232,7 @@ async function deleteOrUnblockStudent(e){
     const classFilterVal = (examClassFilter && examClassFilter.value) || '';
     examsList.innerHTML = '';
   
-    let list = (examsCache || []).slice();
+    let list = (examsCache || []).filter(e => !e.deleted);
   
     // filter
     list = list.filter(e => {
@@ -3259,34 +3258,65 @@ async function deleteOrUnblockStudent(e){
   
     if(mobile){
       // Mobile list: show name (wrap), id, status pill, subjects, classes, More button opens modal
-      let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-        <strong>Total exams: ${list.length}</strong>
-        <div class="muted">Tap More for exam details</div>
-      </div><div id="examsMobileList">`;
+      let html = `
+      <!-- line 1 -->
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
+        ${examSearch ? examSearch.outerHTML : ''}
+        <button class="btn btn-primary btn-sm" onclick="openAddExam && openAddExam.click()">+ Add Exam</button>
+      </div>
+      
+      <!-- line 2 -->
+      <div style="display:flex;gap:8px;margin-bottom:6px">
+        ${examClassFilter ? examClassFilter.outerHTML : ''}
+        <select id="examSortMobile" class="input">
+          <option value="date">Sort: Date</option>
+          <option value="a-z">A → Z</option>
+          <option value="z-a">Z → A</option>
+        </select>
+      </div>
+      
+      <!-- line 3 -->
+      <div style="text-align:right;font-size:13px;font-weight:600;color:#334155;margin-bottom:8px">
+        Total exams: ${list.length}
+      </div>
+      
+      <div id="examsMobileList">
+      `;
+      
   
       list.forEach((e, idx) => {
         const status = e.status === 'published' ? 'Published' : (e.status === 'deactivated' ? 'Deactivated' : 'Unpublished');
         const statusBg = e.status === 'published' ? '#059669' : (e.status === 'deactivated' ? '#dc2626' : '#dc2626');
-        const subjNames = (e.subjects || []).map(s => s.name || s).slice(0,6).join(', ') || 'No subjects';
-        const classesText = (e.classes && e.classes.length) ? e.classes.join(', ') : 'All classes';
-        html += `<div style="padding:12px;border-bottom:1px solid #f1f5f9;display:flex;flex-direction:column;gap:8px">
-          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
-            <div style="display:flex;gap:8px;align-items:flex-start;flex:1;min-width:0">
-              <div style="min-width:26px;text-align:center;font-weight:700">${idx+1}</div>
-              <div style="flex:1;white-space:normal;word-break:break-word;min-width:0">
-                <div style="font-weight:800">${escape(e.name||'')}</div>
-                <div style="margin-top:6px;font-size:12px;color:#60a5fa">ID: ${escape(e.id || '')}</div>
-                <div style="margin-top:8px;font-size:13px;color:#374151">Subjects: <span style="color:#60a5fa">${escape(subjNames)}</span></div>
-                <div style="margin-top:6px;font-size:12px;color:#6b7280">Classes: ${escape(classesText)}</div>
-              </div>
-            </div>
-  
-            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0">
-              <div style="background:${statusBg};color:#fff;padding:4px 8px;border-radius:8px;font-weight:700;font-size:12px">${escape(status)}</div>
-              <div><button class="btn btn-ghost btn-sm mobile-exam-more" data-id="${escape(e.id)}">⋮</button></div>
-            </div>
-          </div>
-        </div>`;
+        const subjectsCount = (e.subjects || []).length;
+const classesCount = (e.classes || []).length;
+
+html += `
+<div style="padding:12px;border-bottom:1px solid #f1f5f9">
+  <div style="display:flex;justify-content:space-between;gap:8px">
+    <div style="flex:1;min-width:0">
+      <div style="font-weight:800">${escape(e.name||'')}</div>
+      <div style="font-size:12px;color:#60a5fa;margin-top:4px">
+        ID: ${escape(e.id||'')}
+      </div>
+      <div style="font-size:12px;color:#374151;margin-top:6px">
+        Total Subjects: ${subjectsCount}
+      </div>
+      <div style="font-size:12px;color:#374151">
+        Total Classes: ${classesCount}
+      </div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
+      <div style="background:${statusBg};color:#fff;padding:4px 8px;border-radius:8px;font-size:12px">
+        ${escape(status)}
+      </div>
+      <button class="btn btn-ghost btn-sm mobile-exam-more" data-id="${escape(e.id)}">⋮</button>
+    </div>
+  </div>
+</div>
+`;
+
+      
       });
   
       html += `</div>`;
@@ -3316,16 +3346,18 @@ async function deleteOrUnblockStudent(e){
       div.style.borderBottom = '1px solid #f1f5f9';
       div.innerHTML = `<div style="flex:1;min-width:0">
           <strong style="display:block">${escape(e.name)}</strong>
-          <div style="font-size:13px;color:#6b7280;margin-top:6px">ID: ${escape(e.id||'')} · ${escape(classesText)} · ${escape(dateText)}</div>
-          <div style="font-size:13px;color:#374151;margin-top:6px">Subjects: <span style="color:#60a5fa">${escape(subjText)}</span></div>
+          <div style="font-size:13px;color:#6b7280;margin-top:6px">ID: ${escape(e.id||'')} ·
+  Total Subjects: ${(e.subjects||[]).length} · Total Classes: ${(e.classes||[]).length}
+</div>
         </div>
         <div style="display:flex;gap:8px;align-items:center;flex-shrink:0">
           <div style="background:${statusBg};color:#fff;padding:6px 10px;border-radius:8px;font-weight:700;font-size:12px">${escape(status === 'published' ? 'Published' : (status === 'deactivated' ? 'Deactivated' : 'Unpublished'))}</div>
-          <button class="btn btn-ghost btn-sm view-exam" data-id="${escape(e.id)}">View</button>
-          <button class="btn btn-ghost btn-sm open-exam" data-id="${escape(e.id)}">Open</button>
-          <button class="btn btn-ghost btn-sm edit-exam" data-id="${escape(e.id)}">Edit</button>
-          <button class="btn btn-danger btn-sm del-exam" data-id="${escape(e.id)}">Delete</button>
-          <button class="btn btn-primary btn-sm pub-exam" data-id="${escape(e.id)}">${e.status === 'published' ? 'Unpublish' : 'Publish'}</button>
+      <button class="btn btn-ghost btn-sm view-exam" data-id="${escape(e.id)}">${svgView()}</button>
+<button class="btn btn-ghost btn-sm open-exam" data-id="${escape(e.id)}">Open</button>
+<button class="btn btn-ghost btn-sm edit-exam" data-id="${escape(e.id)}">${svgEdit()}</button>
+<button class="btn btn-ghost btn-sm del-exam" data-id="${escape(e.id)}">${svgDelete()}</button>
+
+<button class="btn btn-primary btn-sm pub-exam" data-id="${escape(e.id)}">${e.status === 'published' ? 'Unpublish' : 'Publish'}</button>
         </div>`;
       examsList.appendChild(div);
     }
@@ -3385,34 +3417,25 @@ async function openExamModal(examId){
 
   if(openBtn) openBtn.onclick = () => { closeModal(); openExam({ target: { dataset: { id: ex.id } } }); };
   if(editBtn) editBtn.onclick = () => { closeModal(); openEditExamModal({ target: { dataset: { id: ex.id } } }); };
-  if(delBtn) delBtn.onclick = async (ev) => {
-    if(delBtn) delBtn.onclick = async () => {
+  if(delBtn){
+    delBtn.onclick = async () => {
       const ok = await modalConfirm(
         'Move Exam to Recycle Bin',
-        `Are you sure you want to move <strong>${escape(ex.name)}</strong> into the Recycle Bin?`
+        `Are you sure you want to move <strong>${escape(ex.name||'')}</strong> into the Recycle Bin?`
       );
       if(!ok) return;
-    
+  
       setButtonLoading(delBtn, true, 'Deleting...');
-      try {
+      try{
         await deleteExam({ target:{ dataset:{ id: ex.id } }, currentTarget: delBtn });
         closeModal();
-      } catch(err){
+      }catch(err){
         console.error(err);
         toast('Delete failed');
       }
       setButtonLoading(delBtn, false);
     };
-        setButtonLoading(delBtn, true, 'Deleting...');
-    try {
-      await deleteExam({ target:{ dataset:{ id: ex.id } } });
-      closeModal();
-    } catch(err){
-      console.error(err);
-      toast('Delete failed');
-    }
-    setButtonLoading(delBtn, false);
-  };
+  };  
   if(toggleBtn) toggleBtn.onclick = async (ev) => {
     setButtonLoading(toggleBtn, true, ex.status === 'published' ? 'Unpublishing...' : 'Publishing...');
     try {
@@ -3431,9 +3454,11 @@ async function openExamModal(examId){
 }
 
   
-   function openExam(e){
-  const id = e.target.dataset.id;
-  if(!id) return alert('No exam id');
+function openExam(e){
+  const btn = e.currentTarget || e.target.closest('[data-id]');
+  const id = btn?.dataset?.id;
+  if(!id) return toast('Exam not found');
+
   window.location.href = `exam.html?examId=${encodeURIComponent(id)}`;
 }
 
@@ -3659,9 +3684,10 @@ openAddExam && (openAddExam.onclick = () => {
 
 /* ---------- Replace openEditExamModal ---------- */
 function openEditExamModal(e){
-  const id = e.target ? e.target.dataset.id : e;
+  const btn = e.currentTarget || e.target.closest('[data-id]');
+  const id = btn?.dataset?.id;
+  if(!id) return toast('Exam not found');
   const ex = examsCache.find(x=>x.id===id);
-  if(!ex) return toast && toast('Exam not found');
 
   // compute exam subject name set (original exam selection)
   const exSubjectMap = new Map((ex.subjects || []).map(s => [s.name, s.max || 0]));
@@ -3889,8 +3915,9 @@ function openEditExamModal(e){
 
 
 async function deleteExam(e){
-  const id = e && e.target ? e.target.dataset.id : e;
-  if(!id) return;
+  const btn = e.currentTarget || e.target.closest('[data-id]');
+  const id = btn?.dataset?.id;
+  if(!id) return toast('Exam not found');
 
   // find exam name
   const ex = examsCache.find(x => x.id === id);
@@ -3902,7 +3929,6 @@ async function deleteExam(e){
   );
   if(!ok) return;
 
-  const btn = (e && e.currentTarget) || null;
   if(btn) setButtonLoading(btn, true, 'Deleting...');
 
   try {
