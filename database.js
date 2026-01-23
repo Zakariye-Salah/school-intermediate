@@ -1794,51 +1794,56 @@ function renderTeachers(){
           <button type="button" id="_mobileClearClass" title="Clear class" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);border:0;background:transparent;font-size:16px;padding:6px;line-height:1;color:#6b7280">×</button>
         </div>
 
-        <div style="flex:1;position:relative">
-          <select id="_mobileTeacherSubject" style="width:100%;padding:10px 40px 10px 12px;border-radius:10px;border:1px solid #e6eef8;background:#fff">
+        <div style="flex:1;">
+          <select id="_mobileTeacherSubject" style="width:100%;padding:10px 12px;border-radius:10px;border:1px solid #e6eef8;background:#fff">
             <option value="">All subjects</option>
             ${subjOptions}
           </select>
-          <button type="button" id="_mobileClearSubject" title="Clear subject" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);border:0;background:transparent;font-size:16px;padding:6px;line-height:1;color:#6b7280">×</button>
         </div>
       </div>
 
-      <div id="teachersMobileList">
-
       <div style="
-  margin:6px 0 10px;
-  text-align:right;
-  font-size:13px;
-  font-weight:600;
-  color:#334155
-">
-  Total teachers: ${total}
-</div>
+        margin:6px 0 10px;
+        text-align:right;
+        font-size:13px;
+        font-weight:600;
+        color:#334155
+      ">
+        Total teachers: ${total}
+      </div>
 
+      <div id="teachersMobileList">
     `;
 
     list.forEach((t, idx) => {
       const id = escape(t.id || t.teacherId || '');
       const name = escape(t.fullName || '—');
+      const salaryVal = (typeof t.salary !== 'undefined' && t.salary !== null) ? escape(String(t.salary)) : '—';
       const subsArr = (t.subjects || []).map(sid => {
         const found = (subjectsCache||[]).find(x => x.id === sid || x.name === sid);
         return found ? found.name : sid;
       });
-      const subsHtml = subsArr.length ? subsArr.map(s => `<span style="display:inline-block;padding:4px 8px;border-radius:999px;background:#60a5fa;color:#fff;font-size:11px;margin-right:6px">${escape(s)}</span>`).join('') : `<span style="color:#9ca3af">—</span>`;
+      const subsText = subsArr.length ? escape(subsArr.join(', ')) : '—';
 
       html += `
         <div class="mobile-row" style="padding:10px;border-bottom:1px solid #f1f5f9">
-          <div style="display:flex;justify-content:space-between;align-items:center">
-            <div style="display:flex;gap:12px;align-items:center;flex:1;min-width:0">
-              <div style="min-width:28px;text-align:center;font-weight:700">${idx+1}</div>
+          <div style="display:flex;justify-content:space-between;align-items:flex-start">
+            <div style="display:flex;gap:12px;align-items:flex-start;flex:1;min-width:0">
+              <div style="min-width:28px;text-align:center;font-weight:700;margin-top:2px">${idx+1}</div>
               <div style="min-width:0;overflow:hidden">
-                <div style="font-weight:600;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${name}</div>
-                <div style="font-size:12px;color:#667085;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
-                  ID ${id}
+                <!-- name row: name (left) + salary (right, light green) -->
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+                  <div style="font-weight:600;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${name}</div>
+                  <div style="font-weight:600;font-size:13px;color:#10b981;white-space:nowrap;margin-left:8px">${salaryVal !== '—' ? '$' + salaryVal : '—'}</div>
                 </div>
-                <div style="margin-top:6px;white-space:normal;overflow:hidden">${subsHtml}</div>
+
+                <!-- ID and subjects on one line: ID {id} · {subjects} (subjects light blue) -->
+                <div style="font-size:12px;color:#667085;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:4px">
+                  ID ${id} &middot; <span style="color:#60a5fa">${subsText}</span>
+                </div>
               </div>
             </div>
+
             <div style="margin-left:8px"><button type="button" class="btn btn-ghost btn-sm mobile-teacher-more" data-id="${escape(t.id||t.teacherId||'')}">⋮</button></div>
           </div>
         </div>
@@ -1850,7 +1855,7 @@ function renderTeachers(){
 
     // --- Attach mobile handlers ONCE using delegation to avoid duplicates ---
     if(!teachersList.dataset.mobileHandlersAttached){
-      // click delegation for mobile Add, More, and clear icons
+      // click delegation for mobile Add, More, and clear class icon
       teachersList.addEventListener('click', function(ev){
         const el = ev.target;
         if(!el) return;
@@ -1872,15 +1877,6 @@ function renderTeachers(){
           if(ev.preventDefault) ev.preventDefault();
           const sel = document.getElementById('_mobileTeacherClass');
           if(sel) sel.value = '';
-          renderTeachers();
-          return;
-        }
-        // Clear subject
-        if(el.id === '_mobileClearSubject' || (el.closest && el.closest('#_mobileClearSubject'))){
-          if(ev.preventDefault) ev.preventDefault();
-          const sel = document.getElementById('_mobileTeacherSubject');
-          if(sel) sel.value = '';
-          if(teachersSubjectFilter) teachersSubjectFilter.value = '';
           renderTeachers();
           return;
         }
@@ -1970,6 +1966,7 @@ function renderTeachers(){
   teachersList.querySelectorAll('.edit-teacher').forEach(b => b.onclick = openEditTeacherModal);
   teachersList.querySelectorAll('.del-teacher').forEach(b => b.onclick = deleteTeacher);
 }
+
 
 
 
@@ -2508,42 +2505,88 @@ async function deleteClass(e){
   }
 }
 
-/** ---------- SUBJECTS (table view + View modal) ---------- */
+
+
+/** ---------- SUBJECTS (mobile + desktop) ---------- */
 function renderSubjects(){
   if(!subjectsList) return;
   const q = (subjectSearch && subjectSearch.value||'').trim().toLowerCase();
   let list = (subjectsCache || []).slice();
   list = list.filter(s => {
     if(!q) return true;
-    return (s.name||'').toLowerCase().includes(q) || (s.id||'').toLowerCase().includes(q);
+    return (s.name||'').toLowerCase().includes(q) || (String(s.id||'')).toLowerCase().includes(q);
   });
 
   const total = list.length;
 
+  // MOBILE
   if(isMobileViewport()){
-    let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-      <strong>Total subjects: ${total}</strong>
-      <div class="muted">Mobile: tap View</div>
-    </div><div id="subjectsMobileList">`;
+    // header: search + add side-by-side
+    let html = `
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+        <input id="_mobileSubjectSearch" placeholder="Search subjects..." value="${escape(subjectSearch && subjectSearch.value||'')}" style="flex:1;padding:10px;border-radius:10px;border:1px solid #e6eef8" />
+        <button type="button" id="_mobileAddSubject" class="btn btn-primary" style="white-space:nowrap">+ Add</button>
+      </div>
+
+      <div style="margin-bottom:10px;font-size:13px;color:#374151;font-weight:600">Total subjects: ${total}</div>
+
+      <div id="subjectsMobileList">
+    `;
+
     list.forEach((s, idx) => {
-      html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px;border-bottom:1px solid #f1f5f9">
-        <div style="display:flex;gap:12px;align-items:center">
-          <div style="min-width:28px;text-align:center;font-weight:700">${idx+1}</div>
-          <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escape(s.name||'')}</div>
+      const id = escape(s.id || '');
+      const name = escape(s.name || '');
+      // mobile: show name then id below it
+      html += `<div style="padding:10px;border-bottom:1px solid #f1f5f9;display:flex;justify-content:space-between;align-items:flex-start">
+        <div style="display:flex;gap:12px;align-items:flex-start;flex:1;min-width:0">
+          <div style="min-width:28px;text-align:center;font-weight:700;margin-top:2px">${idx+1}</div>
+          <div style="min-width:0;overflow:hidden">
+            <div style="font-weight:600;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${name}</div>
+            <div style="margin-top:4px;font-size:12px;color:#60a5fa;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">ID: ${id}</div>
+          </div>
         </div>
-        <div><button class="btn btn-ghost btn-sm mobile-sub-view" data-id="${escape(s.id||s.name||'')}">⋮</button></div>
+        <div><button type="button" class="btn btn-ghost btn-sm mobile-sub-view" data-id="${id}">⋮</button></div>
       </div>`;
     });
+
     html += `</div>`;
     subjectsList.innerHTML = html;
 
-    subjectsList.querySelectorAll('.mobile-sub-view').forEach(b => {
-      b.onclick = (ev) => openViewSubjectModal({ target:{ dataset:{ id: ev.currentTarget.dataset.id } }});
-    });
+    // attach mobile handlers once (delegation)
+    if(!subjectsList.dataset.mobileHandlersAttached){
+      subjectsList.addEventListener('click', function(ev){
+        const el = ev.target;
+        if(!el) return;
+        if(el.id === '_mobileAddSubject' || (el.closest && el.closest('#_mobileAddSubject'))){
+          if(ev.preventDefault) ev.preventDefault();
+          if(typeof openAddSubject !== 'undefined' && openAddSubject) openAddSubject.click();
+          return;
+        }
+        if(el.classList && el.classList.contains('mobile-sub-view')){
+          const sid = el.dataset.id;
+          if(ev.preventDefault) ev.preventDefault();
+          openViewSubjectModal({ target:{ dataset:{ id: sid } }});
+          return;
+        }
+      });
+
+      // search input
+      subjectsList.addEventListener('input', function(ev){
+        const t = ev.target;
+        if(!t) return;
+        if(t.id === '_mobileSubjectSearch'){
+          if(subjectSearch) subjectSearch.value = t.value;
+          renderSubjects();
+        }
+      });
+
+      subjectsList.dataset.mobileHandlersAttached = '1';
+    }
+
     return;
   }
 
-  // desktop table (unchanged)
+  // DESKTOP (unchanged layout except buttons use loading helper)
   let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
       <strong>Total subjects: ${total}</strong>
       <div class="muted">Columns: No, ID, Subject</div>
@@ -2567,9 +2610,9 @@ function renderSubjects(){
       <td style="padding:8px;vertical-align:middle">${id}</td>
       <td style="padding:8px;vertical-align:middle">${name}</td>
       <td style="padding:8px;vertical-align:middle">
-        <button class="btn btn-ghost btn-sm view-sub" data-id="${id}">View</button>
-        <button class="btn btn-ghost btn-sm edit-sub" data-id="${id}">Edit</button>
-        <button class="btn btn-danger btn-sm del-sub" data-id="${id}">Delete</button>
+        <button type="button" class="btn btn-ghost btn-sm view-sub" data-id="${id}">View</button>
+        <button type="button" class="btn btn-ghost btn-sm edit-sub" data-id="${id}">Edit</button>
+        <button type="button" class="btn btn-danger btn-sm del-sub" data-id="${id}">Delete</button>
       </td>
     </tr>`;
   });
@@ -2577,11 +2620,13 @@ function renderSubjects(){
   html += `</tbody></table></div>`;
   subjectsList.innerHTML = html;
 
+  // wire desktop buttons
   subjectsList.querySelectorAll('.view-sub').forEach(b=> b.onclick = openViewSubjectModal);
   subjectsList.querySelectorAll('.edit-sub').forEach(b=> b.onclick = openEditSubjectModal);
   subjectsList.querySelectorAll('.del-sub').forEach(b=> b.onclick = deleteSubject);
 }
 
+/* ---------- View subject modal (unchanged but closes properly) ---------- */
 function openViewSubjectModal(e){
   const id = (e && e.target) ? e.target.dataset.id : (e && e.dataset ? e.dataset.id : e);
   if(!id) return;
@@ -2609,14 +2654,22 @@ function openViewSubjectModal(e){
     closeModal();
     openEditSubjectModal({ target:{ dataset:{ id: s.id } }});
   };
-  modalBody.querySelector('#viewSubDel').onclick = async () => {
+  modalBody.querySelector('#viewSubDel').onclick = async (ev) => {
+    const btn = ev && ev.currentTarget ? ev.currentTarget : modalBody.querySelector('#viewSubDel');
     if(!confirm('Delete subject?')) return;
-    await deleteSubject({ target:{ dataset:{ id: s.id } }});
-    closeModal();
+    setButtonLoading(btn, true, 'Deleting...');
+    try {
+      await deleteSubject({ target:{ dataset:{ id: s.id } }});
+      closeModal();
+    } catch(err){
+      console.error(err);
+      toast('Delete failed');
+    }
+    setButtonLoading(btn, false);
   };
 }
 
-/* ---------- Subjects add/edit (default SUB0001) ---------- */
+/* ---------- Add Subject ---------- */
 openAddSubject && (openAddSubject.onclick = () => {
   showModal('Add Subject', `
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
@@ -2625,21 +2678,38 @@ openAddSubject && (openAddSubject.onclick = () => {
       <div style="grid-column:1 / -1"><label>Subject name</label><input id="modalSubName" placeholder="Mathematics" /></div>
     </div>
     <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
-      <button id="cancelSub" class="btn btn-ghost">Cancel</button>
-      <button id="saveSub" class="btn btn-primary">Save</button>
+      <button type="button" id="cancelSub" class="btn btn-ghost">Cancel</button>
+      <button type="button" id="saveSub" class="btn btn-primary">Save</button>
     </div>
   `);
+
   modalBody.querySelector('#cancelSub').onclick = closeModal;
-  modalBody.querySelector('#saveSub').onclick = async () => {
-    let id = modalBody.querySelector('#modalSubId').value.trim();
-    const name = modalBody.querySelector('#modalSubName').value.trim();
-    if(!name) return alert('Name required');
-    if(!id) id = await generateDefaultId('subjects','SUB',4); // SUB0001 style
-    await setDoc(doc(db,'subjects', id), { id, name });
-    closeModal(); await loadSubjects(); renderSubjects(); populateClassFilters();
+
+  modalBody.querySelector('#saveSub').onclick = async function(ev){
+    const btn = ev && ev.currentTarget ? ev.currentTarget : this;
+    setButtonLoading(btn, true, 'Saving...');
+    try{
+      let id = modalBody.querySelector('#modalSubId').value.trim();
+      const name = modalBody.querySelector('#modalSubName').value.trim();
+      if(!name){ toast('Name required'); setButtonLoading(btn, false); return; }
+      if(!id) id = await generateDefaultId('subjects','SUB',4);
+      await setDoc(doc(db,'subjects', id), { id, name });
+      toast('Subject created');
+      closeModal();
+      await loadSubjects();
+      renderSubjects();
+      populateClassFilters();
+      if(typeof populateTeachersSubjectFilter === 'function') populateTeachersSubjectFilter();
+      showPage('subjects');
+    } catch(err){
+      console.error('create subject failed', err);
+      toast('Failed to create subject');
+    }
+    setButtonLoading(btn, false);
   };
 });
 
+/* ---------- Edit Subject ---------- */
 function openEditSubjectModal(e){
   const id = e && e.target ? e.target.dataset.id : e;
   const s = subjectsCache.find(x=>x.id===id);
@@ -2647,25 +2717,42 @@ function openEditSubjectModal(e){
   showModal('Edit Subject', `
     <div><label>Subject name</label><input id="modalSubName" value="${escape(s.name)}" /></div>
     <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
-      <button id="cancelSub" class="btn btn-ghost">Cancel</button>
-      <button id="saveSub" class="btn btn-primary">Save</button>
+      <button type="button" id="cancelSub" class="btn btn-ghost">Cancel</button>
+      <button type="button" id="saveSub" class="btn btn-primary">Save</button>
     </div>
   `);
   modalBody.querySelector('#cancelSub').onclick = closeModal;
-  modalBody.querySelector('#saveSub').onclick = async () => {
-    const name = modalBody.querySelector('#modalSubName').value.trim();
-    if(!name) return alert('Name required');
-    await updateDoc(doc(db,'subjects',id), { name });
-    closeModal(); await loadSubjects(); renderSubjects(); populateClassFilters();
+
+  modalBody.querySelector('#saveSub').onclick = async function(ev){
+    const btn = ev && ev.currentTarget ? ev.currentTarget : this;
+    setButtonLoading(btn, true, 'Saving...');
+    try{
+      const name = modalBody.querySelector('#modalSubName').value.trim();
+      if(!name){ toast('Name required'); setButtonLoading(btn, false); return; }
+      await updateDoc(doc(db,'subjects',id), { name });
+      toast('Subject updated');
+      closeModal();
+      await loadSubjects();
+      renderSubjects();
+      populateClassFilters();
+      if(typeof populateTeachersSubjectFilter === 'function') populateTeachersSubjectFilter();
+      showPage('subjects');
+    } catch(err){
+      console.error('update subject failed', err);
+      toast('Failed to update subject');
+    }
+    setButtonLoading(btn, false);
   };
 }
 
-
+/* ---------- Delete subject (desktop row or API) ---------- */
 async function deleteSubject(e){
   const id = e && e.target ? e.target.dataset.id : e;
   if(!id) return;
   if(!confirm('Move subject to Recycle Bin?')) return;
-
+  // If caller passed a button element, try to set loading on it (defensive)
+  const btn = (e && e.currentTarget) || null;
+  if(btn) setButtonLoading(btn, true, 'Deleting...');
   try {
     const who = (currentUser && currentUser.uid) || (auth && auth.currentUser && auth.currentUser.uid) || null;
     await updateDoc(doc(db,'subjects', id), {
@@ -2679,11 +2766,15 @@ async function deleteSubject(e){
     await loadSubjects();
     renderSubjects();
     populateClassFilters && populateClassFilters();
+    if(typeof populateTeachersSubjectFilter === 'function') populateTeachersSubjectFilter();
+    showPage('subjects');
   } catch(err){
     console.error('delete subject failed', err);
     toast('Failed to delete subject');
   }
+  if(btn) setButtonLoading(btn, false);
 }
+
 
 
 
