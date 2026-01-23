@@ -1783,31 +1783,49 @@ function renderTeachers(){
           <input id="_mobileTeacherSearch" placeholder="Search teachers..." value="${escape(teachersSearch && teachersSearch.value||'')}" style="flex:1;padding:8px;border-radius:8px;border:1px solid #e6eef8" />
           <button type="button" id="_mobileAddTeacher" class="btn btn-primary" style="white-space:nowrap">+ Add</button>
         </div>
-        <div style="margin-left:8px;text-align:right"><strong>Total: ${total}</strong></div>
       </div>
 
-      <div style="display:flex;gap:8px;margin-bottom:8px">
-        <select id="_mobileTeacherClass" style="flex:1;padding:8px;border-radius:8px;border:1px solid #e6eef8;min-width:120px">
-          <option value="">All classes</option>
-          ${classOptions}
-        </select>
-        <select id="_mobileTeacherSubject" style="flex:1;padding:8px;border-radius:8px;border:1px solid #e6eef8;min-width:120px">
-          <option value="">All subjects</option>
-          ${subjOptions}
-        </select>
+      <div style="display:flex;gap:8px;margin-bottom:10px;align-items:center">
+        <div style="flex:1;position:relative">
+          <select id="_mobileTeacherClass" style="width:100%;padding:10px 40px 10px 12px;border-radius:10px;border:1px solid #e6eef8;background:#f8fafc">
+            <option value="">All classes</option>
+            ${classOptions}
+          </select>
+          <button type="button" id="_mobileClearClass" title="Clear class" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);border:0;background:transparent;font-size:16px;padding:6px;line-height:1;color:#6b7280">×</button>
+        </div>
+
+        <div style="flex:1;position:relative">
+          <select id="_mobileTeacherSubject" style="width:100%;padding:10px 40px 10px 12px;border-radius:10px;border:1px solid #e6eef8;background:#fff">
+            <option value="">All subjects</option>
+            ${subjOptions}
+          </select>
+          <button type="button" id="_mobileClearSubject" title="Clear subject" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);border:0;background:transparent;font-size:16px;padding:6px;line-height:1;color:#6b7280">×</button>
+        </div>
       </div>
 
       <div id="teachersMobileList">
+
+      <div style="
+  margin:6px 0 10px;
+  text-align:right;
+  font-size:13px;
+  font-weight:600;
+  color:#334155
+">
+  Total teachers: ${total}
+</div>
+
     `;
 
     list.forEach((t, idx) => {
       const id = escape(t.id || t.teacherId || '');
       const name = escape(t.fullName || '—');
-      const subs = (t.subjects || []).map(sid => {
+      const subsArr = (t.subjects || []).map(sid => {
         const found = (subjectsCache||[]).find(x => x.id === sid || x.name === sid);
         return found ? found.name : sid;
-      }).join(', ') || '—';
-      // subjects displayed without "Subjects:" label; subjects text is light blue
+      });
+      const subsHtml = subsArr.length ? subsArr.map(s => `<span style="display:inline-block;padding:4px 8px;border-radius:999px;background:#60a5fa;color:#fff;font-size:11px;margin-right:6px">${escape(s)}</span>`).join('') : `<span style="color:#9ca3af">—</span>`;
+
       html += `
         <div class="mobile-row" style="padding:10px;border-bottom:1px solid #f1f5f9">
           <div style="display:flex;justify-content:space-between;align-items:center">
@@ -1816,8 +1834,9 @@ function renderTeachers(){
               <div style="min-width:0;overflow:hidden">
                 <div style="font-weight:600;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${name}</div>
                 <div style="font-size:12px;color:#667085;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
-                  ID ${id} · <span style="color:#60a5fa">${escape(subs)}</span>
+                  ID ${id}
                 </div>
+                <div style="margin-top:6px;white-space:normal;overflow:hidden">${subsHtml}</div>
               </div>
             </div>
             <div style="margin-left:8px"><button type="button" class="btn btn-ghost btn-sm mobile-teacher-more" data-id="${escape(t.id||t.teacherId||'')}">⋮</button></div>
@@ -1831,19 +1850,38 @@ function renderTeachers(){
 
     // --- Attach mobile handlers ONCE using delegation to avoid duplicates ---
     if(!teachersList.dataset.mobileHandlersAttached){
-      // click delegation for mobile Add and More buttons
+      // click delegation for mobile Add, More, and clear icons
       teachersList.addEventListener('click', function(ev){
         const el = ev.target;
         if(!el) return;
+        // Add button
         if(el.id === '_mobileAddTeacher' || (el.closest && el.closest('#_mobileAddTeacher'))){
           if(ev.preventDefault) ev.preventDefault();
           if(typeof openAddTeacher !== 'undefined' && openAddTeacher) openAddTeacher.click();
           return;
         }
+        // More / view
         if(el.classList && el.classList.contains('mobile-teacher-more')){
           const sid = el.dataset.id;
           if(ev.preventDefault) ev.preventDefault();
           openViewTeacherModal({ target: { dataset: { id: sid } } });
+          return;
+        }
+        // Clear class
+        if(el.id === '_mobileClearClass' || (el.closest && el.closest('#_mobileClearClass'))){
+          if(ev.preventDefault) ev.preventDefault();
+          const sel = document.getElementById('_mobileTeacherClass');
+          if(sel) sel.value = '';
+          renderTeachers();
+          return;
+        }
+        // Clear subject
+        if(el.id === '_mobileClearSubject' || (el.closest && el.closest('#_mobileClearSubject'))){
+          if(ev.preventDefault) ev.preventDefault();
+          const sel = document.getElementById('_mobileTeacherSubject');
+          if(sel) sel.value = '';
+          if(teachersSubjectFilter) teachersSubjectFilter.value = '';
+          renderTeachers();
           return;
         }
       });
@@ -1867,7 +1905,6 @@ function renderTeachers(){
           renderTeachers();
         }
         if(t.id === '_mobileTeacherClass'){
-          // no global teachersClassFilter in your other code, so just re-render using the select's value (renderTeachers reads it)
           renderTeachers();
         }
       });
@@ -1933,6 +1970,7 @@ function renderTeachers(){
   teachersList.querySelectorAll('.edit-teacher').forEach(b => b.onclick = openEditTeacherModal);
   teachersList.querySelectorAll('.del-teacher').forEach(b => b.onclick = deleteTeacher);
 }
+
 
 
 /* ---------- View teacher modal (delete uses modalConfirm + loading) ---------- */
