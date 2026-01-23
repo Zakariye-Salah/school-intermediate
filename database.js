@@ -3253,36 +3253,57 @@ async function deleteOrUnblockStudent(e){
     } else if(examSortMode === 'z-a'){
       list.sort((a,b)=> (b.name||'').localeCompare(a.name||''));
     }
+
+    
   
-    const mobile = (typeof isMobileViewport === 'function') ? isMobileViewport() : (window.matchMedia && window.matchMedia('(max-width:768px)').matches);
   
-    if(mobile){
-      // Mobile list: show name (wrap), id, status pill, subjects, classes, More button opens modal
-      let html = `
-      <!-- line 1 -->
-      <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
-        ${examSearch ? examSearch.outerHTML : ''}
-        <button class="btn btn-primary btn-sm" onclick="openAddExam && openAddExam.click()">+ Add Exam</button>
-      </div>
-      
-      <!-- line 2 -->
-      <div style="display:flex;gap:8px;margin-bottom:6px">
-        ${examClassFilter ? examClassFilter.outerHTML : ''}
-        <select id="examSortMobile" class="input">
-          <option value="date">Sort: Date</option>
-          <option value="a-z">A → Z</option>
-          <option value="z-a">Z → A</option>
-        </select>
-      </div>
-      
-      <!-- line 3 -->
-      <div style="text-align:right;font-size:13px;font-weight:600;color:#334155;margin-bottom:8px">
-        Total exams: ${list.length}
-      </div>
-      
-      <div id="examsMobileList">
-      `;
-      
+    const mobile = (typeof isMobileViewport === 'function')
+  ? isMobileViewport()
+  : window.matchMedia('(max-width:768px)').matches;
+
+// 🚫 do NOT render desktop controls on mobile
+if(!mobile && !controls && pageExams){
+  controls = document.createElement('div');
+  controls.id = controlsId;
+  controls.style.marginBottom = '8px';
+
+  const sel = document.createElement('select');
+  sel.id = 'examSortSelect';
+  sel.innerHTML = `
+    <option value="date">Sort: Date (default)</option>
+    <option value="a-z">A → Z</option>
+    <option value="z-a">Z → A</option>
+  `;
+  sel.value = examSortMode || 'date';
+  sel.onchange = ev => { examSortMode = ev.target.value; renderExams(); };
+
+  controls.appendChild(sel);
+  pageExams.insertBefore(controls, examsList);
+}
+
+if(mobile){
+  let html = `
+  <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
+    ${examSearch ? examSearch.outerHTML : ''}
+    <button class="btn btn-primary btn-sm" onclick="openAddExam && openAddExam.click()">+ Add Exam</button>
+  </div>
+
+  <div style="display:flex;gap:8px;margin-bottom:6px">
+    ${examClassFilter ? examClassFilter.outerHTML : ''}
+    <select id="examSortMobile" class="input">
+      <option value="date">Sort: Date</option>
+      <option value="a-z">A → Z</option>
+      <option value="z-a">Z → A</option>
+    </select>
+  </div>
+
+  <div style="text-align:right;font-size:13px;font-weight:600;color:#334155;margin-bottom:8px">
+    Total exams: ${list.length}
+  </div>
+
+  <div id="examsMobileList">
+  `;
+
   
       list.forEach((e, idx) => {
         const status = e.status === 'published' ? 'Published' : (e.status === 'deactivated' ? 'Deactivated' : 'Unpublished');
@@ -3290,38 +3311,61 @@ async function deleteOrUnblockStudent(e){
         const subjectsCount = (e.subjects || []).length;
 const classesCount = (e.classes || []).length;
 
+
 html += `
 <div style="padding:12px;border-bottom:1px solid #f1f5f9">
-  <div style="display:flex;justify-content:space-between;gap:8px">
-    <div style="flex:1;min-width:0">
-      <div style="font-weight:800">${escape(e.name||'')}</div>
-      <div style="font-size:12px;color:#60a5fa;margin-top:4px">
-        ID: ${escape(e.id||'')}
-      </div>
-      <div style="font-size:12px;color:#374151;margin-top:6px">
-        Total Subjects: ${subjectsCount}
-      </div>
-      <div style="font-size:12px;color:#374151">
-        Total Classes: ${classesCount}
-      </div>
+  
+  <!-- LINE 1 -->
+  <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+    <div style="flex:1;min-width:0;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+      ${escape(e.name || '')}
+      <span style="font-size:12px;font-weight:600;color:#374151;margin-left:6px">
+        · ${classesCount} Classes
+      </span>
     </div>
 
-    <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
-      <div style="background:${statusBg};color:#fff;padding:4px 8px;border-radius:8px;font-size:12px">
-        ${escape(status)}
-      </div>
-      <button class="btn btn-ghost btn-sm mobile-exam-more" data-id="${escape(e.id)}">⋮</button>
+    <div style="background:${statusBg};color:#fff;padding:4px 8px;border-radius:999px;font-size:11px;font-weight:700">
+      ${escape(status)}
     </div>
   </div>
+
+  <!-- LINE 2 -->
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
+    <div style="font-size:12px;color:#60a5fa">
+      ID: ${escape(e.id || '')}
+      <span style="color:#374151"> · ${subjectsCount} Subjects</span>
+    </div>
+
+    <button class="btn btn-ghost btn-sm mobile-exam-more" data-id="${escape(e.id)}">⋮</button>
+  </div>
+
 </div>
 `;
+
 
       
       });
   
       html += `</div>`;
       examsList.innerHTML = html;
-  
+
+      /* ✅ ADD THIS RIGHT HERE */
+      const sortSel = document.getElementById('examSortMobile');
+      if(sortSel){
+        sortSel.value = examSortMode || 'date';
+        sortSel.onchange = e => {
+          examSortMode = e.target.value;
+          renderExams();
+        };
+      }
+      
+      /* mobile more buttons */
+      examsList.querySelectorAll('.mobile-exam-more').forEach(b => {
+        b.onclick = (ev) => openExamModal(ev.currentTarget.dataset.id);
+      });
+      
+      return;
+        
       // wire mobile More buttons to open modal
       examsList.querySelectorAll('.mobile-exam-more').forEach(b => {
         b.onclick = (ev) => openExamModal(ev.currentTarget.dataset.id);
@@ -3370,6 +3414,7 @@ html += `
     document.querySelectorAll('.pub-exam').forEach(b => b.onclick = togglePublishExam);
   }
 
+
 /* ---------- openExamModal (show exam details + footer actions) ---------- */
 async function openExamModal(examId){
   if(!examId) return;
@@ -3412,6 +3457,11 @@ async function openExamModal(examId){
   const openBtn = document.getElementById('examModalOpen');
   const editBtn = document.getElementById('examModalEdit');
   const delBtn = document.getElementById('examModalDelete');
+
+  if(ex.status === 'published'){
+    delBtn.style.display = 'none';
+  }
+  
   const toggleBtn = document.getElementById('examModalToggle');
   const closeBtn = document.getElementById('examModalClose');
 
@@ -3915,12 +3965,24 @@ function openEditExamModal(e){
 
 
 async function deleteExam(e){
+
+  // 1️⃣ get button & id FIRST
   const btn = e.currentTarget || e.target.closest('[data-id]');
   const id = btn?.dataset?.id;
-  if(!id) return toast('Exam not found');
+  if(!id){
+    toast('Exam not found');
+    return;
+  }
 
-  // find exam name
+  // 2️⃣ now it is SAFE to find exam
   const ex = examsCache.find(x => x.id === id);
+
+  // 3️⃣ block deleting published exams
+  if(ex?.status === 'published'){
+    toast('Unpublish exam before deleting');
+    return;
+  }
+
   const examName = ex ? ex.name : 'this exam';
 
   const ok = await modalConfirm(
@@ -3958,6 +4020,7 @@ async function deleteExam(e){
 
   if(btn) setButtonLoading(btn, false);
 }
+
 
 
 
@@ -4616,12 +4679,7 @@ function svgReesto(){
     <path d="M5 12h14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
   </svg>`; 
 }
-function svgView(){ 
-  return `<svg class="icon-sm" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z" stroke="currentColor" stroke-width="1.4" fill="none"/>
-    <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.4" fill="none"/>
-  </svg>`; 
-}
+
 
 /* ---------------- Resolve target robustly ---------------- */
 async function resolveTargetByAnyId(view, id) {
@@ -5631,18 +5689,24 @@ async function deleteExpense(e){
 
 /* ---------- Inline SVG helpers: edit/delete icons ---------- */
 function svgEdit(){
-  return `<svg class="icon-sm" viewBox="0 0 24 24" width="16" height="16" fill="none" xmlns="http://www.w3.org/2000/svg" style="vertical-align:middle">
-    <path d="M3 21v-3.6L16.3 4.1a1 1 0 0 1 1.4 0l1.2 1.2a1 1 0 0 1 0 1.4L5.6 20.9H3z" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M14.5 5.5l4 4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+  return `<svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+    <path d="M4 21h4l12-12-4-4L4 17v4z" stroke="currentColor" stroke-width="2"/>
   </svg>`;
 }
+
 function svgDelete(){
-  return `<svg class="icon-sm" viewBox="0 0 24 24" width="16" height="16" fill="none" xmlns="http://www.w3.org/2000/svg" style="vertical-align:middle">
-    <path d="M3 6h18" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
-    <path d="M8 6v12a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2V6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M10 11v4M14 11v4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+  return `<svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+    <path d="M3 6h18M8 6v14m8-14v14M5 6l1-3h12l1 3" stroke="currentColor" stroke-width="2"/>
   </svg>`;
 }
+
+function svgView(){
+  return `<svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+    <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"/>
+    <path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z" stroke="currentColor" stroke-width="2"/>
+  </svg>`;
+}
+
 
 /* ---------- Improved ID-search helper (supports last-6 matching) ---------- */
 function searchableFieldsFor(item){
