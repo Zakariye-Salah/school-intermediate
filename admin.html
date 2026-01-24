@@ -702,6 +702,13 @@
   #recycleCardList { display:none; }
 }
 
+/* add/replace into tt-modal-styles */
+.tt-icon-btn { background:transparent;border:0;padding:4px;cursor:pointer;border-radius:6px;display:inline-flex;align-items:center;justify-content:center }
+.tt-icon-btn svg{ width:14px;height:14px;vertical-align:middle }
+.btn.btn-ghost.btn-sm, .btn.btn-primary.btn-sm { padding:4px 8px;font-size:12px }
+.tt-table th, .tt-table td { padding:6px; font-size:13px } /* slightly smaller cells */
+.tt-period-id { font-weight:700; margin-right:4px; font-size:13px }
+
 
 </style>
 </head>
@@ -749,10 +756,17 @@
     </section>
 
     <section id="pageClasses" class="page">
-      <div class="page-header">
-        <input id="classSearch" type="text" placeholder="Search classes..." />
-        <button id="openAddClass" class="btn btn-primary">+ Add Class</button>
-      </div>
+    <!-- replace the existing pageClasses .page-header block with this -->
+<div class="page-header" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+  <div style="flex:1;min-width:140px;display:flex;gap:8px;align-items:center">
+    <input id="classSearch" type="search" placeholder="Search class name or ID..." style="flex:1;min-width:120px" />
+    <button id="openAddClass" class="btn btn-primary">+ Add Class</button>
+  </div>
+  <div style="min-width:160px;text-align:right;font-weight:700">
+    <span id="classesTotalCount">Total classes: 0</span>
+  </div>
+</div>
+
       <div id="classesList"></div>
     </section>
 
@@ -892,8 +906,7 @@
 <!-- Ensure html2canvas, jspdf, etc. are loaded already (you already included them). -->
 <!-- Then load firebase-config.js and database.js (your existing scripts). -->
 
-<!-- After database.js loads, ensure the dashboard opens on page load -->
-<script>
+<!-- <script>
   // If renderDashboard is exported globally in database.js, call it on page load.
   // Wait a tick to let your module load caches; adjust if your init flow differs.
   window.addEventListener('load', () => {
@@ -909,7 +922,7 @@
       }
     } catch (e) { console.error(e); }
   });
-</script>
+</script> -->
 
   <!-- Firebase config + app logic -->
   <!-- Make sure database.js path is correct and it's type=module -->
