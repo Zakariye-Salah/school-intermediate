@@ -2298,47 +2298,99 @@ async function sendResetEmailFor(email) {
 
 
 
-/** ---------- CLASSES (table view + View modal listing students) ---------- */
+/* ---------- Improved renderClasses + Move Students modal & logic ---------- */
+
 function renderClasses(){
   if(!classesList) return;
   const q = (classSearch && classSearch.value||'').trim().toLowerCase();
+
   let list = (classesCache || []).slice();
   list = list.filter(c => {
     if(!q) return true;
-    return (c.name||'').toLowerCase().includes(q) || (c.id||'').toLowerCase().includes(q);
+    return (c.name||'').toLowerCase().includes(q) || (String(c.id||'')).toLowerCase().includes(q);
   });
 
   const total = list.length;
+  const mobile = isMobileViewport();
 
-  if(isMobileViewport()){
+  // Original add button handling (hide on mobile)
+  const originalAddBtn = openAddClass || document.getElementById('openAddClass') || null;
+  if(mobile){
+    if(originalAddBtn) originalAddBtn.style.display = 'none';
+  } else {
+    if(originalAddBtn) originalAddBtn.style.display = '';
+  }
+
+  // Mobile view (kept but simplified)
+  if(mobile){
     let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-      <strong>Total classes: ${total}</strong>
-      <div class="muted">Mobile: tap View</div>
-    </div><div id="classesMobileList">`;
+      <div style="display:flex;gap:8px;flex:1;align-items:center">
+        <input id="classSearchMobile" class="input" placeholder="Search class name or id..." style="flex:1" value="${escape(classSearch?.value || '')}" />
+        <button id="openAddClassMobile" class="btn btn-primary btn-sm">+ Add</button>
+      </div>
+      <div style="margin-left:12px;font-weight:700">Total: ${total}</div>
+    </div>`;
+
+    html += `<div id="classesMobileList">`;
     list.forEach((c, idx) => {
       const name = escape(c.name || '');
-      html += `<div class="mobile-row" style="display:flex;justify-content:space-between;align-items:center;padding:10px;border-bottom:1px solid #f1f5f9">
-        <div style="display:flex;gap:12px;align-items:center">
-          <div style="min-width:28px;text-align:center;font-weight:700">${idx+1}</div>
-          <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${name}</div>
+      const id = escape(c.id || '');
+      const studentsCount = countStudentsInClass(c.name || '') || 0;
+      const subjectsCount = (c.subjects || []).length;
+
+      html += `
+      <div style="padding:12px;border-bottom:1px solid #f1f5f9">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+          <div style="display:flex;gap:10px;align-items:center;flex:1;min-width:0">
+            <div style="min-width:28px;text-align:center;font-weight:700">${idx+1}</div>
+            <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:800">${name}</div>
+            <div style="font-size:12px;font-weight:600;margin-left:6px;color:#059669">Total: ${studentsCount}</div>
+          </div>
+
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
+            <div style="font-size:11px;padding:4px 8px;border-radius:999px;color:#fff;background:#7c3aed;font-weight:700">Subjects ${subjectsCount}</div>
+            <div style="margin-top:6px">
+              <button class="btn btn-ghost btn-sm mobile-class-view" data-id="${id}">View</button>
+              <button class="btn btn-ghost btn-sm mobile-move" data-id="${id}">Move</button>
+            </div>
+          </div>
         </div>
-        <div><button class="btn btn-ghost btn-sm mobile-class-view" data-id="${escape(c.id||c.name||'')}">⋮</button></div>
+
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px">
+          <div style="font-size:12px;color:#60a5fa">ID: ${id}</div>
+        </div>
       </div>`;
     });
     html += `</div>`;
     classesList.innerHTML = html;
 
-    classesList.querySelectorAll('.mobile-class-view').forEach(b => {
-      b.onclick = (ev) => openViewClassModal({ target: { dataset: { id: ev.currentTarget.dataset.id } } });
+    // mobile handlers
+    document.getElementById('openAddClassMobile')?.addEventListener('click', () => {
+      if(typeof openAddClass === 'function') openAddClass();
+      else document.getElementById('openAddClass')?.click();
     });
+    const searchMobile = document.getElementById('classSearchMobile');
+    if(searchMobile) searchMobile.oninput = (ev) => { if(classSearch) classSearch.value = ev.target.value; renderClasses(); };
+
+    classesList.querySelectorAll('.mobile-class-view').forEach(b => b.onclick = (ev) => openViewClassModal({ target:{ dataset:{ id: ev.currentTarget.dataset.id } } }));
+    classesList.querySelectorAll('.mobile-move').forEach(b => b.onclick = (ev) => openMoveStudentsModal(ev.currentTarget.dataset.id));
+
     return;
   }
 
-  // desktop original table
-  let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-      <strong>Total classes: ${total}</strong>
-      <div class="muted">Columns: No, ID, Name, Total students</div>
-    </div>`;
+  // Desktop table with nicer action buttons and Move All at top
+  let html = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:12px">
+      <div style="display:flex;gap:12px;align-items:center">
+        <strong style="font-size:1rem">Total classes: ${total}</strong>
+        <div class="muted">Columns: No, ID, Name, Total students</div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button id="openMoveAllBtn" class="btn btn-ghost">Move students (bulk)</button>
+        <button id="openAddClassBtnDesktop" class="btn btn-primary">+ Add class</button>
+      </div>
+    </div>
+  `;
 
   html += `<div style="overflow:auto"><table style="width:100%;border-collapse:collapse">
     <thead>
@@ -2347,23 +2399,27 @@ function renderClasses(){
         <th style="padding:8px;width:140px">ID</th>
         <th style="padding:8px">Class</th>
         <th style="padding:8px;width:120px">Total students</th>
-        <th style="padding:8px;width:220px">Actions</th>
+        <th style="padding:8px;width:340px">Actions</th>
       </tr>
     </thead><tbody>`;
 
   list.forEach((c, idx) => {
     const id = escape(c.id || '');
     const name = escape(c.name || '');
-    const totalStudents = countStudentsInClass(c.name || '');
+    const totalStudents = countStudentsInClass(c.name || '') || 0;
+
     html += `<tr style="border-bottom:1px solid #f1f5f9">
       <td style="padding:8px;vertical-align:middle">${idx+1}</td>
       <td style="padding:8px;vertical-align:middle">${id}</td>
       <td style="padding:8px;vertical-align:middle">${name}</td>
       <td style="padding:8px;vertical-align:middle">${totalStudents}</td>
       <td style="padding:8px;vertical-align:middle">
-        <button class="btn btn-ghost btn-sm view-class" data-id="${id}">View</button>
-        <button class="btn btn-ghost btn-sm edit-class" data-id="${id}">Edit</button>
-        <button class="btn btn-danger btn-sm del-class" data-id="${id}">Delete</button>
+        <button class="btn btn-ghost btn-sm view-class" data-id="${id}" title="View">View</button>
+        <button class="btn btn-ghost btn-sm edit-class" data-id="${id}" title="Edit">Edit</button>
+        <button class="btn btn-danger btn-sm del-class" data-id="${id}" title="Delete">Delete</button>
+        <button class="btn btn-ghost btn-sm move-class" data-id="${id}" title="Move students">Move</button>
+        <button class="btn btn-ghost btn-sm fee-class" data-id="${id}" title="Set fee">Fee</button>
+        <button class="btn btn-ghost btn-sm timetable-class" data-id="${id}" title="Timetable">Timetable</button>
       </td>
     </tr>`;
   });
@@ -2371,54 +2427,1420 @@ function renderClasses(){
   html += `</tbody></table></div>`;
   classesList.innerHTML = html;
 
+  // top-level buttons
+  document.getElementById('openMoveAllBtn')?.addEventListener('click', () => openMoveStudentsModal());
+  document.getElementById('openAddClassBtnDesktop')?.addEventListener('click', () => {
+    if(typeof openAddClass === 'function') openAddClass();
+    else document.getElementById('openAddClass')?.click();
+  });
+
+  // wire desktop actions
   classesList.querySelectorAll('.view-class').forEach(b=> b.onclick = openViewClassModal);
   classesList.querySelectorAll('.edit-class').forEach(b=> b.onclick = openEditClassModal);
-  classesList.querySelectorAll('.del-class').forEach(b=> b.onclick = deleteClass);
+  classesList.querySelectorAll('.del-class').forEach(b=> b.onclick = async (ev) => {
+    const id = ev.currentTarget.dataset.id;
+    const ok = await modalConfirm('Delete Class', `Are you sure you want to move <strong>${escape(id)}</strong> to Recycle Bin?`);
+    if(!ok) return;
+    setButtonLoading(ev.currentTarget, true, 'Deleting...');
+    try {
+      await deleteClass({ target: { dataset: { id } } });
+      await loadClasses(); renderClasses();
+    } finally {
+      setButtonLoading(ev.currentTarget, false);
+    }
+  });
+
+  classesList.querySelectorAll('.move-class').forEach(b=> b.onclick = (ev) => openMoveStudentsModal(ev.currentTarget.dataset.id));
+  classesList.querySelectorAll('.fee-class').forEach(b=> b.onclick = (ev) => openSetFeeModal(ev.currentTarget.dataset.id));
+  classesList.querySelectorAll('.timetable-class').forEach(b=> b.onclick = (ev) => openTimetableModal(ev.currentTarget.dataset.id));
 }
 
-async function openViewClassModal(e){
-  const id = (e && e.target) ? e.target.dataset.id : (e && e.dataset ? e.dataset.id : e);
-  if(!id) return;
-  const c = classesCache.find(x => x.id === id || x.name === id);
-  if(!c) return toast('Class not found');
+/* ---------- Open Move Students Modal ---------- 
+   - if sourceClassId provided, pre-select it in From list
+   - supports:
+     * manual mode (select From classes, pick To class)
+     * auto-advance mode (advance every class to next class)
+*/
+async function openMoveStudentsModal(sourceClassId){
+  const classes = (classesCache || []).map(c => ({ id: c.id, name: c.name }));
+  if(!classes || classes.length === 0) return toast('No classes available');
 
-  const assigned = (studentsCache || []).filter(s => (s.classId || '') === (c.name || c.id || ''));
-  let studentsHtml = '<div class="muted">No students</div>';
-  if(assigned.length){
-    studentsHtml = `<table style="width:100%;border-collapse:collapse">
-      <thead><tr style="border-bottom:1px solid #e6eef8"><th style="padding:6px">No</th><th style="padding:6px">ID</th><th style="padding:6px">Name</th></tr></thead><tbody>`;
-    assigned.forEach((s, i) => {
-      studentsHtml += `<tr style="border-bottom:1px solid #f1f5f9"><td style="padding:6px">${i+1}</td><td style="padding:6px">${escape(s.studentId||s.id||'')}</td><td style="padding:6px">${escape(s.fullName||'')}</td></tr>`;
-    });
-    studentsHtml += '</tbody></table>';
+  function classSortKey(c){
+    const m = (c.name || '').match(/(\d+)/);
+    if(m) return `${String(Number(m[1])).padStart(5,'0')}-${c.name}`;
+    return `zz-${(c.name||'').toLowerCase()}`;
   }
+  classes.sort((a,b) => classSortKey(a) < classSortKey(b) ? -1 : 1);
+
+  const fromListHtml = classes.map(c => {
+    return `<label style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+      <input type="checkbox" class="mv-from" data-name="${escape(c.name)}" ${sourceClassId ? (c.name===sourceClassId ? 'checked' : '') : 'checked'} />
+      <span style="font-weight:700">${escape(c.name)}</span>
+      <span style="color:#6b7280;font-size:13px;margin-left:auto">${escape(c.id||'')}</span>
+    </label>`;
+  }).join('');
+
+  const toOptionsHtml = classes.map(c => `<option value="${escape(c.name)}">${escape(c.name)} (${escape(c.id||'')})</option>`).join('');
 
   const html = `
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-      <div><strong>ID</strong><div class="muted">${escape(c.id||'')}</div></div>
-      <div><strong>Class name</strong><div class="muted">${escape(c.name||'')}</div></div>
-      <div style="grid-column:1 / -1"><strong>Subjects</strong><div class="muted">${escape((c.subjects||[]).join(', ') || 'No subjects')}</div></div>
-      <div style="grid-column:1 / -1"><strong>Assigned students (${assigned.length})</strong>${studentsHtml}</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;min-width:560px;max-width:980px">
+      <div>
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+          <input id="mvFromSearch" placeholder="Search classes to move FROM..." style="flex:1;padding:8px;border-radius:8px;border:1px solid #e6eef8" />
+          <button id="mvSelectAll" class="btn btn-ghost btn-sm">Select all</button>
+        </div>
+        <div id="mvFromList" style="max-height:320px;overflow:auto;padding:6px;border:1px solid #f1f5f9;border-radius:8px">
+          ${fromListHtml}
+        </div>
+      </div>
+
+      <div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <label class="tt-small">Move TO (destination class)</label>
+          <div style="display:flex;gap:8px">
+            <input id="mvToSearch" placeholder="Search destination class..." style="flex:1;padding:8px;border-radius:8px;border:1px solid #e6eef8" />
+            <select id="mvToSelect" style="padding:8px;border-radius:8px;border:1px solid #e6eef8;min-width:200px">
+              <option value="">-- pick destination --</option>
+              ${toOptionsHtml}
+            </select>
+          </div>
+
+          <label style="display:flex;align-items:center;gap:8px;margin-top:6px">
+            <input type="checkbox" id="mvAutoAdvance" /> <span>Auto-advance each class to the next (Class 1 → Class 2 → ...)</span>
+          </label>
+
+          <div style="display:flex;gap:8px;align-items:center">
+            <button id="mvPreviewBtn" class="btn btn-ghost">Preview</button>
+            <div style="margin-left:auto" id="mvCountsPreview" class="muted"></div>
+          </div>
+
+          <div style="margin-top:8px;color:#6b7280;font-size:13px">Notes: you can uncheck classes to exclude them. "Auto-advance" will ignore the destination field and move each selected class to the next class in order. Preview shows how many students will be moved.</div>
+        </div>
+      </div>
     </div>
+
     <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
-      <button class="btn btn-ghost" id="viewClassClose">Close</button>
-      <button class="btn btn-ghost" id="viewClassEdit">Edit</button>
-      <button class="btn btn-danger" id="viewClassDel">Delete</button>
+      <button id="mvCancel" class="btn btn-ghost">Cancel</button>
+      <button id="mvExecute" class="btn btn-primary">Move students</button>
+    </div>
+  `;  showModal('Move Students — bulk', html);
+
+  // small helper to safely query modal DOM elements (modalBody comes from your showModal)
+  const $m = (sel) => (typeof modalBody !== 'undefined' && modalBody) ? modalBody.querySelector(sel) : null;
+
+  const fromListEl = $m('#mvFromList');
+  const toSelect = $m('#mvToSelect');
+  const mvAutoAdvance = $m('#mvAutoAdvance');
+
+  // helper to safely set preview text (won't throw if modal closed)
+  function setPreviewText(txt){
+    try {
+      const el = $m('#mvCountsPreview');
+      if(el) el.textContent = txt;
+    } catch(e){
+      // ignore if modal removed
+    }
+  }
+
+  $m('#mvFromSearch')?.addEventListener('input', (ev) => {
+    const qv = (ev.target.value||'').trim().toLowerCase();
+    Array.from(fromListEl.querySelectorAll('label')).forEach(label => {
+      const txt = (label.textContent||'').toLowerCase();
+      label.style.display = txt.includes(qv) ? '' : 'none';
+    });
+  });
+  $m('#mvToSearch')?.addEventListener('input', (ev) => {
+    const qv = (ev.target.value||'').trim().toLowerCase();
+    Array.from(toSelect.options).forEach(opt => {
+      if(!opt.value) { opt.style.display = ''; return; }
+      const txt = (opt.textContent||'').toLowerCase();
+      opt.style.display = txt.includes(qv) ? '' : 'none';
+    });
+  });
+
+  $m('#mvSelectAll')?.addEventListener('click', () => {
+    const anyHidden = Array.from(fromListEl.querySelectorAll('label')).some(l => l.style.display === 'none');
+    Array.from(fromListEl.querySelectorAll('input.mv-from')).forEach(ch => {
+      if(anyHidden && ch.closest('label').style.display === 'none') return;
+      ch.checked = true;
+    });
+  });
+
+  $m('#mvPreviewBtn').onclick = async () => {
+    try {
+      setPreviewText('Counting…');
+      const selectedFrom = Array.from(modalBody.querySelectorAll('input.mv-from:checked')).map(i => i.dataset.name);
+      if(selectedFrom.length === 0) { setPreviewText('No source classes selected'); return; }
+      if(mvAutoAdvance && mvAutoAdvance.checked === false && (!toSelect.value || toSelect.value.trim()==='')) {
+        setPreviewText('Choose a destination class or enable Auto-advance');
+        return;
+      }
+      let totalToMove = 0;
+      for(const from of selectedFrom){
+        const cached = (studentsCache || []).filter(s => (s.classId||'') === from && s.status !== 'deleted');
+        if(cached && cached.length) totalToMove += cached.length;
+        else {
+          const snap = await getDocs(query(collection(db,'students'), where('classId','==', from)));
+          if(snap && snap.docs) totalToMove += snap.docs.filter(d => (d.data().status||'') !== 'deleted').length;
+        }
+      }
+      setPreviewText(`Preview: ${totalToMove} student(s) will be moved`);
+    } catch(err){
+      console.error('preview failed', err);
+      setPreviewText('Preview failed');
+    }
+  };
+
+  // Execute move (robust)
+  $m('#mvExecute').onclick = async (ev) => {
+    const btn = ev.currentTarget;
+    try {
+      const selectedFrom = Array.from(modalBody.querySelectorAll('input.mv-from:checked')).map(i => i.dataset.name);
+      if(selectedFrom.length === 0) return toast('Select at least one source class');
+      const auto = mvAutoAdvance && mvAutoAdvance.checked;
+      let dest = toSelect && toSelect.value && toSelect.value.trim();
+
+      if(!auto && (!dest || dest === '')) return toast('Pick a destination class or enable Auto-advance');
+
+      const mapping = {};
+      if(auto){
+        const orderedNames = classes.map(c=>c.name);
+        for(const src of selectedFrom){
+          const idx = orderedNames.indexOf(src);
+          const next = (idx >= 0 && idx < orderedNames.length - 1) ? orderedNames[idx+1] : null;
+          mapping[src] = next;
+        }
+      } else {
+        selectedFrom.forEach(src => mapping[src] = dest);
+      }
+
+      // collect students to move
+      let totalToMove = 0;
+      const studentsToMove = [];
+      for(const src of Object.keys(mapping)){
+        const to = mapping[src];
+        if(!to) continue;
+        const cached = (studentsCache || []).filter(s => (s.classId||'') === src && s.status !== 'deleted');
+        if(cached.length){
+          cached.forEach(s => studentsToMove.push({ id: s.studentId || s.id, name: s.fullName || '', from: src, to }));
+          totalToMove += cached.length;
+        } else {
+          const snap = await getDocs(query(collection(db,'students'), where('classId','==', src)));
+          if(snap && snap.docs){
+            snap.docs.forEach(d => {
+              const data = d.data();
+              if(data.status === 'deleted') return;
+              studentsToMove.push({ id: d.id, name: data.fullName || '', from: src, to });
+            });
+            totalToMove += snap.docs.filter(d => d.data().status !== 'deleted').length;
+          }
+        }
+      }
+
+      if(totalToMove === 0) return toast('No students found to move for the selected classes');
+
+      const mappingSummary = Object.entries(mapping).map(([s,t]) => `${escape(s)} → ${t ? escape(t) : '<em>(skipped)</em>'}`).join('<br/>');
+      const ok = await modalConfirm('Confirm move', `Move ${totalToMove} students?<br/><br/>Mapping:<br/>${mappingSummary}<br/><br/>Proceed?`);
+      if(!ok) return;
+
+      setButtonLoading(btn, true, 'Moving...');
+
+      const chunkSize = 50;
+      let done = 0;
+      const errors = [];
+      for(let i=0;i<studentsToMove.length;i+=chunkSize){
+        const chunk = studentsToMove.slice(i,i+chunkSize);
+        await Promise.all(chunk.map(async sRec => {
+          try {
+            await updateDoc(doc(db,'students', sRec.id), { classId: sRec.to });
+            done++;
+            const sc = (studentsCache || []).find(x => (x.studentId===sRec.id || x.id===sRec.id));
+            if(sc) sc.classId = sRec.to;
+          } catch(err){
+            console.error('move student failed', sRec, err);
+            errors.push({ student: sRec, error: String(err && err.message ? err.message : err) });
+          }
+        }));
+        // safe progress update (no crash if modal closed)
+        setPreviewText(`Progress: ${done}/${totalToMove}`);
+      }
+
+      setButtonLoading(btn, false);
+
+      if(errors.length){
+        toast(`Some students failed to move (${errors.length}). Check console for details.`);
+      } else {
+        toast(`Successfully moved ${done} students`);
+      }
+
+      await loadStudents();
+      renderStudents();
+      await (loadClasses ? loadClasses() : Promise.resolve());
+      renderClasses();
+
+      closeModal();
+    } catch(err){
+      console.error('move execution failed', err);
+      setButtonLoading(ev.currentTarget, false);
+      toast('Move failed');
+    }
+  };
+
+  $m('#mvCancel').onclick = closeModal;
+}
+
+
+/* ---------- NEW: Full-screen / large Class View modal ---------- */
+async function openViewClassModal(e){
+  // accept event or id string
+  const id = (e && e.target && e.target.dataset) ? e.target.dataset.id : (e && e.dataset ? e.dataset.id : e);
+  if(!id) return toast && toast('Class not found');
+  const c = classesCache.find(x => x.id === id || x.name === id);
+  if(!c) return toast && toast('Class not found');
+
+  // students assigned
+  const assigned = (studentsCache || []).filter(s => (s.classId || '') === (c.name || c.id || ''));
+  // teachers assigned to this class (match teacher.assignments or teacher.classes if present)
+  const teachersAssigned = (teachersCache || []).filter(t => {
+    // prefer explicit class assignment field; fallback to subjects mapping
+    if(t.classIds && Array.isArray(t.classIds)) return t.classIds.includes(c.name) || t.classIds.includes(c.id);
+    // fallback: teacher.subjects overlap
+    if(c.subjects && t.subjects) return t.subjects.some(sub => c.subjects.includes(sub));
+    return false;
+  });
+
+  // build students list (checkboxes + compact rows with expandable details)
+  const studentsRows = assigned.map((s,i) => `
+    <tr style="border-bottom:1px solid #f1f5f9">
+      <td style="padding:8px"><input type="checkbox" class="class-stu-chk" data-id="${escape(s.studentId||s.id||'')}" /></td>
+      <td style="padding:8px">${i+1}</td>
+      <td style="padding:8px">${escape(s.fullName||'')}</td>
+      <td style="padding:8px">${escape(String(s.studentId||'').slice(-4))}</td>
+      <td style="padding:8px">${(s.attendancePercent!=null) ? `${s.attendancePercent}%` : '—'}</td>
+      <td style="padding:8px">
+        <button class="btn btn-ghost btn-sm view-student" data-id="${escape(s.id||s.studentId||'')}">View</button>
+        <button class="btn btn-ghost btn-sm remove-student" data-id="${escape(s.id||s.studentId||'')}">Remove</button>
+      </td>
+    </tr>
+  `).join('');
+
+  const teachersRows = teachersAssigned.map(t => `
+    <div style="padding:8px;border-bottom:1px solid #f1f5f9;display:flex;justify-content:space-between;align-items:center">
+      <div>
+        <div style="font-weight:700">${escape(t.fullName||t.name||'')}</div>
+        <div class="muted">ID: ${escape(t.id||t.teacherId||'')}</div>
+        <div class="muted">Subjects: ${escape((t.subjectName || t.subjects || []).toString() || '')}</div>
+        <div class="muted">Salary: ${escape(t.salary || '—')}</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <button class="btn btn-ghost btn-sm view-teacher" data-id="${escape(t.id||t.teacherId||'')}">View</button>
+        <button class="btn btn-ghost btn-sm unassign-teacher" data-id="${escape(t.id||t.teacherId||'')}">Unassign</button>
+      </div>
+    </div>
+  `).join('');
+
+  const html = `
+    <div style="display:flex;flex-direction:column;gap:8px;height:100%;max-height:90vh;overflow:auto">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div style="display:flex;gap:12px;align-items:center">
+          <button id="classBackBtn" class="btn btn-ghost">← Back to classes</button>
+          <div>
+            <div style="font-size:18px;font-weight:800">Class — ${escape(c.name||'')}</div>
+            <div class="muted">ID: ${escape(c.id||'')}</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button id="classAssignTeacherBtn" class="btn btn-ghost">Assign teacher</button>
+          <button id="classMoveBtn" class="btn btn-ghost">Move students</button>
+          <button id="classFeeBtn" class="btn btn-ghost">Set fee</button>
+          <button id="classTimetableBtn" class="btn btn-ghost">Timetable</button>
+          <button id="classEditBtn" class="btn btn-ghost">Edit</button>
+          <button id="classDeleteBtn" class="btn btn-danger">Delete</button>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:320px 1fr 360px;gap:12px;align-items:start">
+        <!-- SUMMARY (left) -->
+        <div style="background:#fff;padding:12px;border-radius:8px;box-shadow:var(--card-shadow,none)">
+          <div style="margin-bottom:8px"><strong>Summary</strong></div>
+          <div><strong>Class ID</strong><div class="muted">${escape(c.id||'')}</div></div>
+          <div style="margin-top:8px"><strong>Class name</strong>
+            <div><input id="inlineClassName" value="${escape(c.name||'')}" style="width:100%"/></div>
+          </div>
+          <div style="margin-top:8px"><strong>Total students</strong><div class="muted">${assigned.length}</div></div>
+          <div style="margin-top:8px"><strong>Subjects</strong><div class="muted">${escape((c.subjects||[]).join(', ') || 'No subjects')}</div></div>
+          <div style="margin-top:8px"><strong>Quick stats</strong>
+            <div class="muted">Attendance: ${computeAverageAttendance(assigned)}% · Timetable: ${hasTimetable(c.id) ? 'Yes' : 'No'} · Fees: ${hasFeesForClass(c.id) ? 'Yes' : 'No'}</div>
+          </div>
+        </div>
+
+        <!-- STUDENTS (middle) -->
+        <div style="background:#fff;padding:12px;border-radius:8px;overflow:auto">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <div style="display:flex;gap:8px;align-items:center">
+              <input id="classSelectAll" type="checkbox" /> <span style="font-weight:700">Select all</span>
+              <input id="classStudentSearch" class="input" placeholder="Search students..." style="margin-left:8px" />
+            </div>
+            <div style="display:flex;gap:8px">
+              <button id="moveSelectedBtn" class="btn btn-ghost">Move selected</button>
+              <button id="feeSelectedBtn" class="btn btn-ghost">Set fee</button>
+              <button id="exportSelectedBtn" class="btn btn-ghost">Export selected</button>
+            </div>
+          </div>
+
+          <div style="overflow:auto">
+            <table style="width:100%;border-collapse:collapse">
+              <thead><tr style="border-bottom:1px solid #e6eef8"><th></th><th>No</th><th>Name</th><th>ID</th><th>Attendance</th><th>Actions</th></tr></thead>
+              <tbody id="classStudentsTbody">${studentsRows || '<tr><td colspan="6" class="muted">No students</td></tr>'}</tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- TEACHERS & ACTIONS (right) -->
+        <div style="background:#fff;padding:12px;border-radius:8px;overflow:auto">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <strong>Teachers (${teachersAssigned.length})</strong>
+            <button id="assignTeacherBtn" class="btn btn-ghost btn-sm">Assign</button>
+          </div>
+          <div style="margin-top:8px">${teachersRows || '<div class="muted">No teachers</div>'}</div>
+        </div>
+      </div>
     </div>
   `;
+
+  // show modal: full screen feel (caller decides modal style)
   showModal(`Class — ${escape(c.name||'')}`, html);
 
-  modalBody.querySelector('#viewClassClose').onclick = closeModal;
-  modalBody.querySelector('#viewClassEdit').onclick = () => {
-    closeModal();
-    openEditClassModal({ target:{ dataset:{ id: c.id } } });
+  // Back / close
+  document.getElementById('classBackBtn').onclick = () => closeModal();
+
+  // Inline edit save
+  document.getElementById('classEditBtn').onclick = () => {
+    document.getElementById('inlineClassName').disabled = false;
+    const saveBtn = document.createElement('button'); saveBtn.className='btn btn-primary'; saveBtn.textContent='Save';
+    saveBtn.onclick = async () => {
+      setButtonLoading(saveBtn, true, 'Saving...');
+      try {
+        const newName = document.getElementById('inlineClassName').value.trim();
+        if(!newName) return toast('Class name required');
+        await updateDoc(doc(db,'classes', c.id), { name: newName });
+        await loadClasses(); renderClasses();
+        toast('Class updated');
+        closeModal();
+      } catch(err){ console.error(err); toast('Update failed'); }
+      setButtonLoading(saveBtn, false);
+    };
+    // append save next to edit button (simple UX)
+    const parent = document.getElementById('classEditBtn').parentElement;
+    parent.appendChild(saveBtn);
   };
-  modalBody.querySelector('#viewClassDel').onclick = async () => {
-    if(!confirm('Delete class?')) return;
-    await deleteClass({ target: { dataset: { id: c.id } } });
-    closeModal();
+
+  // Delete uses modalConfirm and loadingButton
+  document.getElementById('classDeleteBtn').onclick = async () => {
+    const ok = await modalConfirm('Delete class', `Move <strong>${escape(c.name||'')}</strong> to Recycle Bin?`);
+    if(!ok) return;
+    setButtonLoading(document.getElementById('classDeleteBtn'), true, 'Deleting...');
+    try {
+      await deleteClass({ target: { dataset: { id: c.id } } });
+      closeModal();
+    } catch(err){ console.error(err); toast('Delete failed'); }
+    setButtonLoading(document.getElementById('classDeleteBtn'), false);
+  };
+
+  // Student actions wiring (delegated)
+  modalBody.querySelectorAll('.view-student').forEach(b => b.onclick = ev => {
+    const sid = ev.currentTarget.dataset.id;
+    // open student page — reuse existing navigation
+    window.location.href = `student.html?studentId=${encodeURIComponent(sid)}`;
+  });
+  modalBody.querySelectorAll('.remove-student').forEach(b => b.onclick = async (ev) => {
+    const sid = ev.currentTarget.dataset.id;
+    const ok = await modalConfirm('Unassign student', `Remove student <strong>${escape(sid)}</strong> from ${escape(c.name)}?`);
+    if(!ok) return;
+    setButtonLoading(ev.currentTarget, true, 'Removing...');
+    try {
+      // update student doc classId -> null (or '')
+      await updateDoc(doc(db,'students', sid), { classId: null });
+      await loadStudents(); renderClasses(); closeModal();
+    } catch(err){ console.error(err); toast('Failed'); }
+    setButtonLoading(ev.currentTarget, false);
+  });
+
+  // Teachers wiring
+  modalBody.querySelectorAll('.view-teacher').forEach(b => b.onclick = ev => {
+    const tid = ev.currentTarget.dataset.id;
+    // open teacher page
+    window.location.href = `teacher.html?teacherId=${encodeURIComponent(tid)}`;
+  });
+  modalBody.querySelectorAll('.unassign-teacher').forEach(b => b.onclick = async (ev) => {
+    const tid = ev.currentTarget.dataset.id;
+    const ok = await modalConfirm('Unassign teacher', `Unassign teacher <strong>${escape(tid)}</strong> from ${escape(c.name)}?`);
+    if(!ok) return;
+    setButtonLoading(ev.currentTarget, true, 'Unassigning...');
+    try {
+      // TODO: adjust this to however you store teacher assignments; this is a generic example
+      await updateDoc(doc(db,'teachers', tid), { classIds: arrayRemove(c.name) });
+      await loadTeachers(); closeModal(); renderClasses();
+    } catch(err){ console.error(err); toast('Failed'); }
+    setButtonLoading(ev.currentTarget, false);
+  });
+
+  // Bulk controls
+  const selectAll = document.getElementById('classSelectAll');
+  selectAll && (selectAll.onclick = (ev) => {
+    const checked = ev.target.checked;
+    modalBody.querySelectorAll('.class-stu-chk').forEach(ch => ch.checked = checked);
+  });
+
+  document.getElementById('moveSelectedBtn').onclick = () => {
+    const sel = Array.from(modalBody.querySelectorAll('.class-stu-chk:checked')).map(i => i.dataset.id);
+    if(sel.length === 0) return toast('No students selected');
+    openMoveStudentsModal(c.id, sel);
+  };
+  document.getElementById('feeSelectedBtn').onclick = () => {
+    const sel = Array.from(modalBody.querySelectorAll('.class-stu-chk:checked')).map(i => i.dataset.id);
+    openSetFeeModal(c.id, sel.length ? sel : null); // if no specific, inside modal default all
+  };
+
+  document.getElementById('classMoveBtn').onclick = () => openMoveStudentsModal(c.id);
+  document.getElementById('classFeeBtn').onclick = () => openSetFeeModal(c.id);
+  document.getElementById('classTimetableBtn').onclick = () => openTimetableModal(c.id);
+  document.getElementById('classAssignTeacherBtn').onclick = () => {
+    // simple assign teacher picker (list of teachers)
+    const opts = teachersCache.map(t => `<option value="${escape(t.id||t.teacherId||'')}">${escape(t.fullName||t.name||'')} — ${escape(t.subjectName||t.subjects||'')}</option>`).join('');
+    showModal('Assign teacher', `
+      <label>Select teacher</label>
+      <select id="assignTeacherSelect">${opts}</select>
+      <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
+        <button id="assignTeacherCancel" class="btn btn-ghost">Cancel</button>
+        <button id="assignTeacherOk" class="btn btn-primary">Assign</button>
+      </div>
+    `);
+    document.getElementById('assignTeacherCancel').onclick = closeModal;
+    document.getElementById('assignTeacherOk').onclick = async () => {
+      const tid = document.getElementById('assignTeacherSelect').value;
+      if(!tid) return toast('Select a teacher');
+      setButtonLoading(document.getElementById('assignTeacherOk'), true, 'Assigning...');
+      try {
+        // naive assign: append class name to teacher.classIds array (requires server support or arrayUnion)
+        await updateDoc(doc(db,'teachers', tid), { classIds: (teachersCache.find(x=>x.id===tid)?.classIds||[]).concat([c.name]) });
+        await loadTeachers(); toast('Teacher assigned'); closeModal(); closeModal(); // both modals
+        await loadClasses(); renderClasses();
+      } catch(err){ console.error(err); toast('Failed'); }
+      setButtonLoading(document.getElementById('assignTeacherOk'), false);
+    };
   };
 }
+
+/* ---------- UPDATED: openTimetableModal (editor + post-save read-only viewer) ---------- */
+async function openTimetableModal(classId){
+  const cls = classesCache.find(x => x.id===classId || x.name===classId);
+  if(!cls) return toast('Class not found');
+
+  // find existing timetable doc (if any)
+  let timetableDoc = null;
+  try {
+    const snap = await getDocs(query(collection(db,'timetables'), where('classId','==', cls.id || cls.name)));
+    if(snap && snap.docs && snap.docs.length) timetableDoc = { id: snap.docs[0].id, ...snap.docs[0].data() };
+  } catch(err){ console.warn('load timetable failed', err); }
+
+  // Data sources for dropdowns
+  const classSubjects = (cls.subjects || []).slice();
+  const teacherBySubject = {};
+  const teacherById = {};
+  (teachersCache || []).forEach(t => {
+    const subjects = t.subjects || (t.subjectName ? [t.subjectName] : []);
+    const teachesThisClass = (t.classIds && t.classIds.includes(cls.name)) || subjects.some(s => classSubjects.includes(s));
+    if(!teachesThisClass) return;
+    const tid = t.id || t.teacherId || t.email || ('t' + Math.random().toString(36).slice(2,6));
+    subjects.forEach(s => {
+      if(!classSubjects.includes(s)) return;
+      teacherBySubject[s] = teacherBySubject[s] || [];
+      teacherBySubject[s].push({ id: tid, name: t.fullName || t.name || t.teacherId || t.id });
+      teacherById[tid] = t.fullName || t.name || t.teacherId || t.id;
+    });
+    const tid2 = t.id || t.teacherId || t.email;
+    if(tid2) teacherById[tid2] = t.fullName || t.name || t.teacherId || t.id;
+  });
+
+  // canonical week order (Saturday → Friday)
+  const days = ['Saturday','Sunday','Monday','Tuesday','Wednesday','Thursday','Friday'];
+  const defaultDays = ['Saturday','Sunday','Monday','Tuesday','Wednesday'];
+
+  // ensure modal CSS (small responsive & fit improvements + sticky header/first-col)
+  if(!document.getElementById('tt-modal-styles')){
+    const style = document.createElement('style');
+    style.id = 'tt-modal-styles';
+    style.innerHTML = `
+      .tt-header { display:flex;justify-content:space-between;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap }
+      .tt-controls { display:flex;gap:8px;align-items:center;flex-wrap:wrap }
+      .tt-days { display:flex;gap:8px;flex-wrap:wrap;align-items:center }
+      .tt-editor { width:100%; overflow:auto; margin-top:10px; }
+      .tt-table { width:100%; border-collapse:collapse; table-layout:fixed; word-break:break-word; }
+      .tt-table thead th { position: sticky; top: 0; background: #fff; z-index: 5; }
+      .tt-table th:first-child, .tt-table td:first-child { position: sticky; left: 0; background: #fff; z-index: 6; }
+      .tt-table th, .tt-table td { border:1px solid #e6eef8; padding:8px; font-size:13px; vertical-align:middle; }
+      .tt-day-column { min-width:160px; max-width:320px; }
+      .tt-actions { display:flex; gap:8px; }
+      .tt-small { font-size:12px; color:#6b7280; }
+      .tt-day-btn { margin-left:6px; border-radius:6px; padding:2px 6px; font-weight:700; cursor:pointer; border:1px solid #e6eef8; background:#fff; }
+      @media(max-width:900px){
+        .tt-table thead { display:none; }
+        .tt-table tr { display:block; margin-bottom:8px; border:1px solid #f1f5f9; border-radius:6px; overflow:hidden; }
+        .tt-table td { display:block; border:none; padding:8px; }
+      }
+      .tt-break { background:#fff4e6; }
+      .tt-period-id { font-weight:700; margin-right:6px; }
+      .tt-view-toolbar { display:flex; justify-content:flex-end; gap:8px; margin-bottom:8px; align-items:center }
+      .tt-view-only .tt-actions, .tt-view-only .tt-days, .tt-view-only .tt-controls { display:none !important; }
+      .tt-status { font-weight:700; padding:6px 10px; border-radius:999px; font-size:12px; }
+      .tt-day-add { color:#059669; border-color: #e6f6ef; }
+      .tt-day-remove { color:#dc2626; border-color: #fdecea; }
+      .tt-icon-btn { background:transparent;border:0;padding:6px;cursor:pointer;border-radius:6px }
+      .tt-icon-btn svg{ width:16px;height:16px;vertical-align:middle }
+    `;
+    document.head.appendChild(style);
+  }
+
+  // initial schedule: use existing or empty
+  let schedule = timetableDoc?.schedule ? JSON.parse(JSON.stringify(timetableDoc.schedule)) : {};
+  // ensure keys exist for defaultDays only if missing
+  defaultDays.forEach(d => { if(!schedule[d]) schedule[d] = []; });
+
+  // compute the initial selected days list (preserve saved days when editing)
+  const initialSelectedDays = (timetableDoc && timetableDoc.schedule) ? Object.keys(timetableDoc.schedule) : defaultDays.slice();
+
+  const subjectOptionsHtml = classSubjects.length ? classSubjects.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('') : `<option value="">No subjects assigned</option>`;
+
+  // small helper to render svg icon html (plus/minus/trash/edit)
+  const ICONS = {
+    plus: `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+    minus: `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M5 12h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+    addRow: `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+    removeRow: `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M5 12h14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`
+  };
+
+  // Render modal HTML with Clear All and status area
+  showModal(`Timetable — ${escapeHtml(cls.name||'')}`, `
+    <div id="ttRoot">
+      <div class="tt-header">
+        <div>
+          <div style="font-weight:800">Class: ${escapeHtml(cls.name || '')}</div>
+          <div class="tt-small">ID: ${escapeHtml(cls.id || '')}</div>
+        </div>
+        <div class="tt-actions">
+          <span id="ttStatusIndicator" class="tt-small"></span>
+          <button id="ttCloseBtn" class="btn btn-ghost">Close</button>
+          <button id="ttGenerateBtn" class="btn btn-primary">Generate</button>
+          <button id="ttClearBtn" class="btn btn-ghost">Clear All</button>
+          <button id="ttSaveBtn" class="btn btn-primary">Save</button>
+          <button id="ttDownloadBtn" class="btn btn-ghost">Download PDF</button>
+        </div>
+      </div>
+
+      <div class="tt-controls" id="ttControlsRow" style="display:flex;gap:12px;flex-wrap:wrap;align-items:center">
+        <div>
+          <label class="tt-small">Select days</label>
+          <div class="tt-days">${days.map(d => {
+            const checked = initialSelectedDays.includes(d) ? 'checked' : '';
+            return `<label style="margin-right:8px;display:inline-flex;align-items:center">
+                      <input type="checkbox" class="tt-day" value="${escapeHtml(d)}" ${checked} /> ${escapeHtml(d)}
+                      <button type="button" class="tt-day-btn tt-day-add" data-day="${escapeHtml(d)}" title="Add period to ${escapeHtml(d)}">${ICONS.plus}</button>
+                      <button type="button" class="tt-day-btn tt-day-remove" data-day="${escapeHtml(d)}" title="Remove last period from ${escapeHtml(d)}">${ICONS.minus}</button>
+                    </label>`;
+          }).join('')}</div>
+        </div>
+
+        <div>
+          <label class="tt-small">Start time</label>
+          <div><input id="ttStartTime" type="time" value="${timetableDoc?.startTime || '07:30'}" /></div>
+        </div>
+
+        <div>
+          <label class="tt-small">Period minutes</label>
+          <div><input id="ttPeriodMinutes" type="number" value="${timetableDoc?.periodMinutes || 60}" style="width:88px" /></div>
+        </div>
+
+        <div>
+          <label class="tt-small">Initial periods (per day)</label>
+          <div><input id="ttPeriods" type="number" value="${(timetableDoc && timetableDoc.defaultPeriods) || 7}" style="width:88px" /></div>
+        </div>
+
+        <div>
+          <label class="tt-small">Break start</label>
+          <div><input id="ttBreakStart" type="time" value="${timetableDoc?.breakStart || '09:30'}" /></div>
+        </div>
+        <div>
+          <label class="tt-small">Break end</label>
+          <div><input id="ttBreakEnd" type="time" value="${timetableDoc?.breakEnd || '10:00'}" /></div>
+        </div>
+
+      </div>
+
+      <div style="margin-top:12px">
+        <div class="tt-editor" id="ttEditorContainer"></div>
+      </div>
+
+    </div>
+  `);
+
+  // helpers scoped to modal
+  const $ = (sel) => modalBody.querySelector(sel);
+  const $$ = (sel) => Array.from(modalBody.querySelectorAll(sel));
+
+  // helper to get selected days **in canonical Saturday-first order**
+  function getSelectedDaysOrdered(){
+    return days.filter(d => {
+      const found = Array.from(modalBody.querySelectorAll('.tt-day')).find(n => n.value === d);
+      return found && found.checked;
+    });
+  }
+
+  // utility time functions
+  function toMinutes(hhmm){ if(!hhmm) return 0; const [h,m] = String(hhmm).split(':').map(Number); return (h||0)*60 + (m||0); }
+  function fromMinutes(mins){ mins = Math.max(0, Math.floor(mins % (24*60))); const h = String(Math.floor(mins/60)).padStart(2,'0'); const m = String(mins % 60).padStart(2,'0'); return `${h}:${m}`; }
+  function formatAMPM(hhmm){ if(!hhmm) return ''; const [hStr,mStr] = String(hhmm).split(':'); let h = Number(hStr), m = Number(mStr); const ampm = h >= 12 ? 'PM' : 'AM'; h = ((h + 11) % 12) + 1; return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')} ${ampm}`; }
+
+  // render editor (uses canonical day order) - REPLACEMENT
+  function renderTimetableEditor(){
+    const container = $('#ttEditorContainer');
+    if(!container) return;
+    const selDays = getSelectedDaysOrdered();
+    if(selDays.length === 0){ container.innerHTML = `<div class="muted">Select at least one day to edit the timetable.</div>`; return; }
+    selDays.forEach(d => { if(!schedule[d]) schedule[d] = []; });
+    const allLengths = selDays.map(d => schedule[d].length || 0);
+    let maxRows = Math.max(...allLengths, Number($('#ttPeriods')?.value || 7));
+    if(maxRows < 1) maxRows = 1;
+  
+    // Build table header (days only)
+    let html = `<div style="overflow:auto"><table class="tt-table"><thead><tr>`;
+    selDays.forEach(d => { html += `<th class="tt-day-column">${escapeHtml(d)}<div class="tt-small">Subjects & teachers</div></th>`; });
+    html += `</tr></thead><tbody>`;
+  
+    for(let r=0;r<maxRows;r++){
+      html += `<tr data-row="${r}">`;
+  
+      const startTimeVal = ($('#ttStartTime') && $('#ttStartTime').value) || '07:30';
+      const periodMinutesVal = Number($('#ttPeriodMinutes')?.value || 60);
+      const breakStartVal = $('#ttBreakStart')?.value;
+      const breakEndVal = $('#ttBreakEnd')?.value;
+  
+      // compute time for this row (used inside each day cell)
+      let runningStartBase = toMinutes(startTimeVal);
+      for(let k=0;k<r;k++){
+        runningStartBase += periodMinutesVal;
+        if(breakStartVal && breakEndVal){
+          const bS = toMinutes(breakStartVal), bE = toMinutes(breakEndVal);
+          if(runningStartBase >= bS && runningStartBase < bE) runningStartBase = bE;
+        }
+      }
+      const rowStart = fromMinutes(runningStartBase);
+      const rowEnd = fromMinutes(runningStartBase + periodMinutesVal);
+      const timeLine = `${formatAMPM(rowStart)} — ${formatAMPM(rowEnd)}`;
+  
+      // For each day column render the per-cell controls and inputs
+      selDays.forEach(d => {
+        const dayArr = schedule[d] || [];
+        const cell = dayArr[r] || null;
+        const isBreak = cell && cell.isBreak;
+        const subjSel = `<select data-day="${escapeHtml(d)}" data-row="${r}" class="tt-subject">${subjectOptionsHtml}</select>`;
+        const teacherSel = `<select multiple data-day="${escapeHtml(d)}" data-row="${r}" class="tt-teachers" style="width:100%;min-height:44px"></select>`;
+  
+        html += `<td class="${isBreak ? 'tt-break' : ''}">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+            <div style="font-weight:700;font-size:13px">${isBreak ? '<span class="muted">Break</span>' : '<span class="muted">Class</span>'}</div>
+            <div style="display:flex;gap:6px;align-items:center">
+              <button class="tt-icon-btn tt-cell-add" data-day="${escapeHtml(d)}" data-row="${r}" title="Add after for ${escapeHtml(d)}">${ICONS.addRow}</button>
+              <button class="tt-icon-btn tt-cell-remove" data-day="${escapeHtml(d)}" data-row="${r}" title="Remove this row for ${escapeHtml(d)}">${ICONS.removeRow}</button>
+            </div>
+          </div>
+  
+          <div style="margin-top:6px"><label class="tt-small">Subject</label>${subjSel}</div>
+          <div style="margin-top:6px"><label class="tt-small">Teacher(s)</label>${teacherSel}</div>
+          <div style="margin-top:6px"><div class="tt-small muted">Time: ${escapeHtml(timeLine)}</div></div>
+          <div style="margin-top:6px"><label><input type="checkbox" class="tt-is-break" data-day="${escapeHtml(d)}" data-row="${r}" ${isBreak ? 'checked' : ''} /> Mark as break</label></div>
+        </td>`;
+      });
+  
+      html += `</tr>`;
+    }
+  
+    html += `</tbody></table></div>`;
+    container.innerHTML = html;
+  
+    // populate selects & wire per-cell behavior (subject->teacher mapping, break toggles)
+    selDays.forEach(d => {
+      for(let r=0;r<maxRows;r++){
+        const subjEl = container.querySelector(`select.tt-subject[data-day="${escapeHtml(d)}"][data-row="${r}"]`) || container.querySelector(`select.tt-subject[data-day="${d}"][data-row="${r}"]`);
+        const teacherEl = container.querySelector(`select.tt-teachers[data-day="${escapeHtml(d)}"][data-row="${r}"]`) || container.querySelector(`select.tt-teachers[data-day="${d}"][data-row="${r}"]`);
+        const isBreakEl = container.querySelector(`input.tt-is-break[data-day="${escapeHtml(d)}"][data-row="${r}"]`) || container.querySelector(`input.tt-is-break[data-day="${d}"][data-row="${r}"]`);
+        const dayArr = schedule[d] || [];
+        const cell = dayArr[r] || null;
+  
+        if(cell){
+          if(subjEl) subjEl.value = cell.subject || '';
+          if(isBreakEl) isBreakEl.checked = !!cell.isBreak;
+        } else {
+          if(subjEl) subjEl.value = '';
+          if(isBreakEl) isBreakEl.checked = false;
+        }
+  
+        function populateTeacherOptionsForSubject(subject){
+          if(!teacherEl) return;
+          teacherEl.innerHTML = '';
+          if(!subject || !teacherBySubject[subject] || !teacherBySubject[subject].length){
+            teacherEl.innerHTML = `<option value="">No teacher available</option>`;
+            return;
+          }
+          const opts = teacherBySubject[subject].map(t => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join('');
+          teacherEl.innerHTML = opts;
+          if(cell && Array.isArray(cell.teacherIds) && cell.teacherIds.length){
+            for(const opt of teacherEl.options) if(cell.teacherIds.includes(opt.value)) opt.selected = true;
+          } else {
+            if(teacherEl.options.length === 1) teacherEl.options[0].selected = true;
+          }
+        }
+  
+        const initialSubject = cell ? cell.subject : (classSubjects[ r % Math.max(1, classSubjects.length) ] || '');
+        populateTeacherOptionsForSubject(initialSubject);
+  
+        subjEl && subjEl.addEventListener('change', (ev) => {
+          populateTeacherOptionsForSubject(ev.target.value);
+        });
+  
+        isBreakEl && isBreakEl.addEventListener('change', (ev) => {
+          const checked = ev.target.checked;
+          const rowCell = subjEl ? subjEl.closest('td') : null;
+          if(rowCell){
+            if(checked){ subjEl.disabled = true; teacherEl.disabled = true; rowCell.classList.add('tt-break'); }
+            else { subjEl.disabled = false; teacherEl.disabled = false; rowCell.classList.remove('tt-break'); }
+          }
+        });
+      }
+    });
+  
+    // wire per-cell add/remove
+    container.querySelectorAll('.tt-cell-add').forEach(btn => {
+      btn.onclick = () => {
+        const rowIndex = Number(btn.dataset.row);
+        const d = btn.dataset.day;
+        schedule[d] = schedule[d] || [];
+        schedule[d].splice(rowIndex+1, 0, { subject:'', teacherIds:[], isBreak:false });
+        renderTimetableEditor();
+      };
+    });
+    container.querySelectorAll('.tt-cell-remove').forEach(btn => {
+      btn.onclick = () => {
+        const rowIndex = Number(btn.dataset.row);
+        const d = btn.dataset.day;
+        schedule[d] = schedule[d] || [];
+        if(schedule[d].length <= rowIndex){
+          toast('No such period to remove for ' + d);
+          return;
+        }
+        const ok = window.confirm(`Remove period ${rowIndex+1} for ${d}?`);
+        if(!ok) return;
+        schedule[d].splice(rowIndex, 1);
+        renderTimetableEditor();
+      };
+    });
+  }
+  
+  // Day-level add/remove buttons (per-day + / -)
+  function wireDayButtons(){
+    modalBody.querySelectorAll('.tt-day-add').forEach(btn => {
+      btn.onclick = () => {
+        const d = btn.dataset.day;
+        schedule[d] = schedule[d] || [];
+        // push a single empty period to that day (end)
+        schedule[d].push({ subject:'', teacherIds:[], isBreak:false });
+        // ensure the day checkbox checked
+        const ch = modalBody.querySelector(`.tt-day[value="${d}"]`);
+        if(ch) ch.checked = true;
+        renderTimetableEditor();
+      };
+    });
+    modalBody.querySelectorAll('.tt-day-remove').forEach(btn => {
+      btn.onclick = () => {
+        const d = btn.dataset.day;
+        schedule[d] = schedule[d] || [];
+        if(schedule[d].length === 0) return toast('No periods to remove for ' + d);
+        const ok = window.confirm(`Remove last period for ${d}?`);
+        if(!ok) return;
+        schedule[d].pop();
+        renderTimetableEditor();
+      };
+    });
+  }
+
+// REPLACE renderTimetableViewer - viewer shows only day columns (no P# column)
+function renderTimetableViewer(useSchedule, publishedFlag){
+  const header = modalBody.querySelector('.tt-header');
+  const controlsRow = modalBody.querySelector('#ttControlsRow');
+  if(header) header.style.display = 'none';
+  if(controlsRow) controlsRow.style.display = 'none';
+
+  const container = modalBody.querySelector('.tt-editor');
+  if(!container) return;
+  container.classList.add('tt-view-only');
+
+  const selDays = days.filter(d => Array.isArray(useSchedule[d])); // ordered Saturday-first
+  if(selDays.length === 0){ container.innerHTML = `<div class="muted">No timetable data to display.</div>`; return; }
+
+  let maxRows = 0;
+  selDays.forEach(d => { maxRows = Math.max(maxRows, (useSchedule[d]||[]).length); });
+  if(maxRows === 0) maxRows = 1;
+
+  // status and publish/unpublish
+  const statusText = publishedFlag ? 'Published' : 'Unpublished';
+  const statusColor = publishedFlag ? '#059669' : '#dc2626';
+  const statusIndicator = $('#ttStatusIndicator');
+  if(statusIndicator){
+    statusIndicator.innerHTML = `<span class="tt-status" style="background:${statusColor};color:#fff">${statusText}</span>`;
+  }
+
+  // viewer toolbar: edit, publish/unpublish, download (download only if published)
+  let vhtml = `<div class="tt-view-toolbar">`;
+  vhtml += `<button id="ttViewerEdit" class="btn btn-ghost">Edit timetable</button>`;
+  vhtml += `<button id="ttTogglePublish" class="btn btn-ghost">${publishedFlag ? 'Unpublish' : 'Publish'}</button>`;
+  if(publishedFlag) vhtml += `<button id="ttViewerDownload" class="btn btn-ghost">Download PDF</button>`;
+  vhtml += `<button id="ttViewerClose" class="btn btn-ghost">Close</button>`;
+  vhtml += `</div>`;
+
+  // Table header with DAYS ONLY
+  vhtml += `<div style="overflow:auto"><table class="tt-table"><thead><tr>`;
+  selDays.forEach(d => vhtml += `<th class="tt-day-column">${escapeHtml(d)}</th>`);
+  vhtml += `</tr></thead><tbody>`;
+
+  for(let r=0;r<maxRows;r++){
+    vhtml += `<tr>`;
+    selDays.forEach(d => {
+      const cell = (useSchedule[d] && useSchedule[d][r]) ? useSchedule[d][r] : null;
+
+      // compute fallback time for this row
+      const periodMinutes = Number((timetableDoc && timetableDoc.periodMinutes) ? timetableDoc.periodMinutes : ($('#ttPeriodMinutes')?.value || 60));
+      const startMeta = (timetableDoc && timetableDoc.startTime) ? timetableDoc.startTime : ($('#ttStartTime')?.value || '07:30');
+      let running = toMinutes(startMeta);
+      for(let k=0;k<r;k++){
+        running += periodMinutes;
+        const bS = toMinutes($('#ttBreakStart')?.value || '00:00');
+        const bE = toMinutes($('#ttBreakEnd')?.value || '00:00');
+        if(bS && bE && running >= bS && running < bE) running = bE;
+      }
+      const compStart = fromMinutes(running);
+      const compEnd = fromMinutes(running + periodMinutes);
+      const timeLine = `${formatAMPM(cell && cell.start ? cell.start : compStart)} — ${formatAMPM(cell && cell.end ? cell.end : compEnd)}`;
+
+      if(!cell){
+        vhtml += `<td style="min-width:150px;padding:8px"><div class="muted">—</div></td>`;
+        return;
+      }
+
+      if(cell.isBreak){
+        vhtml += `<td class="tt-break" style="min-width:150px;padding:8px;text-align:center"><strong>Break</strong><div class="tt-small muted" style="margin-top:6px">${timeLine}</div></td>`;
+      } else {
+        const subj = escapeHtml(cell.subject || 'Free');
+        const tnames = (cell.teacherIds || []).map(id => escapeHtml(teacherById[id] || id)).join(', ');
+        vhtml += `<td style="min-width:150px;padding:8px;vertical-align:top">
+          <div style="font-weight:700">${subj}</div>
+          ${tnames ? `<div style="margin-top:6px;font-size:13px;color:#334155">${tnames}</div>` : ''}
+          <div class="tt-small muted" style="margin-top:6px">${escapeHtml(timeLine)}</div>
+        </td>`;
+      }
+    });
+    vhtml += `</tr>`;
+  }
+
+  vhtml += `</tbody></table></div>`;
+  container.innerHTML = vhtml;
+
+  // wire viewer buttons
+  const editBtn = modalBody.querySelector('#ttViewerEdit');
+  const toggleBtn = modalBody.querySelector('#ttTogglePublish');
+  const viewerDownload = modalBody.querySelector('#ttViewerDownload');
+  const viewerClose = modalBody.querySelector('#ttViewerClose');
+
+  if(viewerClose) viewerClose.onclick = closeModal;
+  if(editBtn) editBtn.onclick = () => {
+    if(header) header.style.display = '';
+    if(controlsRow) controlsRow.style.display = '';
+    container.classList.remove('tt-view-only');
+    renderTimetableEditor();
+    wireDayButtons();
+  };
+  if(toggleBtn) toggleBtn.onclick = async () => {
+    const wantPublish = !(timetableDoc && timetableDoc.published);
+    const ok = window.confirm(wantPublish ? 'Publish timetable?' : 'Unpublish timetable?');
+    if(!ok) return;
+    setButtonLoading(toggleBtn, true, wantPublish ? 'Publishing...' : 'Unpublishing...');
+    try {
+      if(timetableDoc && timetableDoc.id){
+        await updateDoc(doc(db,'timetables', timetableDoc.id), { published: wantPublish });
+        timetableDoc.published = wantPublish;
+      } else {
+        const ref = await addDoc(collection(db,'timetables'), { classId: cls.id||cls.name, schedule: schedule, published: wantPublish, generatedAt: Timestamp.now() });
+        timetableDoc = { id: ref.id, published: wantPublish };
+      }
+      renderTimetableViewer(schedule, !!wantPublish);
+      setButtonLoading(toggleBtn, false);
+      toast(wantPublish ? 'Timetable published' : 'Timetable unpublished');
+    } catch(err){ console.error('toggle publish failed', err); setButtonLoading(toggleBtn, false); toast('Failed to change publish state'); }
+  };
+  if(viewerDownload) viewerDownload.onclick = () => modalBody.querySelector('#ttDownloadBtn')?.click();
+}
+
+
+  // initial render: if saved and has schedule show viewer, else editor
+  if(timetableDoc && timetableDoc.schedule){
+    schedule = JSON.parse(JSON.stringify(timetableDoc.schedule));
+    // show viewer, use timetableDoc.published (default false if missing)
+    renderTimetableViewer(schedule, !!timetableDoc.published);
+  } else {
+    renderTimetableEditor();
+    wireDayButtons();
+    // hide download until saved
+    const globalDl = $('#ttDownloadBtn'); if(globalDl) globalDl.style.display = 'none';
+  }
+
+  // wire controls
+  const closeBtn = $('#ttCloseBtn'); if(closeBtn) closeBtn.onclick = closeModal;
+
+  // regenerate when controls change (use canonical selected order)
+  ['ttStartTime','ttPeriodMinutes','ttPeriods','ttBreakStart','ttBreakEnd'].forEach(id => {
+    const el = document.getElementById(id);
+    if(el) el.onchange = () => renderTimetableEditor();
+  });
+  modalBody.querySelectorAll('.tt-day').forEach(ch => ch.onchange = () => { renderTimetableEditor(); wireDayButtons(); });
+
+  const genBtn = $('#ttGenerateBtn');
+  if(genBtn) genBtn.onclick = (ev) => {
+    setButtonLoading(ev.currentTarget, true, 'Generating...');
+    try {
+      const selDays = getSelectedDaysOrdered();
+      if(selDays.length === 0){ toast('Select days'); setButtonLoading(ev.currentTarget,false); return; }
+      const periods = Number($('#ttPeriods')?.value || 7);
+      const startTime = $('#ttStartTime')?.value || '07:30';
+      const periodMinutes = Number($('#ttPeriodMinutes')?.value || 60);
+      const breakStart = $('#ttBreakStart')?.value;
+      const breakEnd = $('#ttBreakEnd')?.value;
+
+      selDays.forEach(d => {
+        schedule[d] = schedule[d] || [];
+        while(schedule[d].length < periods) schedule[d].push({ subject: '', teacherIds: [], isBreak: false });
+        if(schedule[d].length > periods) schedule[d] = schedule[d].slice(0, periods);
+      });
+
+      selDays.forEach(d => {
+        for(let i=0;i<schedule[d].length;i++){
+          const subj = classSubjects.length ? classSubjects[i % classSubjects.length] : '';
+          schedule[d][i].subject = subj;
+          const teachers = teacherBySubject[subj] || [];
+          schedule[d][i].teacherIds = teachers.length ? [teachers[0].id] : [];
+          schedule[d][i].isBreak = false;
+        }
+      });
+
+      if(breakStart && breakEnd){
+        selDays.forEach(d => {
+          for(let i=0;i<schedule[d].length;i++){
+            let startMin = toMinutes($('#ttStartTime')?.value || startTime);
+            for(let k=0;k<i;k++){
+              startMin += periodMinutes;
+              const bS = toMinutes(breakStart), bE = toMinutes(breakEnd);
+              if(bS && bE && startMin >= bS && startMin < bE) startMin = bE;
+            }
+            const bS = toMinutes(breakStart), bE = toMinutes(breakEnd);
+            if(bS && bE && startMin >= bS && startMin < bE){
+              schedule[d][i].isBreak = true;
+              schedule[d][i].subject = 'Break';
+              schedule[d][i].teacherIds = [];
+            }
+          }
+        });
+      }
+
+      renderTimetableEditor();
+      wireDayButtons();
+      toast('Generated timetable (edit as needed)');
+    } catch(err){ console.error(err); toast('Generate failed'); }
+    setButtonLoading(ev.currentTarget, false);
+  };
+
+  // Clear All button (confirm then wipe selected days cells)
+  const clearBtn = $('#ttClearBtn');
+  if(clearBtn) clearBtn.onclick = (ev) => {
+    const selDays = getSelectedDaysOrdered();
+    if(selDays.length === 0) return toast('Select days to clear');
+    const ok = window.confirm(`Clear all periods for selected days (${selDays.join(', ')})? This will remove subjects & teachers from those days.`);
+    if(!ok) return;
+    // clear
+    selDays.forEach(d => { schedule[d] = []; });
+    renderTimetableEditor();
+    wireDayButtons();
+    toast('Cleared selected days');
+  };
+
+  // Save button: build finalSchedule and save (automatically published)
+  const saveBtn = $('#ttSaveBtn');
+  if(saveBtn) saveBtn.onclick = async (ev) => {
+    const selDays = getSelectedDaysOrdered();
+    if(selDays.length === 0) return toast('Select days');
+    const container = $('#ttEditorContainer');
+    const table = container && container.querySelector('table.tt-table');
+    if(!table) return toast('Nothing to save');
+
+    const rows = Array.from(table.querySelectorAll('tbody tr'));
+    const finalSchedule = {};
+    for(const d of selDays) finalSchedule[d] = [];
+
+    for(let rIndex=0;rIndex<rows.length;rIndex++){
+      const row = rows[rIndex];
+      for(const d of selDays){
+        const subjSel = row.querySelector(`select.tt-subject[data-day="${escapeHtml(d)}"][data-row="${rIndex}"]`) || row.querySelector(`select.tt-subject[data-day="${d}"][data-row="${rIndex}"]`);
+        const teacherSel = row.querySelector(`select.tt-teachers[data-day="${escapeHtml(d)}"][data-row="${rIndex}"]`) || row.querySelector(`select.tt-teachers[data-day="${d}"][data-row="${rIndex}"]`);
+        const isBreakEl = row.querySelector(`input.tt-is-break[data-day="${escapeHtml(d)}"][data-row="${rIndex}"]`) || row.querySelector(`input.tt-is-break[data-day="${d}"][data-row="${rIndex}"]`);
+        let subject = subjSel ? subjSel.value : '';
+        let teacherIds = teacherSel ? Array.from(teacherSel.selectedOptions).map(o=>o.value) : [];
+        const isBreak = isBreakEl ? !!isBreakEl.checked : false;
+        const startTime = $('#ttStartTime')?.value || '07:30';
+        const periodMinutes = Number($('#ttPeriodMinutes')?.value || 60);
+        let runningStart = toMinutes(startTime);
+        for(let k=0;k<rIndex;k++){
+          runningStart += periodMinutes;
+          const bS = toMinutes($('#ttBreakStart')?.value || '00:00');
+          const bE = toMinutes($('#ttBreakEnd')?.value || '00:00');
+          if(bS && bE && runningStart >= bS && runningStart < bE) runningStart = bE;
+        }
+        const start = fromMinutes(runningStart);
+        const end = fromMinutes(runningStart + periodMinutes);
+
+        // If no subject chosen and not a marked break, set Fasax
+        if(!subject && !isBreak){
+          subject = 'Fasax';
+        }
+
+        // If teacherIds empty but subject has teachers -> default to first teacher
+        if(!isBreak && (!teacherIds || teacherIds.length === 0)){
+          const subs = teacherBySubject[subject] || teacherBySubject[subject === 'Fasax' ? '' : subject] || [];
+          if(subs && subs.length) teacherIds = [subs[0].id];
+        }
+
+        // if subject is Break flag isBreak true
+        finalSchedule[d].push({
+          period: rIndex + 1,
+          start, end,
+          subject: isBreak ? 'Break' : subject || 'Fasax',
+          teacherIds: isBreak ? [] : (teacherIds || []),
+          isBreak: !!isBreak
+        });
+      }
+    }
+
+    const ok = window.confirm(`Save timetable for ${escapeHtml(cls.name)}?`);
+    if(!ok) return;
+    setButtonLoading(ev.currentTarget, true, 'Saving...');
+
+    try {
+      const payload = {
+        classId: cls.id,
+        className: cls.name,
+        schedule: finalSchedule,
+        startTime: $('#ttStartTime')?.value || '07:30',
+        periodMinutes: Number($('#ttPeriodMinutes')?.value) || 60,
+        defaultPeriods: Number($('#ttPeriods')?.value) || 7,
+        breakStart: $('#ttBreakStart')?.value || null,
+        breakEnd: $('#ttBreakEnd')?.value || null,
+        generatedAt: Timestamp.now(),
+        published: true
+      };
+
+      if(timetableDoc && timetableDoc.id){
+        await updateDoc(doc(db,'timetables', timetableDoc.id), payload);
+        timetableDoc = { id: timetableDoc.id, ...payload };
+      } else {
+        const ref = await addDoc(collection(db,'timetables'), payload);
+        timetableDoc = { id: ref.id, ...payload };
+      }
+
+      toast('Timetable saved and published');
+      // update schedule local & show viewer; ensure download visible
+      schedule = JSON.parse(JSON.stringify(finalSchedule));
+      renderTimetableViewer(schedule, true);
+      // update classes UI
+      await loadClasses();
+      renderClasses();
+      const globalDl = $('#ttDownloadBtn');
+      if(globalDl) globalDl.style.display = '';
+    } catch(err){ console.error('save timetable failed', err); toast('Save failed'); }
+    setButtonLoading(ev.currentTarget, false);
+  };
+
+  // Download / Print: auto-download PDF (no print popup). Append clone to body before rendering.
+  const downloadBtn = $('#ttDownloadBtn');
+  if(downloadBtn) downloadBtn.onclick = async () => {
+    try {
+      if(!(timetableDoc && timetableDoc.published)) return toast('Save and publish timetable first');
+      const useSchedule = schedule;
+      const selDays = days.filter(d => Array.isArray(useSchedule[d]));
+      if(selDays.length === 0) return toast('Nothing to print');
+
+      // build printable table element (same visual structure)
+      const wrapper = document.createElement('div');
+      wrapper.style.position = 'fixed';
+      wrapper.style.left = '-9999px';
+      wrapper.style.top = '0';
+      wrapper.style.width = '1200px'; // fixed width for consistent rendering
+      wrapper.style.padding = '18px';
+      wrapper.style.background = '#fff';
+
+      const titleEl = document.createElement('div');
+      titleEl.style.fontSize = '18px';
+      titleEl.style.fontWeight = '800';
+      titleEl.style.marginBottom = '6px';
+      titleEl.textContent = `Timetable — ${cls.name || classId}`;
+      wrapper.appendChild(titleEl);
+
+      const meta = document.createElement('div');
+      meta.style.fontSize = '12px';
+      meta.style.color = '#666';
+      meta.style.marginBottom = '12px';
+      meta.textContent = `Generated: ${timetableDoc && timetableDoc.generatedAt ? (timetableDoc.generatedAt.seconds ? new Date(timetableDoc.generatedAt.seconds*1000).toLocaleString() : new Date(timetableDoc.generatedAt).toLocaleString()) : new Date().toLocaleString()}`;
+      wrapper.appendChild(meta);
+
+      const tbl = document.createElement('table');
+      tbl.style.width = '100%'; tbl.style.borderCollapse = 'collapse'; tbl.style.fontFamily = 'Arial,Helvetica,sans-serif';
+      // header
+      const thead = document.createElement('thead');
+      const thr = document.createElement('tr');
+      const thp = document.createElement('th'); thp.style.border='1px solid #ddd'; thp.style.padding='8px'; thp.textContent='Period';
+      thr.appendChild(thp);
+      selDays.forEach(d => { const th = document.createElement('th'); th.style.border='1px solid #ddd'; th.style.padding='8px'; th.textContent = d; thr.appendChild(th); });
+      thead.appendChild(thr); tbl.appendChild(thead);
+      const tbody = document.createElement('tbody');
+
+      let maxRows = 0; selDays.forEach(d=>maxRows = Math.max(maxRows, (useSchedule[d]||[]).length));
+      for(let r=0;r<maxRows;r++){
+        const tr = document.createElement('tr');
+        const tdp = document.createElement('td'); tdp.style.border='1px solid #ddd'; tdp.style.padding='8px'; tdp.style.fontWeight='700';
+        // compute time label for row
+        let timeLabel = '';
+        for(const d of selDays){
+          const c = useSchedule[d]?.[r];
+          if(c && c.start && c.end){ timeLabel = `${formatAMPM(c.start)} — ${formatAMPM(c.end)}`; break; }
+        }
+        if(!timeLabel){
+          const startMeta = (timetableDoc && timetableDoc.startTime) ? timetableDoc.startTime : ($('#ttStartTime')?.value || '07:30');
+          const periodMinutes = Number((timetableDoc && timetableDoc.periodMinutes) ? timetableDoc.periodMinutes : ($('#ttPeriodMinutes')?.value || 60));
+          let running = toMinutes(startMeta);
+          for(let k=0;k<r;k++) running += periodMinutes;
+          timeLabel = `${formatAMPM(fromMinutes(running))} — ${formatAMPM(fromMinutes(running + periodMinutes))}`;
+        }
+        tdp.textContent = `P${r+1} • ${timeLabel}`;
+        tr.appendChild(tdp);
+        selDays.forEach(d => {
+          const c = useSchedule[d] && useSchedule[d][r] ? useSchedule[d][r] : null;
+          const td = document.createElement('td'); td.style.border='1px solid #ddd'; td.style.padding='8px';
+          if(!c) td.textContent = '—';
+          else if(c.isBreak){
+            const b = document.createElement('div'); b.style.fontWeight='700'; b.textContent='Break'; td.appendChild(b);
+            const t = document.createElement('div'); t.style.marginTop='6px'; t.textContent = `${formatAMPM(c.start || '')} — ${formatAMPM(c.end || '')}`; td.appendChild(t);
+          } else {
+            const s = document.createElement('div'); s.style.fontWeight='700'; s.textContent = (c.subject || '');
+            td.appendChild(s);
+            const t = document.createElement('div'); t.style.marginTop='6px'; t.textContent = (c.teacherIds||[]).map(id => teacherById[id]||id).join(', ');
+            td.appendChild(t);
+            const tm = document.createElement('div'); tm.style.marginTop='6px'; tm.style.color='#666'; tm.textContent = `${formatAMPM(c.start || '')} — ${formatAMPM(c.end || '')}`; td.appendChild(tm);
+          }
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      }
+      tbl.appendChild(tbody);
+      wrapper.appendChild(tbl);
+
+      // append to body off-screen (html2canvas requires in-document)
+      document.body.appendChild(wrapper);
+
+      // render canvas via html2canvas then save via jsPDF
+      const canvas = await html2canvas(wrapper, { scale: 2, useCORS: true, backgroundColor: '#ffffff' });
+      const imgData = canvas.toDataURL('image/png');
+      // cleanup appended node
+      wrapper.remove();
+
+      const jsPDFLib = (window.jspdf && window.jspdf.jsPDF) ? window.jspdf.jsPDF : (window.jsPDF ? window.jsPDF : null);
+      if(!jsPDFLib) { toast('PDF library missing'); return; }
+      const pdf = new jsPDFLib('landscape','pt','a4');
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const margin = 20;
+      // scale to fit page
+      const scale = Math.min((pageWidth - margin*2) / canvas.width, (pageHeight - margin*2) / canvas.height);
+      const imgW = canvas.width * scale; const imgH = canvas.height * scale;
+      const x = (pageWidth - imgW) / 2; const y = margin;
+      pdf.addImage(imgData, 'PNG', x, y, imgW, imgH);
+      const safeClass = String(cls.name || cls.id || classId).replace(/\s+/g,'-').replace(/[^\w\-]/g,'').toLowerCase();
+      const filename = `timetable-${safeClass}-${(new Date()).toISOString().slice(0,10)}.pdf`;
+      pdf.save(filename);
+    } catch(e){
+      console.error('Download PDF failed', e);
+      toast('Failed to generate PDF');
+    }
+  };
+
+  // small escape helper
+  function escapeHtml(s){ if(s==null) return ''; return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+  // initial wiring for day buttons
+  wireDayButtons();
+}
+
+
+
+
+
+/* ---------- NEW: Set Fee Modal ---------- */
+async function openSetFeeModal(classId, specificStudentIds = null){
+  const cls = classesCache.find(x => x.id===classId || x.name===classId);
+  if(!cls) return toast('Class not found');
+
+  // default selected = all class students
+  const assigned = (studentsCache||[]).filter(s => (s.classId||'') === (cls.name||cls.id||''));
+  const studentsOptions = assigned.map(s => {
+    const sidVal = escape(s.id||s.studentId||'');
+    const checked = specificStudentIds ? (specificStudentIds.includes(s.id||s.studentId)?'checked':'') : 'checked';
+    return `<label style="display:block"><input type="checkbox" class="fee-stu-chk" data-id="${sidVal}" ${checked} /> ${escape(s.fullName||'')} — ${escape(s.studentId||'')}</label>`;
+  }).join('');
+
+  showModal(`Set fee — ${escape(cls.name||'')}`, `
+    <div>
+      <label>Apply to students</label>
+      <div style="max-height:220px;overflow:auto;border:1px solid #eef2ff;padding:8px">${studentsOptions || '<div class="muted">No students</div>'}</div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">
+      <div><label>Amount</label><input id="feeAmount" type="number" /></div>
+      <div><label>Type</label><select id="feeType"><option value="monthly">Monthly</option><option value="quarterly">Quarterly</option><option value="one-time">One-time</option></select></div>
+      <div><label>Start date</label><input id="feeStart" type="date" /></div>
+      <div><label>Notes</label><input id="feeNotes" /></div>
+    </div>
+    <div style="margin-top:12px;display:flex;justify-content:flex-end;gap:8px">
+      <button id="feeCancel" class="btn btn-ghost">Cancel</button>
+      <button id="feeSave" class="btn btn-primary">Set fee</button>
+    </div>
+  `);
+
+  document.getElementById('feeCancel').onclick = closeModal;
+  document.getElementById('feeSave').onclick = async (ev) => {
+    const amount = Number(document.getElementById('feeAmount').value || 0);
+    const type = document.getElementById('feeType').value;
+    const start = document.getElementById('feeStart').value || null;
+    const notes = document.getElementById('feeNotes').value || '';
+
+    if(!amount || amount <= 0) return toast('Enter fee amount');
+
+    const selected = Array.from(modalBody.querySelectorAll('.fee-stu-chk:checked')).map(i => i.dataset.id);
+    if(selected.length === 0) return toast('No students selected');
+
+    const ok = await modalConfirm('Set Fee', `Set fee ${amount} (${type}) for <strong>${selected.length}</strong> students?`);
+    if(!ok) return;
+
+    setButtonLoading(ev.currentTarget, true, 'Applying...');
+    try {
+      const now = Timestamp.now();
+
+      // create fee docs AND update student top-level doc (so views show it immediately)
+      await Promise.all(selected.map(async sid => {
+        try {
+          // add fee history record
+          await addDoc(collection(db,'students', sid, 'fees'), {
+            amount,
+            type,
+            startDate: start ? new Date(start) : null,
+            notes,
+            createdAt: now,
+            createdBy: currentUser?.uid || null
+          });
+
+          // update top-level student doc so lists / modals show current fee
+          const studentDocId = sid; // assumes students are stored by studentId or internal id matching sid
+          await updateDoc(doc(db,'students', studentDocId), {
+            fee: amount,
+            feeType: type,
+            feeStartDate: start ? new Date(start) : null,
+            feeNotes: notes,
+            feeUpdatedAt: now
+          }).catch(async err => {
+            // if update fails (doc missing), try setDoc to create minimal doc (merge)
+            console.warn('update student fee failed, attempting set (merge):', err);
+            await setDoc(doc(db,'students', studentDocId), {
+              fee: amount,
+              feeType: type,
+              feeStartDate: start ? new Date(start) : null,
+              feeNotes: notes,
+              feeUpdatedAt: now
+            }, { merge: true });
+          });
+
+          // optional quick index: update studentsLatest doc (if you maintain it)
+          try{
+            await setDoc(doc(db,'studentsLatest', sid), { fee: amount, feeType: type, feeStartDate: start ? new Date(start) : null }, { merge: true });
+          }catch(e){ /* ignore */ }
+
+          // optimistic local cache update
+          const sc = (studentsCache || []).find(x => (x.studentId === sid || x.id === sid));
+          if(sc){
+            sc.fee = amount;
+            sc.feeType = type;
+            sc.feeStartDate = start ? new Date(start) : null;
+            sc.feeNotes = notes;
+            sc.feeUpdatedAt = now;
+          }
+        } catch(inner){
+          console.error('apply fee for student failed', sid, inner);
+          // continue - errors per student are collected but don't abort others
+        }
+      }));
+
+      // reload students so UI reflects server state
+      await loadStudents();
+      renderStudents();
+
+      toast('Fees set');
+      closeModal();
+    } catch(err){
+      console.error(err);
+      toast('Failed to set fees');
+    }
+    setButtonLoading(ev.currentTarget, false);
+  };
+}
+
+
+
+
+
+/* ---------- small helper fns used above ---------- */
+function computeAverageAttendance(studentsArr){
+  if(!studentsArr || studentsArr.length===0) return '—';
+  const vals = studentsArr.map(s => Number(s.attendancePercent || 0));
+  const avg = Math.round(vals.reduce((a,b)=>a+b,0)/vals.length);
+  return avg;
+}
+function hasTimetable(classId){
+  if(!classId) return false;
+  if(window.timetablesCache && Array.isArray(window.timetablesCache)){
+    return window.timetablesCache.some(t => String(t.classId || t.className || '').trim() === String(classId).trim());
+  }
+  return false;
+}
+
+function hasFeesForClass(classId){
+  if(!classId) return false;
+  // if studentsCache loaded, check whether any student in that class has a fee assigned
+  const list = (studentsCache || []).filter(s => (s.classId||'') === String(classId));
+  if(list.length === 0) return false;
+  return list.some(s => typeof s.fee !== 'undefined' && s.fee !== null && Number(s.fee) > 0);
+}
+
 
 openAddClass.onclick = () => {
   const subjectOptions = subjectsCache.map(s=>`<option value="${escape(s.name)}">${escape(s.name)}</option>`).join('');
@@ -3012,8 +4434,17 @@ async function renderStudents(){
 
 
 /* ---------- view student modal (updated delete flow) ---------- */
+
+
+/* ---------- openViewStudentModal (show class NAME instead of raw id) ---------- */
 async function openViewStudentModal(e){
-  const id = (e && e.target) ? e.target.dataset.id : (e && e.dataset ? e.dataset.id : e);
+  // Accept: event (with currentTarget.dataset.id), event.target, object with dataset, or plain string id
+  let id = null;
+  if(typeof e === 'string') id = e;
+  else if(e && e.currentTarget && e.currentTarget.dataset && e.currentTarget.dataset.id) id = e.currentTarget.dataset.id;
+  else if(e && e.target && e.target.dataset && e.target.dataset.id) id = e.target.dataset.id;
+  else if(e && e.dataset && e.dataset.id) id = e.dataset.id;
+
   if(!id) return;
   let s = studentsCache.find(x => x.studentId === id || x.id === id);
   if(!s && typeof getDoc === 'function'){
@@ -3024,7 +4455,31 @@ async function openViewStudentModal(e){
   }
   if(!s) return toast && toast('Student not found');
 
+  // compute class display name (prefer classesCache name lookup)
+  const clsObj = (classesCache || []).find(c => c.id === s.classId || c.name === s.classId);
+  const classDisplay = (clsObj && (clsObj.name || clsObj.id)) || (s.classId || '—');
+
+  // inside openViewStudentModal, just before building html we try to read latest fee record
+let latestFee = null;
+try {
+  if(s && (s.studentId || s.id)) {
+    const sidDoc = s.studentId || s.id;
+    // attempt to get the latest fee entry (ordered by createdAt desc)
+    const feeQ = query(collection(db, 'students', sidDoc, 'fees'), orderBy('createdAt','desc'));
+    const feeSnap = await getDocs(feeQ);
+    if(feeSnap && feeSnap.docs && feeSnap.docs.length) latestFee = feeSnap.docs[0].data();
+  }
+} catch(e){
+  console.warn('failed to load latest fee for student view', e);
+}
+
+// decide displayed fee (prefer explicit top-level field, fallback to latest fee record)
+const displayedFee = (typeof s.fee !== 'undefined' && s.fee !== null) ? s.fee : (latestFee ? latestFee.amount : null);
+const feeTypeDisplay = (s.feeType || (latestFee ? latestFee.type : '')) || '';
+const feeStartDisplay = (s.feeStartDate ? (s.feeStartDate.seconds ? new Date(s.feeStartDate.seconds*1000) : new Date(s.feeStartDate)).toLocaleDateString() : (latestFee && latestFee.startDate ? (latestFee.startDate.toDate ? latestFee.startDate.toDate().toLocaleDateString() : new Date(latestFee.startDate).toLocaleDateString()) : '—'));
+
   const html = `
+
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
       <div><strong>ID</strong><div class="muted">${escape(s.studentId||s.id||'')}</div></div>
       <div><strong>Name</strong><div class="muted">${escape(s.fullName||'')}</div></div>
@@ -3033,8 +4488,9 @@ async function openViewStudentModal(e){
       <div><strong>Parent phone</strong><div class="muted">${escape(s.parentPhone||'')}</div></div>
       <div><strong>Age</strong><div class="muted">${escape(String(s.age||'—'))}</div></div>
       <div><strong>Gender</strong><div class="muted">${escape(s.gender||'—')}</div></div>
-      <div><strong>Fee</strong><div class="muted">${typeof s.fee !== 'undefined' ? escape(String(s.fee)) : '—'}</div></div>
-      <div style="grid-column:1 / -1"><strong>Class</strong><div class="muted">${escape(s.classId||'—')}</div></div>
+<div><strong>Fee</strong><div class="muted">${displayedFee ? escape(String(displayedFee)) + (feeTypeDisplay ? ' • ' + escape(feeTypeDisplay) : '') : '—'}${displayedFee ? `<div class="tt-small muted">Start: ${escape(feeStartDisplay)}</div>` : ''}</div></div>
+
+<div style="grid-column:1 / -1"><strong>Class</strong><div class="muted">${escape(classDisplay)}</div></div>
       <div style="grid-column:1 / -1"><strong>Status</strong><div class="muted">${escape(s.status||'active')}</div></div>
     </div>
     <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
@@ -3045,13 +4501,22 @@ async function openViewStudentModal(e){
   `;
   showModal(`${escape(s.fullName||'Student')}`, html);
 
-  document.getElementById('viewStuClose').onclick = closeModal;
-  document.getElementById('viewStuEdit').onclick = () => {
+  // safe accessor for modal elements (tries modalBody first, then document)
+  const getEl = (sel) => (typeof modalBody !== 'undefined' && modalBody && modalBody.querySelector(sel)) || document.getElementById(sel);
+
+  const btnClose = getEl('#viewStuClose');
+  const btnEdit = getEl('#viewStuEdit');
+  const btnDel = getEl('#viewStuDel');
+
+  if(btnClose) btnClose.onclick = closeModal;
+  if(btnEdit) btnEdit.onclick = () => {
     closeModal();
-    openEditStudentModal({ target:{ dataset:{ id: s.studentId || s.id } } });
+    // call robust edit modal (can accept event-like or id)
+    openEditStudentModal({ currentTarget:{ dataset:{ id: s.studentId || s.id } } });
   };
-  document.getElementById('viewStuDel').onclick = async () => {
-    const delBtn = document.getElementById('viewStuDel');
+
+  if(btnDel) btnDel.onclick = async () => {
+    const delBtn = btnDel;
     if(s.status === 'deleted'){
       setButtonLoading(delBtn, true, 'Unblocking...');
       try{
@@ -3077,6 +4542,119 @@ async function openViewStudentModal(e){
     setButtonLoading(delBtn, false);
   };
 }
+
+/* ---------- openEditStudentModal (robust, guards missing elements) ---------- */
+function openEditStudentModal(e){
+  // Accept event/currentTarget/target/dataset string or plain id
+  let id = null;
+  if(typeof e === 'string') id = e;
+  else if(e && e.currentTarget && e.currentTarget.dataset && e.currentTarget.dataset.id) id = e.currentTarget.dataset.id;
+  else if(e && e.target && e.target.dataset && e.target.dataset.id) id = e.target.dataset.id;
+  else if(e && e.dataset && e.dataset.id) id = e.dataset.id;
+
+  if(!id) return;
+  const s = studentsCache.find(x => x.studentId === id || x.id === id);
+  if(!s) return toast && toast('Student not found');
+
+  // build class options with selected match (use class.name as value)
+  const options = (classesCache || []).map(c => {
+    const val = escape(c.name || '');
+    const selected = (c.name === s.classId || c.id === s.classId) ? 'selected' : '';
+    return `<option value="${val}" ${selected}>${escape(c.name || c.id || '')}</option>`;
+  }).join('');
+
+  const html = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div><label>Student ID</label><input id="stuId" value="${escape(s.studentId || s.id || '')}" disabled /></div>
+      <div><label>Class</label><select id="stuClass"><option value="">Select class</option>${options}</select></div>
+      <div style="grid-column:1 / -1"><label>Full name</label><input id="stuName" value="${escape(s.fullName||'')}" /></div>
+      <div><label>Mother's name</label><input id="stuMother" value="${escape(s.motherName||'')}" /></div>
+      <div><label>Phone</label><input id="stuPhone" value="${escape(s.phone||'')}" /></div>
+      <div><label>Parent phone</label><input id="stuParentPhone" value="${escape(s.parentPhone||'')}" /></div>
+      <div><label>Age</label><input id="stuAge" type="number" value="${escape(String(s.age||''))}" /></div>
+      <div><label>Gender</label>
+        <select id="stuGender">
+          <option value="">Select</option>
+          <option value="Male" ${s.gender==='Male' ? 'selected' : ''}>Male</option>
+          <option value="Female" ${s.gender==='Female' ? 'selected' : ''}>Female</option>
+        </select>
+      </div>
+      <div style="grid-column:1 / -1"><label>Fee</label><input id="stuFee" type="number" value="${escape(String(s.fee||''))}" /></div>
+    </div>
+    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
+      <button id="cancelStu" class="btn btn-ghost">Cancel</button>
+      <button id="saveStu" class="btn btn-primary">Save</button>
+    </div>
+  `;
+
+  showModal('Edit Student', html);
+
+  // safe accessor for modal elements (tries modalBody then document)
+  const getEl = (sel) => (typeof modalBody !== 'undefined' && modalBody && modalBody.querySelector(sel)) || document.getElementById(sel);
+
+  const btnCancel = getEl('#cancelStu');
+  const btnSave = getEl('#saveStu');
+
+  if(btnCancel) btnCancel.onclick = closeModal;
+
+  if(btnSave) {
+    btnSave.onclick = async (ev) => {
+      const btn = ev.currentTarget;
+      try{
+        setButtonLoading(btn, true, 'Saving...');
+        const name = (getEl('#stuName') ? getEl('#stuName').value.trim() : '');
+        const mother = (getEl('#stuMother') ? getEl('#stuMother').value.trim() : '');
+        const phone = (getEl('#stuPhone') ? getEl('#stuPhone').value.trim() : '');
+        const parentPhone = (getEl('#stuParentPhone') ? getEl('#stuParentPhone').value.trim() : '');
+        const age = Number(getEl('#stuAge') ? getEl('#stuAge').value : null) || null;
+        const gender = (getEl('#stuGender') ? getEl('#stuGender').value : null);
+        const fee = (getEl('#stuFee') && getEl('#stuFee').value) ? Number(getEl('#stuFee').value) : null;
+        const classId = getEl('#stuClass') ? getEl('#stuClass').value : null;
+
+        if(!name){ alert('Name required'); setButtonLoading(btn, false); return; }
+        if(gender && !['Male','Female'].includes(gender)){ alert('Gender must be Male or Female'); setButtonLoading(btn, false); return; }
+
+        // update document (use studentId as doc id if that's how you store them)
+        await updateDoc(doc(db,'students', s.studentId || s.id), {
+          fullName: name,
+          motherName: mother || '',
+          phone,
+          parentPhone: parentPhone || '',
+          age,
+          gender: gender || null,
+          fee: fee,
+          classId: classId || null
+        });
+
+        // optimistic local update if cache exists
+        const sc = (studentsCache || []).find(x => (x.studentId === s.studentId || x.id === s.id));
+        if(sc){
+          sc.fullName = name;
+          sc.motherName = mother || '';
+          sc.phone = phone;
+          sc.parentPhone = parentPhone || '';
+          sc.age = age;
+          sc.gender = gender || null;
+          sc.fee = fee;
+          sc.classId = classId || null;
+        }
+
+        closeModal();
+        await loadStudents();
+        renderStudents();
+        toast(`${name} updated`);
+      }catch(err){
+        console.error(err);
+        toast('Failed to update');
+      }
+      setButtonLoading(btn, false);
+    };
+  } else {
+    // if save button not found, log to console but don't throw
+    console.warn('Edit student: save button not found in modal.');
+  }
+}
+
 
 /* ---------- Add student (save button loading + prevent duplicate clicks) ---------- */
 openAddStudent && (openAddStudent.onclick = () => {
@@ -3123,53 +4701,7 @@ openAddStudent && (openAddStudent.onclick = () => {
   };
 });
 
-/* ---------- Edit student (save button loading) ---------- */
-function openEditStudentModal(e){
-  const id = e && e.target ? e.target.dataset.id : e;
-  const s = studentsCache.find(x=>x.studentId===id || x.id===id);
-  if(!s) return toast && toast('Student not found');
-  const options = (classesCache || []).map(c=>`<option value="${escape(c.name)}" ${c.name===s.classId?'selected':''}>${escape(c.name)}</option>`).join('');
-  showModal('Edit Student', `
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-      <div><label>Student ID</label><input id="stuId" value="${escape(s.studentId)}" disabled /></div>
-      <div><label>Class</label><select id="stuClass"><option value="">Select class</option>${options}</select></div>
-      <div style="grid-column:1 / -1"><label>Full name</label><input id="stuName" value="${escape(s.fullName)}" /></div>
-      <div><label>Mother's name</label><input id="stuMother" value="${escape(s.motherName||'')}" /></div>
-      <div><label>Phone</label><input id="stuPhone" value="${escape(s.phone||'')}" /></div>
-      <div><label>Parent phone</label><input id="stuParentPhone" value="${escape(s.parentPhone||'')}" /></div>
-      <div><label>Age</label><input id="stuAge" type="number" value="${escape(String(s.age||''))}" /></div>
-      <div><label>Gender</label><select id="stuGender"><option value="">Select</option><option value="Male" ${s.gender==='Male'?'selected':''}>Male</option><option value="Female" ${s.gender==='Female'?'selected':''}>Female</option></select></div>
-      <div style="grid-column:1 / -1"><label>Fee</label><input id="stuFee" type="number" value="${escape(String(s.fee||''))}" /></div>
-    </div>
-    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
-      <button id="cancelStu" class="btn btn-ghost">Cancel</button>
-      <button id="saveStu" class="btn btn-primary">Save</button>
-    </div>
-  `);
 
-  modalBody.querySelector('#cancelStu').onclick = closeModal;
-  modalBody.querySelector('#addResult').onclick = async () => { closeModal(); await openStudentResultModalFor(s); };
-
-  modalBody.querySelector('#saveStu').onclick = async (ev) => {
-    const btn = ev.currentTarget;
-    try{
-      setButtonLoading(btn, true, 'Saving...');
-      const name = modalBody.querySelector('#stuName').value.trim();
-      const mother = modalBody.querySelector('#stuMother').value.trim();
-      const phone = modalBody.querySelector('#stuPhone').value.trim();
-      const parentPhone = modalBody.querySelector('#stuParentPhone').value.trim();
-      const age = Number(modalBody.querySelector('#stuAge').value) || null;
-      const gender = (modalBody.querySelector('#stuGender').value || null);
-      const fee = modalBody.querySelector('#stuFee').value ? Number(modalBody.querySelector('#stuFee').value) : null;
-      const classId = modalBody.querySelector('#stuClass').value;
-      if(!name){ alert('Name required'); setButtonLoading(btn, false); return; }
-      if(gender && !['Male','Female'].includes(gender)){ alert('Gender must be Male or Female'); setButtonLoading(btn, false); return; }
-      await updateDoc(doc(db,'students',s.studentId), { fullName:name, motherName: mother || '', phone, parentPhone: parentPhone || '', age, gender: gender || null, fee: fee, classId });
-      closeModal(); await loadStudents(); renderStudents(); toast(`${name} updated`);
-    }catch(err){ console.error(err); toast('Failed to update'); }
-    setButtonLoading(btn, false);
-  };
-}
 
 /* ---------- delete/unblock from list (desktop) - modalConfirm + loading ---------- */
 async function deleteOrUnblockStudent(e){
@@ -3261,16 +4793,7 @@ async function deleteOrUnblockStudent(e){
   ? isMobileViewport()
   : window.matchMedia('(max-width:768px)').matches;
 
-  // hide desktop header controls on mobile
-if(mobile){
-  if(examSearch) examSearch.style.display = 'none';
-  if(examClassFilter) examClassFilter.style.display = 'none';
-  if(controls) controls.style.display = 'none';
-} else {
-  if(examSearch) examSearch.style.display = '';
-  if(examClassFilter) examClassFilter.style.display = '';
-  if(controls) controls.style.display = '';
-}
+
 
 // 🚫 do NOT render desktop controls on mobile
 if(!mobile && !controls && pageExams){
@@ -3292,55 +4815,65 @@ if(!mobile && !controls && pageExams){
   pageExams.insertBefore(controls, examsList);
 }
 
+// --- find original global Add button if present (so we can hide it on mobile) ---
+const originalAddBtn = (typeof openAddExam !== 'undefined' && openAddExam) ? openAddExam :
+  (document.getElementById && document.getElementById('openAddExam')) ? document.getElementById('openAddExam') : null;
+
+// hide desktop header controls on mobile (and hide the original Add button)
+if(mobile){
+  if(examSearch) examSearch.style.display = 'none';
+  if(examClassFilter) examClassFilter.style.display = 'none';
+  if(controls) controls.style.display = 'none';
+  if(originalAddBtn) originalAddBtn.style.display = 'none';
+} else {
+  if(examSearch) examSearch.style.display = '';
+  if(examClassFilter) examClassFilter.style.display = '';
+  if(controls) controls.style.display = '';
+  if(originalAddBtn) originalAddBtn.style.display = '';
+}
+
+// ... later: build mobile header/list HTML (replace your previous mobile html) ...
 if(mobile){
   let html = `
   <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
-    <input
-      id="examSearchMobile"
-      class="input"
-      placeholder="Search exams..."
-      style="flex:1"
-    />
-    <button class="btn btn-primary btn-sm" onclick="openAddExam && openAddExam.click()">+ Add</button>
+    <input id="examSearchMobile" class="input" placeholder="Search exams..." style="flex:1" />
+    <button id="examAddMobile" class="btn btn-primary btn-sm">+ Add</button>
   </div>
-  
+
   <div style="display:flex;gap:8px;margin-bottom:6px">
     <select id="examClassFilterMobile" class="input" style="flex:1">
       <option value="">All Classes</option>
       ${(examClassFilter?.innerHTML || '')}
     </select>
-  
+
     <select id="examSortMobile" class="input">
       <option value="date">Date</option>
       <option value="a-z">A → Z</option>
       <option value="z-a">Z → A</option>
     </select>
   </div>
-  
+
   <div style="text-align:right;font-size:13px;font-weight:600;color:#334155;margin-bottom:8px">
     Total exams: ${list.length}
   </div>
-  
+
   <div id="examsMobileList">
   `;
-  
 
-  
-      list.forEach((e, idx) => {
-        const status = e.status === 'published' ? 'Published' : (e.status === 'deactivated' ? 'Deactivated' : 'Unpublished');
-        const statusBg = e.status === 'published' ? '#059669' : (e.status === 'deactivated' ? '#dc2626' : '#dc2626');
-        const subjectsCount = (e.subjects || []).length;
-const classesCount = (e.classes || []).length;
+  list.forEach((e, idx) => {
+    const status = e.status === 'published' ? 'Published' : (e.status === 'deactivated' ? 'Deactivated' : 'Unpublished');
+    const statusBg = e.status === 'published' ? '#059669' : (e.status === 'deactivated' ? '#dc2626' : '#6b7280');
+    const subjectsCount = (e.subjects || []).length;
+    const classesCount = (e.classes || []).length;
 
-
-html += `
+    html += `
 <div style="padding:12px;border-bottom:1px solid #f1f5f9">
-  
+
   <!-- LINE 1 -->
   <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
     <div style="flex:1;min-width:0;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
       ${escape(e.name || '')}
-      <span style="font-size:12px;font-weight:600;color:#374151;margin-left:6px">
+      <span style="font-size:12px;font-weight:600;margin-left:6px;color:#7c3aed">
         · ${classesCount} Classes
       </span>
     </div>
@@ -3354,7 +4887,7 @@ html += `
   <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
     <div style="font-size:12px;color:#60a5fa">
       ID: ${escape(e.id || '')}
-      <span style="color:#374151"> · ${subjectsCount} Subjects</span>
+      <span style="color:#059669"> · ${subjectsCount} Subjects</span>
     </div>
 
     <button class="btn btn-ghost btn-sm mobile-exam-more" data-id="${escape(e.id)}">⋮</button>
@@ -3362,38 +4895,65 @@ html += `
 
 </div>
 `;
+  });
 
+  html += `</div>`;
+  examsList.innerHTML = html;
 
-      
-      });
-  
-      html += `</div>`;
-      examsList.innerHTML = html;
-
-      /* ✅ ADD THIS RIGHT HERE */
-      const sortSel = document.getElementById('examSortMobile');
-      if(sortSel){
-        sortSel.value = examSortMode || 'date';
-        sortSel.onchange = e => {
-          examSortMode = e.target.value;
-          renderExams();
-        };
+  // --- wire mobile controls (search / class filter / sort) ---
+  const mSearch = document.getElementById('examSearchMobile');
+  if(mSearch){
+    mSearch.value = examSearch?.value || '';
+    mSearch.oninput = e => {
+      if(examSearch){
+        examSearch.value = e.target.value;
       }
-      
-      /* mobile more buttons */
-      examsList.querySelectorAll('.mobile-exam-more').forEach(b => {
-        b.onclick = (ev) => openExamModal(ev.currentTarget.dataset.id);
-      });
-      
-      return;
-        
-      // wire mobile More buttons to open modal
-      examsList.querySelectorAll('.mobile-exam-more').forEach(b => {
-        b.onclick = (ev) => openExamModal(ev.currentTarget.dataset.id);
-      });
-  
-      return;
-    }
+      renderExams();
+    };
+  }
+
+  const mClass = document.getElementById('examClassFilterMobile');
+  if(mClass){
+    mClass.value = examClassFilter?.value || '';
+    mClass.onchange = e => {
+      if(examClassFilter){
+        examClassFilter.value = e.target.value;
+      }
+      renderExams();
+    };
+  }
+
+  const sortSel = document.getElementById('examSortMobile');
+  if(sortSel){
+    sortSel.value = examSortMode || 'date';
+    sortSel.onchange = e => {
+      examSortMode = e.target.value;
+      renderExams();
+    };
+  }
+
+  // wire the mobile Add button to open the existing Add modal (use originalAddBtn if available)
+  const mobileAdd = document.getElementById('examAddMobile');
+  if(mobileAdd){
+    mobileAdd.onclick = () => {
+      if(originalAddBtn && typeof originalAddBtn.click === 'function') originalAddBtn.click();
+      else if(typeof openAddExam === 'object' && openAddExam && openAddExam.click) openAddExam.click();
+      else {
+        // fallback: try to find a button by a common id
+        const fallback = document.getElementById('openAddExam');
+        if(fallback) fallback.click();
+      }
+    };
+  }
+
+  // mobile more buttons: open modal summary
+  examsList.querySelectorAll('.mobile-exam-more').forEach(b => {
+    b.onclick = (ev) => openExamModal(ev.currentTarget.dataset.id);
+  });
+
+  return;
+}
+
   
     // DESKTOP view: more complete rows, status pill + buttons (View/Open/Edit/Delete/Publish)
     for(const e of list){
