@@ -7,6 +7,8 @@ import { db } from './firebase-config.js';
 import { collection, doc, getDocs, getDoc, query, where, orderBy, limit, addDoc, updateDoc, deleteDoc, setDoc, Timestamp } from 'https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore.js';
 // or your project's firebase import style — just ensure orderBy & limit are present
 
+
+
 /* ---------- DOM refs ---------- */
 const searchBtn = document.getElementById('searchBtn');
 const studentIdInput = document.getElementById('studentId');
@@ -2153,12 +2155,247 @@ async function renderAnnouncementsForStudent(studentObj){
 window.renderAnnouncementsForStudent = renderAnnouncementsForStudent;
 
 
+// ---------- renderTimetableViewerForStudent (day-columns only, time under teacher name) ----------
+async function renderTimetableViewerForStudent(classId){
+  if(!classId) return toast && toast('Class ID required');
+
+  const resultArea = document.getElementById('resultArea');
+  if(!resultArea) return console.warn('renderTimetableViewerForStudent: #resultArea missing');
+
+  try {
+    resultArea.style.display = 'block';
+    resultArea.innerHTML = `<div class="card muted">Loading timetable…</div>`;
+
+    const classValues = Array.from(new Set([ String(classId).trim() ]));
+
+    // fetch published timetables and pick the latest matching class
+    const q = query(collection(db, 'timetables'), where('published', '==', true), orderBy('generatedAt','desc'));
+    const snap = await getDocs(q);
+
+    const match = snap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .find(t => {
+        const cid = String(t.classId || '').trim();
+        const cname = String(t.className || '').trim();
+        return classValues.includes(cid) || classValues.includes(cname);
+      });
+
+    if(!match){
+      resultArea.innerHTML = `
+        <div class="card muted">
+          No published timetable found for class
+          <strong>${escapeHtml(classId)}</strong>.
+        </div>`;
+      return;
+    }
+
+    const tt = match;
+    const schedule = tt.schedule || {};
+
+    // canonical order
+    const canonicalDays = ['Saturday','Sunday','Monday','Tuesday','Wednesday','Thursday','Friday'];
+    const selDays = canonicalDays.filter(d => Array.isArray(schedule[d]));
+    if(selDays.length === 0){
+      const keys = Object.keys(schedule || {});
+      if(keys.length === 0){
+        resultArea.innerHTML = `<div class="card muted">Timetable is empty.</div>`;
+        return;
+      }
+      selDays.push(...keys.sort());
+    }
+
+    // compute max rows (periods)
+    let maxPeriods = 0;
+    selDays.forEach(d => { maxPeriods = Math.max(maxPeriods, (schedule[d]||[]).length); });
+    if(maxPeriods === 0) maxPeriods = 1;
+
+    // ensure teachers cache available
+    if (!window.teachersCache || !Array.isArray(window.teachersCache)) {
+      try {
+        const tSnap = await getDocs(collection(db, 'teachers'));
+        window.teachersCache = tSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+      } catch(e){
+        console.warn('Failed to load teachers for timetable viewer:', e);
+        window.teachersCache = window.teachersCache || [];
+      }
+    }
+    const teacherById = {};
+    (window.teachersCache || []).forEach(t => {
+      const tid = t.id || t.teacherId || t.email;
+      if(tid) teacherById[tid] = t.fullName || t.name || t.teacherId || t.id;
+    });
+
+    // time helpers
+    function toMinutes(hhmm){ if(!hhmm) return 0; const [h,m] = String(hhmm).split(':').map(Number); return (h||0)*60 + (m||0); }
+    function fromMinutes(mins){ mins = Math.max(0, Math.floor(mins % (24*60))); const h = Math.floor(mins/60); const m = mins % 60; return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`; }
+    function formatAMPM(hhmm){
+      if(!hhmm) return '';
+      const [hStr,mStr] = String(hhmm).split(':');
+      let h = Number(hStr), m = Number(mStr);
+      h = ((h + 11) % 12) + 1;
+      return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')} ${h >= 12 ? 'PM' : 'AM'}`;
+    }
+
+    const classStart = tt.startTime || '07:30';
+    const periodMinMeta = Number(tt.periodMinutes || 60);
+    const breakStartMeta = tt.breakStart || null;
+    const breakEndMeta = tt.breakEnd || null;
+
+    function computePeriodRangeForIndex(p){
+      let running = toMinutes(classStart);
+      for(let k=0;k<p;k++){
+        running += periodMinMeta;
+        if(breakStartMeta && breakEndMeta){
+          const bS = toMinutes(breakStartMeta), bE = toMinutes(breakEndMeta);
+          if(running >= bS && running < bE) running = bE;
+        }
+      }
+      const start = fromMinutes(running);
+      const end = fromMinutes(running + periodMinMeta);
+      if(breakStartMeta && breakEndMeta){
+        const bS = toMinutes(breakStartMeta), bE = toMinutes(breakEndMeta);
+        const s = toMinutes(start), e = toMinutes(end);
+        if(s >= bS && e <= bE) return { isBreak: true, start, end };
+      }
+      return { isBreak: false, start, end };
+    }
+
+    // build HTML (days-only header)
+    let html = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:12px;flex-wrap:wrap">
+        <div>
+          <div style="font-weight:800">Class Timetable — ${escapeHtml(String(classId))}</div>
+          <div class="muted" style="font-size:12px">Generated: ${tt.generatedAt ? (tt.generatedAt.seconds ? new Date(tt.generatedAt.seconds*1000).toLocaleString() : new Date(tt.generatedAt).toLocaleString()) : '—'}</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <div class="muted" style="font-size:12px">Status: ${tt.published ? '<strong>Published</strong>' : '<em>Unpublished</em>'}</div>
+          <button id="ttDownloadPdfBtn" class="btn btn-ghost btn-sm">Download PDF</button>
+        </div>
+      </div>
+
+      <div style="overflow:auto">
+        <table class="tt-table" style="width:100%;border-collapse:collapse">
+          <thead><tr>`;
+
+    selDays.forEach(d => html += `<th style="border:1px solid #e6eef8;padding:10px;text-align:left">${escapeHtml(d)}</th>`);
+    html += `</tr></thead><tbody>`;
+
+    // rows (no period column) — each row is only day cells
+    for(let p=0;p<maxPeriods;p++){
+      const computed = computePeriodRangeForIndex(p);
+      const anyDayMarkedBreak = selDays.some(d => !!(schedule[d] && schedule[d][p] && schedule[d][p].isBreak));
+      const globalIsBreak = anyDayMarkedBreak || !!computed.isBreak;
+
+      html += `<tr>`;
+      selDays.forEach(d => {
+        const cell = schedule[d] && schedule[d][p] ? schedule[d][p] : null;
+
+        // derive time for this cell (prefer cell.start/end, else computed)
+        const start = (cell && cell.start) ? cell.start : computed.start;
+        const end = (cell && cell.end) ? cell.end : computed.end;
+        const timeLine = `${formatAMPM(start)} – ${formatAMPM(end)}`;
+
+        // global break handling
+        if(!cell && globalIsBreak){
+          html += `<td style="border:1px solid #f6ecd7;padding:10px;min-width:120px;background:#fff7e6;text-align:center">
+                     <div style="font-weight:800">Break</div>
+                     <div class="muted tt-small" style="margin-top:6px">${timeLine}</div>
+                   </td>`;
+          return;
+        }
+
+        if(!cell){
+          html += `<td style="border:1px solid #eef4fb;padding:10px;min-width:120px"><div class="muted">—</div></td>`;
+          return;
+        }
+
+        if(cell.isBreak){
+          html += `<td style="border:1px solid #f6ecd7;padding:10px;min-width:120px;background:#fff7e6;text-align:center">
+                     <div style="font-weight:800">Break</div>
+                     <div class="muted tt-small" style="margin-top:6px">${timeLine}</div>
+                   </td>`;
+        } else {
+          const subj = escapeHtml(cell.subject || 'Free');
+          const teacherNames = (cell.teacherIds || []).map(id => escapeHtml(teacherById[id] || id)).join(', ');
+
+          // time should appear under the teacher name; if no teacher, show under subject
+          if(teacherNames){
+            html += `<td style="border:1px solid #eef4fb;padding:10px;min-width:120px;vertical-align:top">
+                       <div style="font-weight:700">${subj}</div>
+                       <div style="margin-top:6px;font-size:13px;color:#334155">${teacherNames}
+                         <div class="tt-small muted" style="margin-top:4px">${escapeHtml(timeLine)}</div>
+                       </div>
+                     </td>`;
+          } else {
+            html += `<td style="border:1px solid #eef4fb;padding:10px;min-width:120px;vertical-align:top">
+                       <div style="font-weight:700">${subj}</div>
+                       <div class="tt-small muted" style="margin-top:6px">${escapeHtml(timeLine)}</div>
+                     </td>`;
+          }
+        }
+      });
+      html += `</tr>`;
+    }
+
+    html += `</tbody></table></div>`;
+
+    resultArea.innerHTML = `<div class="card">${html}</div>`;
+
+    // Download button logic (renders the same day-only table)
+    const downloadBtn = document.getElementById('ttDownloadPdfBtn');
+    if(downloadBtn){
+      downloadBtn.onclick = async () => {
+        try {
+          const tbl = resultArea.querySelector('.tt-table');
+          if(!tbl) { toast && toast('No timetable to print'); return; }
+
+          const canvas = await html2canvas(tbl, { scale: 2, useCORS: true, logging: false });
+          const imgData = canvas.toDataURL('image/png');
+
+          const jsPDFLib = (window.jspdf && window.jspdf.jsPDF) ? window.jspdf.jsPDF : (window.jsPDF ? window.jsPDF : null);
+          if(!jsPDFLib){
+            const win = window.open('', '_blank', 'noopener');
+            if(!win){ toast && toast('Popup blocked — allow popups to print'); return; }
+            win.document.open();
+            win.document.write(`<html><body><img src="${imgData}" style="max-width:100%"/></body></html>`);
+            win.document.close();
+            return;
+          }
+
+          const pdf = new jsPDFLib('landscape','pt','a4');
+          const pageWidth = pdf.internal.pageSize.getWidth();
+          const pageHeight = pdf.internal.pageSize.getHeight();
+          const margin = 20;
+          const scale = Math.min((pageWidth - margin*2) / canvas.width, (pageHeight - margin*2) / canvas.height);
+          const imgW = canvas.width * scale;
+          const imgH = canvas.height * scale;
+          const x = (pageWidth - imgW) / 2;
+          const y = margin;
+
+          pdf.addImage(imgData, 'PNG', x, y, imgW, imgH);
+          const safeClass = String(classId).replace(/\s+/g,'-').replace(/[^\w\-]/g,'').toLowerCase();
+          const filename = `timetable-${safeClass}-${(new Date()).toISOString().slice(0,10)}.pdf`;
+          pdf.save(filename);
+        } catch(e){
+          console.error('Auto PDF generation failed:', e);
+          toast && toast('Failed to generate PDF');
+        }
+      };
+    }
+
+    function escapeHtml(s){ if(s==null) return ''; return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+  } catch(err){
+    console.error('renderTimetableViewerForStudent failed', err);
+    resultArea.innerHTML = `<div class="card muted">Failed to load timetable.</div>`;
+    toast && toast('Failed to load timetable');
+  }
+}
+window.renderTimetableViewerForStudent = renderTimetableViewerForStudent;
 
 
 
-/* Usage: after you fetch the student object (or after renderResult), call:
-   renderAnnouncementsForStudent(studentObj);
-*/
+
 
 
 
@@ -2253,6 +2490,40 @@ document.querySelectorAll('.mode-card').forEach(card => {
         hideCardsUI();
         return;
       }
+// -------- TIMETABLE (STUDENT) --------
+if(mode === 'timetable'){
+  hideCardsUI();
+  showLoader && showLoader();
+
+  try {
+    const sDoc = await getDoc(doc(db,'students', id));
+    if(!sDoc.exists()){
+      toast('Student not found');
+      hideLoader && hideLoader();
+      return;
+    }
+
+    // accept many forms (classId, class, className)
+    const cls = sDoc.data().classId || sDoc.data().class || sDoc.data().className;
+    if(!cls){
+      toast('No class assigned');
+      hideLoader && hideLoader();
+      return;
+    }
+
+    // call the viewer. it will handle published check + print button
+    await renderTimetableViewerForStudent(String(cls).trim());
+  } catch(err){
+    console.error('Student timetable error', err);
+    toast('Failed to load timetable');
+  } finally {
+    hideLoader && hideLoader();
+  }
+
+  return;
+}
+
+
       // exam flow
       if(mode === 'exam'){
         const latestSnap = await getDoc(doc(db,'studentsLatest', id));
@@ -2358,31 +2629,31 @@ document.querySelectorAll('.mode-card').forEach(card => {
 
 // ------------------ Replace search button handler ------------------
 // Use the selectedMode (card click sets it) OR default to 'exam'
-searchBtn.onclick = async () => {
-  tryUnlockAudio().catch(()=>{});
-  const studentIdVal = studentIdInput.value.trim();
-  if(!studentIdVal){
-    message.textContent = 'Fadlan geli ID sax ah.';
-    return;
-  }
-  // save preference if checked
-  try { if(rememberCheckbox && rememberCheckbox.checked) localStorage.setItem('rememberedStudentId', studentIdVal); } catch(e){}
+// searchBtn.onclick = async () => {
+//   tryUnlockAudio().catch(()=>{});
+//   const studentIdVal = studentIdInput.value.trim();
+//   if(!studentIdVal){
+//     message.textContent = 'Fadlan geli ID sax ah.';
+//     return;
+//   }
+//   // save preference if checked
+//   try { if(rememberCheckbox && rememberCheckbox.checked) localStorage.setItem('rememberedStudentId', studentIdVal); } catch(e){}
 
-  // if current selectedMode is payments/attendance/test/exam, reuse same behavior as cards
-  const mode = selectedMode || 'exam';
+//   // if current selectedMode is payments/attendance/test/exam, reuse same behavior as cards
+//   const mode = selectedMode || 'exam';
 
-  // trigger same flows as cards (delegated to the card handler logic above)
-  // to avoid duplicating large code, just simulate a click on the matching card if visible
-  const card = document.querySelector(`.mode-card[data-mode="${mode}"]`);
-  if(card){
-    card.click();
-  } else {
-    // fallback — if cards not present just run exam flow
-    selectedMode = 'exam';
-    const evt = new Event('click');
-    const examCard = document.querySelector(`.mode-card[data-mode="exam"]`);
-    if(examCard) examCard.dispatchEvent(evt);
-  }
-};
+//   // trigger same flows as cards (delegated to the card handler logic above)
+//   // to avoid duplicating large code, just simulate a click on the matching card if visible
+//   const card = document.querySelector(`.mode-card[data-mode="${mode}"]`);
+//   if(card){
+//     card.click();
+//   } else {
+//     // fallback — if cards not present just run exam flow
+//     selectedMode = 'exam';
+//     const evt = new Event('click');
+//     const examCard = document.querySelector(`.mode-card[data-mode="exam"]`);
+//     if(examCard) examCard.dispatchEvent(evt);
+//   }
+// };
 
 export { renderResult  };
