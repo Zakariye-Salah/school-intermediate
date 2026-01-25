@@ -77,7 +77,82 @@ const modal = document.getElementById('modal');
 const modalTitle = document.getElementById('modalTitle');
 const modalBody = document.getElementById('modalBody');
 const modalClose = document.getElementById('modalClose');
-const toastEl = document.getElementById('toast');
+
+const toastContainer = document.getElementById('toast-container');
+const historyEl = document.getElementById('toast-history');
+const historyBtn = document.getElementById('toast-history-btn');
+
+const MAX_TOASTS = 5;
+const toastHistory = [];
+
+/* sound */
+const toastSound = new Audio(
+  'data:audio/mp3;base64,//uQxAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAACcQCA'
+);
+
+historyBtn.onclick = ()=>{
+  historyEl.style.display = historyEl.style.display === 'block' ? 'none' : 'block';
+};
+
+/**
+ * toast(message, type, duration)
+ */
+function toast(msg, type='info', duration=2200){
+  if(!toastContainer) return;
+
+  /* queue limit */
+  while(toastContainer.children.length >= MAX_TOASTS){
+    toastContainer.firstChild.remove();
+  }
+
+  const toastEl = document.createElement('div');
+  toastEl.className = `toast ${type}`;
+
+  const iconMap = { success:'✓', error:'✕', warning:'⚠', info:'ℹ' };
+
+  toastEl.innerHTML = `
+    <div class="icon">${iconMap[type] || 'ℹ'}</div>
+    <div class="msg">${msg}</div>
+    <div class="close">✕</div>
+    <div class="bar"></div>
+  `;
+
+  toastContainer.appendChild(toastEl);
+
+  /* history */
+  toastHistory.unshift({ msg, type, time:new Date().toLocaleTimeString() });
+  renderHistory();
+
+  /* close btn */
+  toastEl.querySelector('.close').onclick = ()=> removeToast(toastEl);
+
+  /* progress bar */
+  const bar = toastEl.querySelector('.bar');
+  bar.style.transition = `transform ${duration}ms linear`;
+  requestAnimationFrame(()=> bar.style.transform = 'scaleX(0)');
+
+  /* sound */
+  try{ toastSound.currentTime=0; toastSound.play(); }catch(e){}
+
+  /* auto remove */
+  setTimeout(()=> removeToast(toastEl), duration);
+}
+
+function removeToast(el){
+  if(!el) return;
+  el.style.opacity='0';
+  el.style.transform='translateY(-6px) scale(.96)';
+  setTimeout(()=> el.remove(), 250);
+}
+
+function renderHistory(){
+  historyEl.innerHTML = toastHistory
+    .slice(0,20)
+    .map(t=>`<div class="item"><strong>${t.type}</strong> · ${t.msg}<br><small>${t.time}</small></div>`)
+    .join('');
+}
+
+
 
 let currentUser = null;
 let studentsCache = [];
@@ -193,13 +268,36 @@ function showPage(id) {
 }
 
 
-function showModal(title, html) {
-  modalTitle.textContent = title; modalBody.innerHTML = html; modalBackdrop.style.display = 'flex';
+function showModal(title, html){
+  modalTitle.textContent = title;
+  modalBody.innerHTML = html;
+
+  modalBackdrop.style.display = 'flex';
+
+  // force reflow so animation works
+  modalBackdrop.offsetHeight;
+
+  modalBackdrop.classList.add('show');
 }
-function closeModal() { modalBackdrop.style.display = 'none'; modalBody.innerHTML = ''; }
+
+function closeModal(){
+  modalBackdrop.classList.remove('show');
+
+  setTimeout(()=>{
+    modalBackdrop.style.display = 'none';
+    modalBody.innerHTML = '';
+  }, 200);
+}
+
 modalClose.onclick = closeModal;
 modalBackdrop.onclick = (e) => { if(e.target === modalBackdrop) closeModal(); };
-function toast(msg, t=2200){ if(!toastEl) return; toastEl.textContent = msg; toastEl.style.display = 'block'; setTimeout(()=>toastEl.style.display='none',t); }
+
+
+
+/**
+ * toast(message, type, duration)
+ * type: success | error | warning | info
+ */
 
 /** helper: pad number */
 function pad(n, width){ n = String(n||''); return n.length >= width ? n : '0'.repeat(width - n.length) + n; }
@@ -619,10 +717,10 @@ async function restoreItem(item){
       // generic restore: set deleted flags to false and clear metadata
       await updateDoc(ref, { deleted: false, deletedAt: null, deletedBy: null, deleted_at: null, deleted_by: null, updatedAt: Timestamp.now() });
     }
-    toast('Restored');
+    toast('Restored' , 'success');
   }catch(err){
     console.error('restoreItem failed', err);
-    toast('Failed to restore');
+    toast('Failed to restore', 'error', 3000);
   }
 }
 
@@ -631,10 +729,10 @@ async function permanentlyDeleteItem(item){
   try{
     const { collection: collName, id } = item;
     await deleteDoc(doc(db, collName, id));
-    toast('Deleted permanently');
+    toast('Deleted permanently', 'warning');
   }catch(err){
     console.error('permanentlyDeleteItem failed', err);
-    toast('Failed to delete permanently');
+    toast('Failed to delete permanently', 'error', 3000);
   }
 }
 
@@ -666,14 +764,14 @@ async function bulkRestore(){
   for(const it of filtered){
     await restoreItem(it);
   }
-  toast('Restored all visible items');
+  toast('Restored all visible items', 'info');
   await renderRecycleBin();
 }
 
 /** Bulk delete visible items (only superadmin) */
 async function bulkDeleteAll(){
   if(!isSuperAdmin()){
-    toast('Only superadmin can delete permanently');
+    toast('Only superadmin can delete permanently', 'warning');
     return;
   }
   if(!confirm('Permanently delete ALL visible items? This cannot be undone.')) return;
@@ -702,7 +800,7 @@ async function bulkDeleteAll(){
   for(const it of filtered){
     await permanentlyDeleteItem(it);
   }
-  toast('Deleted permanently all visible items');
+  toast('Deleted permanently all visible items' , 'warning');
   await renderRecycleBin();
 }
 
@@ -760,9 +858,9 @@ async function saveAnnouncementsSettings(settings){
   try {
     const safe = { monthlyEnabled: !!settings.monthlyEnabled, excludedMonths: Array.isArray(settings.excludedMonths) ? settings.excludedMonths : [], dailyLimit: 10 };
     await setDoc(ANNOUNCEMENTS_SETTINGS_DOC, safe, { merge:true });
-    toast('Settings saved');
+    toast('Settings saved', 'success');
     return true;
-  } catch(e){ console.error(e); toast('Failed to save settings'); return false; }
+  } catch(e){ console.error(e); toast('Failed to save settings' , 'error', 3000); return false; }
 }
 
 async function ensureMonthlyAnnouncementIfNeeded(){
@@ -955,17 +1053,17 @@ async function saveTemplate(template){
   try {
     const ref = await addDoc(collection(db, ANNOUNCEMENT_TEMPLATES_COLL), { ...template, createdBy: currentUser ? (currentUser.uid||currentUser.email) : 'unknown', createdAt: Timestamp.now() });
     _cachedTemplates = null;
-    toast('Template saved');
+    toast('Template saved', 'success');
     return ref.id;
-  } catch(e){ console.error(e); toast('Failed to save template'); throw e; }
+  } catch(e){ console.error(e); toast('Failed to save template', 'error', 3000); throw e; }
 }
 async function updateTemplate(id, data){
-  try { await updateDoc(doc(db, ANNOUNCEMENT_TEMPLATES_COLL, id), { ...data, updatedAt: Timestamp.now() }); _cachedTemplates = null; toast('Template updated'); return true; }
-  catch(e){ console.error(e); toast('Failed to update template'); throw e; }
+  try { await updateDoc(doc(db, ANNOUNCEMENT_TEMPLATES_COLL, id), { ...data, updatedAt: Timestamp.now() }); _cachedTemplates = null; toast('Template updated', 'success'); return true; }
+  catch(e){ console.error(e); toast('Failed to update template', 'error', 3000); throw e; }
 }
 async function deleteTemplate(id){
-  try { await deleteDoc(doc(db, ANNOUNCEMENT_TEMPLATES_COLL, id)); _cachedTemplates = null; toast('Template deleted'); return true; }
-  catch(e){ console.error(e); toast('Failed to delete template'); throw e; }
+  try { await deleteDoc(doc(db, ANNOUNCEMENT_TEMPLATES_COLL, id)); _cachedTemplates = null; toast('Template deleted', 'warning'); return true; }
+  catch(e){ console.error(e); toast('Failed to delete template', 'error', 3000); throw e; }
 }
 
 /* ---------- admin quota and create announcement ---------- */
@@ -1155,8 +1253,8 @@ function openComposeAnnouncementModal(pref = {}) {
     refreshAudienceUI(); refreshTypeUI();
 
     annLoadTemplate.onclick = () => {
-      const id = annTemplateSelect.value; if(!id) return toast('Select a template first');
-      const t = (_cachedTemplates||[]).find(x => (x.id === id || x.key === id)); if(!t) return toast('Template not found');
+      const id = annTemplateSelect.value; if(!id) return toast('Select a template first' , 'warning');
+      const t = (_cachedTemplates||[]).find(x => (x.id === id || x.key === id)); if(!t) return toast('Template not found', 'info');
       const titleEl = document.getElementById('annTitle'); const bodyEl = document.getElementById('annBody');
       if(titleEl) titleEl.value = t.title || ''; if(bodyEl) bodyEl.value = t.body || '';
       if(annType) annType.value = t.type || 'general'; if(document.getElementById('annAllowMonthly')) document.getElementById('annAllowMonthly').checked = !!t.allowMonthly;
@@ -1166,7 +1264,7 @@ function openComposeAnnouncementModal(pref = {}) {
         setTimeout(()=> { if(annExamSelect) annExamSelect.value = prefer; }, 40);
       }
       if(t.type === 'monthly_payment') { annAudience.value = 'students'; refreshAudienceUI(); }
-      toast('Template loaded');
+      toast('Template loaded', 'success');
     };
 
     openTemplatesFromCompose.onclick = (e) => { e.preventDefault(); openTemplatesModal(); };
@@ -1191,16 +1289,16 @@ function openComposeAnnouncementModal(pref = {}) {
         else if(audienceMode === 'all') audience = ['all'];
         else if(audienceMode === 'specific_class'){
           const cls = document.getElementById('annClassSelect').value;
-          if(!cls){ toast('Please choose class'); setCreateLoading(false); return; }
+          if(!cls){ toast('Please choose class', 'warning'); setCreateLoading(false); return; }
           audience = [`class:${cls}`];
         } else if(audienceMode === 'specific_student'){
           const sid = document.getElementById('annStudentId').value.trim();
-          if(!sid){ toast('Please enter student ID'); setCreateLoading(false); return; }
+          if(!sid){ toast('Please enter student ID', 'warning'); setCreateLoading(false); return; }
           audience = [`student:${sid}`];
         }
 
         if(type === 'monthly_payment' && (audienceMode === 'teachers' || audienceMode === 'all')){
-          toast('Monthly announcements are students-only; switched to "students".');
+          toast('Monthly announcements are students-only; switched to "students".', 'warning');
           audience = ['students'];
         }
 
@@ -1241,14 +1339,14 @@ function openComposeAnnouncementModal(pref = {}) {
             if (saveAsTemplate) {
               try { await saveTemplate({ title, body, type, audience, allowMonthly, meta }); } catch(e){ console.warn('save template failed', e); }
             }
-            toast('Announcement updated.');
+            toast('Announcement updated.', 'success');
             closeModal();
             _cachedAnnouncements = null; _cachedTemplates = null;
             renderAnnouncements();
             return;
           } catch (e) {
             console.error('Update failed', e);
-            toast('Failed to update announcement');
+            toast('Failed to update announcement', 'error', 3000);
             return;
           }
         }
@@ -1264,13 +1362,13 @@ function openComposeAnnouncementModal(pref = {}) {
           try { await saveTemplate({ title, body, type, audience, allowMonthly, meta }); } catch(e){ console.warn('save template failed', e); }
         }
 
-        toast('Announcement created.');
+        toast('Announcement created.', 'success');
         closeModal();
         _cachedAnnouncements = null; _cachedTemplates = null;
         renderAnnouncements();
       } catch(err){
         console.error(err);
-        toast(err.message || 'Failed to create announcement');
+        toast(err.message || 'Failed to create announcement', 'error', 3000);
       } finally {
         // ensure we clear the loading state (if modal closed, this is harmless)
         setCreateLoading(false);
@@ -1323,9 +1421,9 @@ function openTemplatesModal(){
   showModal('Templates', html);
   setTimeout(()=> {
     document.getElementById('tplClose').onclick = closeModal;
-    document.querySelectorAll('.tpl-use').forEach(b => b.onclick = (e) => { const id = b.dataset.id; const tpl = (_cachedTemplates||[]).find(x => (x.id===id||x.key===id)); if(!tpl) return toast('Template not found'); closeModal(); openComposeAnnouncementModal({ title: tpl.title, body: tpl.body, allowMonthly: !!tpl.allowMonthly, type: tpl.type, meta: tpl.meta||{} }); });
-    document.querySelectorAll('.tpl-edit').forEach(b => b.onclick = (e) => { const id = b.dataset.id; const tpl = (_cachedTemplates||[]).find(x => (x.id===id||x.key===id)); if(!tpl) return toast('Template not found'); closeModal(); openComposeAnnouncementModal({ title: tpl.title, body: tpl.body, allowMonthly: !!tpl.allowMonthly, type: tpl.type, meta: tpl.meta||{} }); setTimeout(()=> { const btn = document.getElementById('annCreate'); if(btn) btn.textContent = 'Save changes (template)'; }, 90); });
-    document.querySelectorAll('.tpl-del').forEach(b => b.onclick = async (e) => { const id = b.dataset.id; const tpl = (_cachedTemplates||[]).find(x => (x.id===id||x.key===id)); if(!tpl) return toast('Template not found'); if(String(tpl.id||tpl.key).startsWith('builtin_')) return toast('Cannot delete built-in template'); if(!confirm('Delete template?')) return; try { await deleteTemplate(tpl.id); _cachedTemplates = null; toast('Deleted'); closeModal(); } catch(err){ console.error(err); toast('Delete failed'); } });
+    document.querySelectorAll('.tpl-use').forEach(b => b.onclick = (e) => { const id = b.dataset.id; const tpl = (_cachedTemplates||[]).find(x => (x.id===id||x.key===id)); if(!tpl) return toast('Template not found', 'info'); closeModal(); openComposeAnnouncementModal({ title: tpl.title, body: tpl.body, allowMonthly: !!tpl.allowMonthly, type: tpl.type, meta: tpl.meta||{} }); });
+    document.querySelectorAll('.tpl-edit').forEach(b => b.onclick = (e) => { const id = b.dataset.id; const tpl = (_cachedTemplates||[]).find(x => (x.id===id||x.key===id)); if(!tpl) return toast('Template not found', 'info'); closeModal(); openComposeAnnouncementModal({ title: tpl.title, body: tpl.body, allowMonthly: !!tpl.allowMonthly, type: tpl.type, meta: tpl.meta||{} }); setTimeout(()=> { const btn = document.getElementById('annCreate'); if(btn) btn.textContent = 'Save changes (template)'; }, 90); });
+    document.querySelectorAll('.tpl-del').forEach(b => b.onclick = async (e) => { const id = b.dataset.id; const tpl = (_cachedTemplates||[]).find(x => (x.id===id||x.key===id)); if(!tpl) return toast('Template not found'); if(String(tpl.id||tpl.key).startsWith('builtin_')) return toast('Cannot delete built-in template', 'warning'); if(!confirm('Delete template?')) return; try { await deleteTemplate(tpl.id); _cachedTemplates = null; toast('Deleted'); closeModal(); } catch(err){ console.error(err); toast('Delete failed', 'error', 3000); } });
   },60);
 }
 
@@ -1421,7 +1519,7 @@ btnWrap.innerHTML = `
         ev.preventDefault();
         const id = el.getAttribute('data-id');
         const a = (announcements||[]).find(x => x.id === id);
-        if(!a) return toast('Announcement not found');
+        if(!a) return toast('Announcement not found', 'info');
         await openAnnouncementModalWithDetails(a);
       };
     });
@@ -1431,7 +1529,7 @@ btnWrap.innerHTML = `
       const id = b.dataset.id;
       try {
         const d = await getDoc(doc(db, ANNOUNCEMENTS_COLL, id));
-        if(!d.exists()) return toast('Not found');
+        if(!d.exists()) return toast('Not found', 'info');
         const dat = d.data();
         openComposeAnnouncementModal({ editId: id, title: dat.title, body: dat.body, allowMonthly: !!dat.allowMonthly, type: dat.type, meta: dat.meta || {}, monthYear: dat.monthYear || '' });
         setTimeout(()=> {
@@ -1445,21 +1543,21 @@ btnWrap.innerHTML = `
               const newType = document.getElementById('annType').value;
               const newAllow = !!document.getElementById('annAllowMonthly').checked;
               await updateDoc(doc(db, ANNOUNCEMENTS_COLL, id), { title: newTitle, body: newBody, type: newType, allowMonthly: newAllow, updatedAt: Timestamp.now() });
-              toast('Saved');
+              toast('Saved', 'success');
               closeModal();
               _cachedAnnouncements = null;
               renderAnnouncements();
-            } catch(err){ console.error(err); toast('Save failed'); }
+            } catch(err){ console.error(err); toast('Save failed', 'error', 3000); }
           };
         }, 120);
-      } catch(err){ console.error(err); toast('Open failed'); }
+      } catch(err){ console.error(err); toast('Open failed', 'error', 3000); }
     });
 
     Array.from(listContainer.querySelectorAll('.btn-delete')).forEach(b => b.onclick = async (ev) => {
       ev.preventDefault();
       const id = b.dataset.id;
       if(!confirm('Delete announcement?')) return;
-      try { await deleteDoc(doc(db, ANNOUNCEMENTS_COLL, id)); toast('Deleted'); _cachedAnnouncements = null; renderAnnouncements(); } catch(err){ console.error(err); toast('Delete failed'); }
+      try { await deleteDoc(doc(db, ANNOUNCEMENTS_COLL, id)); toast('Deleted', 'warning'); _cachedAnnouncements = null; renderAnnouncements(); } catch(err){ console.error(err); toast('Delete failed', 'error', 3000); }
     });
 
   } catch(e){
@@ -1558,20 +1656,20 @@ async function openAnnouncementModalWithDetails(a) {
               const newType = document.getElementById('annType').value;
               const newAllow = !!document.getElementById('annAllowMonthly').checked;
               await updateDoc(doc(db, ANNOUNCEMENTS_COLL, a.id), { title: newTitle, body: newBody, type: newType, allowMonthly: newAllow, updatedAt: Timestamp.now() });
-              toast('Saved'); closeModal(); _cachedAnnouncements = null; renderAnnouncements();
-            } catch (err) { console.error(err); toast('Save failed'); }
+              toast('Saved' , 'success'); closeModal(); _cachedAnnouncements = null; renderAnnouncements();
+            } catch (err) { console.error(err); toast('Save failed', 'error', 3000); }
           };
         }, 120);
       };
       if (delBtn) delBtn.onclick = async () => {
         if (!confirm('Delete announcement?')) return;
-        try { await deleteDoc(doc(db, ANNOUNCEMENTS_COLL, a.id)); toast('Deleted'); closeModal(); _cachedAnnouncements = null; renderAnnouncements(); } catch (err) { console.error(err); toast('Delete failed'); }
+        try { await deleteDoc(doc(db, ANNOUNCEMENTS_COLL, a.id)); toast('Deleted', 'warning'); closeModal(); _cachedAnnouncements = null; renderAnnouncements(); } catch (err) { console.error(err); toast('Delete failed', 'error', 3000); }
       };
     }, 80);
 
   } catch (e) {
     console.error('openAnnouncementModalWithDetails failed', e);
-    toast('Failed to open announcement');
+    toast('Failed to open announcement', 'error', 3000);
   }
 }
 
@@ -1664,13 +1762,13 @@ async function openAnnouncementsSettingsModal(){
           closeModal();
           _cachedTemplates = null; _cachedAnnouncements = null;
           renderAnnouncements();
-        } catch(err){ console.error(err); toast('Save failed'); }
+        } catch(err){ console.error(err); toast('Save failed', 'error', 3000); }
       };
 
       // template action wiring inside settings
-      document.querySelectorAll('.tpl-use-btn').forEach(b => b.onclick = (ev)=> { const id = b.getAttribute('data-id'); const tpl = (_cachedTemplates||[]).find(t => (t.id===id||t.key===id)); if(!tpl) return toast('Template not found'); closeModal(); openComposeAnnouncementModal({ title: tpl.title, body: tpl.body, allowMonthly: !!tpl.allowMonthly, type: tpl.type, meta: tpl.meta||{} }); });
-      document.querySelectorAll('.tpl-edit-btn').forEach(b => b.onclick = (ev)=> { const id = b.getAttribute('data-id'); const tpl = (_cachedTemplates||[]).find(t => (t.id===id||t.key===id)); if(!tpl) return toast('Template not found'); closeModal(); openComposeAnnouncementModal({ title: tpl.title, body: tpl.body, allowMonthly: !!tpl.allowMonthly, type: tpl.type, meta: tpl.meta||{} }); setTimeout(()=>{ const btn = document.getElementById('annCreate'); if(btn) btn.textContent='Save changes (template)'; }, 90); });
-      document.querySelectorAll('.tpl-del-btn').forEach(b => b.onclick = async (ev)=> { const id = b.getAttribute('data-id'); const tpl = (_cachedTemplates||[]).find(t => (t.id===id||t.key===id)); if(!tpl) return toast('Template not found'); if(String(tpl.id||tpl.key).startsWith('builtin_')) return toast('Cannot delete built-in template'); if(!confirm('Delete template?')) return; try { await deleteTemplate(tpl.id); _cachedTemplates = null; toast('Template deleted'); closeModal(); renderAnnouncements(); } catch(e){ console.error(e); toast('Delete failed'); } });
+      document.querySelectorAll('.tpl-use-btn').forEach(b => b.onclick = (ev)=> { const id = b.getAttribute('data-id'); const tpl = (_cachedTemplates||[]).find(t => (t.id===id||t.key===id)); if(!tpl) return toast('Template not found', 'info'); closeModal(); openComposeAnnouncementModal({ title: tpl.title, body: tpl.body, allowMonthly: !!tpl.allowMonthly, type: tpl.type, meta: tpl.meta||{} }); });
+      document.querySelectorAll('.tpl-edit-btn').forEach(b => b.onclick = (ev)=> { const id = b.getAttribute('data-id'); const tpl = (_cachedTemplates||[]).find(t => (t.id===id||t.key===id)); if(!tpl) return toast('Template not found', 'info'); closeModal(); openComposeAnnouncementModal({ title: tpl.title, body: tpl.body, allowMonthly: !!tpl.allowMonthly, type: tpl.type, meta: tpl.meta||{} }); setTimeout(()=>{ const btn = document.getElementById('annCreate'); if(btn) btn.textContent='Save changes (template)'; }, 90); });
+      document.querySelectorAll('.tpl-del-btn').forEach(b => b.onclick = async (ev)=> { const id = b.getAttribute('data-id'); const tpl = (_cachedTemplates||[]).find(t => (t.id===id||t.key===id)); if(!tpl) return toast('Template not found', 'info'); if(String(tpl.id||tpl.key).startsWith('builtin_')) return toast('Cannot delete built-in template'); if(!confirm('Delete template?')) return; try { await deleteTemplate(tpl.id); _cachedTemplates = null; toast('Template deleted', 'warning'); closeModal(); renderAnnouncements(); } catch(e){ console.error(e); toast('Delete failed', 'error', 3000); } });
     }, 60);
 
   } catch(e){ console.error('openAnnouncementsSettingsModal failed', e); showModal('Settings', '<div style="padding:12px">Failed to load settings</div>'); }
@@ -1979,7 +2077,7 @@ async function openViewTeacherModal(e){
       if(snap.exists()) t = { id: snap.id, ...snap.data() };
     } catch(err){ console.error('load teacher for view failed', err); }
   }
-  if(!t) return toast('Teacher not found');
+  if(!t) return toast('Teacher not found', 'info');
 
   const classesText = (t.classes && t.classes.length) ? t.classes.join(', ') : 'No classes';
   const subsText = (t.subjects && t.subjects.length) ? (t.subjects.map(s=>{ const found = (subjectsCache||[]).find(x => x.id === s || x.name === s); return found ? found.name : s; }).join(', ')) : 'No subjects';
@@ -2012,14 +2110,14 @@ async function openViewTeacherModal(e){
 
   modalBody.querySelector('#viewTeacherSendReset').onclick = async () => {
     const email = t.email;
-    if(!email) return toast('Teacher has no email set');
+    if(!email) return toast('Teacher has no email set' , 'info');
     await sendResetEmailFor(email);
   };
 
   modalBody.querySelector('#viewTeacherAdminReset').onclick = async () => {
     const newPass = prompt('Enter new password for teacher (min 6 chars):');
-    if(!newPass || newPass.length < 6) return toast('Password must be at least 6 characters');
-    if(!t.authUid) return toast('Teacher has no linked auth account');
+    if(!newPass || newPass.length < 6) return toast('Password must be at least 6 characters' , 'warning');
+    if(!t.authUid) return toast('Teacher has no linked auth account', 'warning');
     try {
       const token = currentUser && currentUser.getIdToken ? await currentUser.getIdToken(true) : null;
       const resp = await fetch('/admin/setTeacherPassword', {
@@ -2027,9 +2125,9 @@ async function openViewTeacherModal(e){
         headers: { 'Content-Type':'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({ uid: t.authUid, password: newPass })
       });
-      if (!resp.ok) { const txt = await resp.text(); console.error('admin reset failed', resp.status, txt); return toast('Admin reset failed (server).'); }
-      toast('Password updated via admin API');
-    } catch(err){ console.error(err); toast('Admin reset API not available'); }
+      if (!resp.ok) { const txt = await resp.text(); console.error('admin reset failed', resp.status, txt); return toast('Admin reset failed (server).' , 'error', 3000); }
+      toast('Password updated via admin API' );
+    } catch(err){ console.error(err); toast('Admin reset API not available', 'error', 3000); }
   };
 
   modalBody.querySelector('#viewTeacherDel').onclick = async (ev) => {
@@ -2041,10 +2139,10 @@ async function openViewTeacherModal(e){
     try{
       const who = (currentUser && currentUser.uid) || (auth && auth.currentUser && auth.currentUser.uid) || null;
       await updateDoc(doc(db,'teachers', t.id), { deleted: true, deletedAt: Timestamp.now(), deletedBy: who });
-      toast('Teacher moved to Recycle Bin');
+      toast('Teacher moved to Recycle Bin', 'info');
       await loadTeachers(); renderTeachers();
       closeModal();
-    } catch(err){ console.error('delete teacher failed', err); toast('Failed to delete teacher'); }
+    } catch(err){ console.error('delete teacher failed', err); toast('Failed to delete teacher' , 'error', 3000); }
     setButtonLoading(delBtn, false);
   };
 }
@@ -2090,9 +2188,9 @@ function openAddTeacherModal(){
       const classesSelected = Array.from(modalBody.querySelectorAll('#teacherClasses option:checked')).map(o => o.value);
       const subjectsSelected = Array.from(modalBody.querySelectorAll('#teacherSubjects option:checked')).map(o => o.value);
 
-      if(!name){ toast('Teacher name is required'); setButtonLoading(btn, false); return; }
-      if(email && isTeacherEmailDuplicate(email)) { toast('Email already used by another teacher'); setButtonLoading(btn, false); return; }
-      if(password && password.length < 6) { toast('Password must be at least 6 characters'); setButtonLoading(btn, false); return; }
+      if(!name){ toast('Teacher name is required' , 'warning'); setButtonLoading(btn, false); return; }
+      if(email && isTeacherEmailDuplicate(email)) { toast('Email already used by another teacher' , 'warning'); setButtonLoading(btn, false); return; }
+      if(password && password.length < 6) { toast('Password must be at least 6 characters', 'warning'); setButtonLoading(btn, false); return; }
 
       if(!id) id = await generateDefaultId('teachers','TEC',5);
 
@@ -2105,19 +2203,19 @@ function openAddTeacherModal(){
           payload.authUid = userCred.user.uid;
         } catch(err){
           console.warn('createUserWithEmailAndPassword failed', err);
-          if(err && err.code === 'auth/email-already-in-use') { toast('Email already exists in Auth. Teacher saved without auth link.'); }
-          else toast('Failed to create auth user (teacher will be created without login).');
+          if(err && err.code === 'auth/email-already-in-use') { toast('Email already exists in Auth. Teacher saved without auth link.', 'warning'); }
+          else toast('Failed to create auth user (teacher will be created without login).', 'warning');
         }
       }
 
       await setDoc(doc(db,'teachers', id), payload);
-      toast('Teacher created');
+      toast('Teacher created' , 'success');
       closeModal();
       await loadTeachers();
       renderTeachers();
       showPage('teachers'); // ← FORCE stay on Teachers
       // refresh teachers only (no page reload)
-    } catch(err){ console.error('create teacher failed', err); toast('Failed to create teacher'); }
+    } catch(err){ console.error('create teacher failed', err); toast('Failed to create teacher', 'error', 3000); }
     setButtonLoading(btn, false);
   };
 }
@@ -2128,7 +2226,7 @@ async function openEditTeacherModal(e){
   if(!id) return;
   let t = teachersCache.find(x => x.id === id || x.teacherId === id);
   if(!t){
-    try{ const snap = await getDoc(doc(db,'teachers', id)); if(!snap.exists()) return toast('Teacher not found'); t = { id: snap.id, ...snap.data() }; } catch(err){ console.error(err); return toast('Failed to load teacher'); }
+    try{ const snap = await getDoc(doc(db,'teachers', id)); if(!snap.exists()) return toast('Teacher not found'); t = { id: snap.id, ...snap.data() }; } catch(err){ console.error(err); return toast('Failed to load teacher' , 'error', 3000); }
   }
 
   const classOptions = (classesCache || []).map(c => `<option value="${escape(c.name)}" ${ (t.classes||[]).includes(c.name) ? 'selected' : '' }>${escape(c.name)}</option>`).join('');
@@ -2158,7 +2256,7 @@ async function openEditTeacherModal(e){
 
   modalBody.querySelector('#sendReset').onclick = async () => {
     const email = (modalBody.querySelector('#teacherEmail').value || '').trim().toLowerCase();
-    if(!email) return toast('Teacher has no email set');
+    if(!email) return toast('Teacher has no email set' , 'warning');
     await sendResetEmailFor(email);
   };
 
@@ -2194,9 +2292,9 @@ async function openEditTeacherModal(e){
       const classesSelected = Array.from(modalBody.querySelectorAll('#teacherClasses option:checked')).map(o => o.value);
       const subjectsSelected = Array.from(modalBody.querySelectorAll('#teacherSubjects option:checked')).map(o => o.value);
 
-      if(!name){ toast('Teacher name is required'); setButtonLoading(btn, false); return; }
-      if(email && isTeacherEmailDuplicate(email, t.id)) { toast('Email already used by another teacher'); setButtonLoading(btn, false); return; }
-      if(newPass && newPass.length < 6) { toast('New password must be at least 6 characters'); setButtonLoading(btn, false); return; }
+      if(!name){ toast('Teacher name is required', 'warning'); setButtonLoading(btn, false); return; }
+      if(email && isTeacherEmailDuplicate(email, t.id)) { toast('Email already used by another teacher', 'warning'); setButtonLoading(btn, false); return; }
+      if(newPass && newPass.length < 6) { toast('New password must be at least 6 characters', 'warning'); setButtonLoading(btn, false); return; }
 
       if(email && !t.authUid && newPass){
         try {
@@ -2204,8 +2302,8 @@ async function openEditTeacherModal(e){
           t.authUid = uc.user.uid;
         } catch(err){
           console.warn('createUserDuringUpdate failed', err);
-          if(err && err.code === 'auth/email-already-in-use') toast('Email exists in Auth; saved without linking auth.');
-          else toast('Failed to create auth user; saved without auth link.');
+          if(err && err.code === 'auth/email-already-in-use') toast('Email exists in Auth; saved without linking auth.' , 'warning');
+          else toast('Failed to create auth user; saved without auth link.', 'error', 3000);
         }
       }
 
@@ -2225,19 +2323,19 @@ async function openEditTeacherModal(e){
           });
           if(!resp.ok){
             const em = email || t.email;
-            if(em) { await sendPasswordResetEmail(auth, em); toast('Saved. Admin reset not available — reset email sent.'); }
-            else toast('Saved. Admin reset not available (no email).');
+            if(em) { await sendPasswordResetEmail(auth, em); toast('Saved. Admin reset not available — reset email sent.' , 'warning'); }
+            else toast('Saved. Admin reset not available (no email).', 'warning');
           } else {
-            toast('Saved and password updated via admin API');
+            toast('Saved and password updated via admin API','success');
           }
         } catch(err){
           console.warn('admin reset failed in update flow', err);
           const em = email || t.email;
           if(em) { await sendPasswordResetEmail(auth, em); toast('Saved. Admin reset failed — reset email sent.'); }
-          else toast('Saved. Admin reset failed (no email).');
+          else toast('Saved. Admin reset failed (no email).', 'warning');
         }
       } else {
-        toast('Teacher updated');
+        toast('Teacher updated', 'success');
       }
 
       closeModal();
@@ -2522,10 +2620,10 @@ async function renderClasses(){
           if(typeof loadStudents === 'function') await loadStudents();
           if(typeof renderStudents === 'function') renderStudents();
 
-          toast('Class moved to Recycle Bin');
+          toast('Class moved to Recycle Bin ' , 'info');
         } catch(err){
           console.error('delete class failed', err);
-          toast('Delete failed');
+          toast('Delete failed' , 'error', 3000);
         } finally {
           setButtonLoading(btn, false);
           if(typeof renderClasses === 'function') renderClasses();
@@ -2550,9 +2648,105 @@ async function renderClasses(){
      * manual mode (select From classes, pick To class)
      * auto-advance mode (advance every class to next class)
 */
+// ---------- PICK UI (non-destructive overlay, DOES NOT close main modal) ----------
+window.openPickClass = function openPickClass(initialSearch = '') {
+  return new Promise((resolve) => {
+    const classes = (classesCache || []).map(c => ({ id: c.id, name: c.name }));
+    classes.sort((a,b) => {
+      const ma = (a.name||'').match(/(\d+)/); const mb = (b.name||'').match(/(\d+)/);
+      if(ma && mb && ma[1] !== mb[1]) return Number(ma[1]) - Number(mb[1]);
+      return (a.name||'').localeCompare(b.name||'');
+    });
+
+    // create overlay container (keeps main modal intact)
+    const overlay = document.createElement('div');
+    overlay.className = 'pick-overlay';
+    overlay.style.position = 'fixed';
+    overlay.style.left = '0';
+    overlay.style.top = '0';
+    overlay.style.right = '0';
+    overlay.style.bottom = '0';
+    overlay.style.display = 'flex';
+    overlay.style.alignItems = 'center';
+    overlay.style.justifyContent = 'center';
+    overlay.style.zIndex = 99999;
+    overlay.style.background = 'rgba(0,0,0,0.32)';
+
+    const inner = document.createElement('div');
+    inner.style.minWidth = '320px';
+    inner.style.maxWidth = '720px';
+    inner.style.maxHeight = '80vh';
+    inner.style.background = '#fff';
+    inner.style.borderRadius = '10px';
+    inner.style.boxShadow = '0 12px 40px rgba(2,6,23,0.2)';
+    inner.style.padding = '12px';
+    inner.style.overflow = 'hidden';
+    inner.style.display = 'flex';
+    inner.style.flexDirection = 'column';
+
+    const listHtml = classes.map(c => `
+      <div class="pick-row" data-name="${escape(c.name)}" data-id="${escape(c.id)}" style="display:flex;align-items:center;gap:8px;padding:8px;border-bottom:1px solid #f1f5f9">
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escape(c.name)}</div>
+          <div style="font-size:12px;color:#64748b">${escape(c.id||'')}</div>
+        </div>
+        <div><button class="btn btn-ghost btn-sm pick-this">Pick</button></div>
+      </div>`).join('');
+
+    inner.innerHTML = `
+      <div style="display:flex;gap:8px;margin-bottom:8px">
+        <input id="pickSearchInline" placeholder="Search by name or id..." style="flex:1;padding:8px;border-radius:8px;border:1px solid #e6eef8" value="${escapeHtml(initialSearch||'')}" />
+        <button id="pickCancelInline" class="btn btn-ghost">Cancel</button>
+      </div>
+      <div id="pickListInline" style="max-height:60vh;overflow:auto;border:1px solid #f1f5f9;border-radius:8px;padding:6px">
+        ${listHtml}
+      </div>
+    `;
+
+    overlay.appendChild(inner);
+    document.body.appendChild(overlay);
+
+    const pickListEl = inner.querySelector('#pickListInline');
+    const pickSearch = inner.querySelector('#pickSearchInline');
+
+    // filter handler
+    pickSearch.addEventListener('input', (ev) => {
+      const q = (ev.target.value||'').trim().toLowerCase();
+      Array.from(pickListEl.querySelectorAll('.pick-row')).forEach(r => {
+        const txt = (r.textContent||'').toLowerCase();
+        r.style.display = txt.includes(q) ? '' : 'none';
+      });
+    });
+
+    // pick handlers (do NOT close main modal)
+    pickListEl.querySelectorAll('.pick-this').forEach(btn => {
+      btn.onclick = (ev) => {
+        const row = ev.currentTarget.closest('.pick-row');
+        const name = row.dataset.name;
+        // remove overlay only
+        overlay.remove();
+        resolve(name);
+      };
+    });
+
+    inner.querySelector('#pickCancelInline').onclick = () => {
+      overlay.remove();
+      resolve(null);
+    };
+
+    // allow clicking outside to cancel
+    overlay.addEventListener('click', (ev) => {
+      if(ev.target === overlay){ overlay.remove(); resolve(null); }
+    });
+  });
+};
+
+// ---------- openMoveStudentsModal (updated: numeric-only next, graduation handling, pick overlay) ----------
+
 async function openMoveStudentsModal(sourceClassId){
+  // prepare classes
   const classes = (classesCache || []).map(c => ({ id: c.id, name: c.name }));
-  if(!classes || classes.length === 0) return toast('No classes available');
+  if(!classes || classes.length === 0) return toast('No classes available' , 'info');
 
   function classSortKey(c){
     const m = (c.name || '').match(/(\d+)/);
@@ -2561,50 +2755,90 @@ async function openMoveStudentsModal(sourceClassId){
   }
   classes.sort((a,b) => classSortKey(a) < classSortKey(b) ? -1 : 1);
 
-  const fromListHtml = classes.map(c => {
-    return `<label style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-      <input type="checkbox" class="mv-from" data-name="${escape(c.name)}" ${sourceClassId ? (c.name===sourceClassId ? 'checked' : '') : 'checked'} />
-      <span style="font-weight:700">${escape(c.name)}</span>
-      <span style="color:#6b7280;font-size:13px;margin-left:auto">${escape(c.id||'')}</span>
-    </label>`;
-  }).join('');
+  // HELPER: extract first number in name (numeric only)
+  function extractNumber(name){
+    const m = String(name||'').match(/(\d+)/);
+    return m ? Number(m[1]) : null;
+  }
 
-  const toOptionsHtml = classes.map(c => `<option value="${escape(c.name)}">${escape(c.name)} (${escape(c.id||'')})</option>`).join('');
+  // find best next by numeric part only (ignore letters)
+  const orderedNames = classes.map(c => c.name);
+  const findBestNext = (name) => {
+    const num = extractNumber(name);
+    if(num === null) {
+      // fallback: next in order
+      const idx = orderedNames.indexOf(name);
+      if(idx >= 0 && idx < orderedNames.length - 1) return orderedNames[idx+1];
+      return null;
+    }
+    const target = num + 1;
+    // find any class whose numeric part equals target (ignore letters)
+    const found = classes.find(c => {
+      const n = extractNumber(c.name);
+      return n === target;
+    });
+    if(found) return found.name;
+    // fallback: next in order if numeric match not found
+    const idx = orderedNames.indexOf(name);
+    if(idx >= 0 && idx < orderedNames.length - 1) return orderedNames[idx+1];
+    return null;
+  };
 
+  // Build initial rows
+  const rows = classes.map(c => {
+    const dest = findBestNext(c.name);
+    return { id: c.id, name: c.name, checked: true, dest, studentsSelected: null, expanded: false };
+  });
+
+  // UI html responsive (same as before)
   const html = `
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;min-width:560px;max-width:980px">
-      <div>
+    <style>
+      .mv-grid { display:grid; grid-template-columns: 1fr 1fr; gap:12px; min-width:420px; max-width:980px; }
+      @media(max-width:900px){ .mv-grid { grid-template-columns: 1fr; } }
+      .mv-left, .mv-right { border-radius:8px; background:#fff; padding:8px; border:1px solid #f1f5f9; box-shadow:0 6px 18px rgba(2,6,23,0.04); }
+      .mv-row { display:flex;align-items:center;gap:8px;padding:8px;border-bottom:1px solid #f3f6f9 }
+      .mv-row-last { border-bottom: none; }
+      .mv-name { font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+      .mv-id { font-size:12px;color:#64748b; margin-left:6px; white-space:nowrap; }
+      .mv-actions { margin-left:auto; display:flex; gap:6px; align-items:center; }
+      .mv-students { padding:8px 12px; background:#fafafa; border-radius:6px; margin-top:6px; max-height:240px; overflow:auto; border:1px solid #f1f5f9}
+      .mv-student-row { display:flex;align-items:center;gap:8px;padding:6px;border-bottom:1px solid #f3f6f9 }
+      .muted { color:#6b7280 }
+      .pick-btn { min-width:80px; }
+      .small-ghost { padding:6px 8px; font-size:13px; }
+    </style>
+
+    <div class="mv-grid">
+      <div class="mv-left">
         <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
-          <input id="mvFromSearch" placeholder="Search classes to move FROM..." style="flex:1;padding:8px;border-radius:8px;border:1px solid #e6eef8" />
-          <button id="mvSelectAll" class="btn btn-ghost btn-sm">Select all</button>
+          <input id="mvGlobalSearch" placeholder="Search classes (name or id)..." style="flex:1;padding:8px;border-radius:8px;border:1px solid #e6eef8" />
+          <button id="mvSelectAllBtn" class="btn btn-ghost small-ghost">Select all</button>
         </div>
-        <div id="mvFromList" style="max-height:320px;overflow:auto;padding:6px;border:1px solid #f1f5f9;border-radius:8px">
-          ${fromListHtml}
+        <div id="mvFromList" style="max-height:420px;overflow:auto">
+          <!-- rows inserted here -->
         </div>
       </div>
 
-      <div>
-        <div style="display:flex;flex-direction:column;gap:8px">
-          <label class="tt-small">Move TO (destination class)</label>
-          <div style="display:flex;gap:8px">
-            <input id="mvToSearch" placeholder="Search destination class..." style="flex:1;padding:8px;border-radius:8px;border:1px solid #e6eef8" />
-            <select id="mvToSelect" style="padding:8px;border-radius:8px;border:1px solid #e6eef8;min-width:200px">
-              <option value="">-- pick destination --</option>
-              ${toOptionsHtml}
-            </select>
-          </div>
-
-          <label style="display:flex;align-items:center;gap:8px;margin-top:6px">
-            <input type="checkbox" id="mvAutoAdvance" /> <span>Auto-advance each class to the next (Class 1 → Class 2 → ...)</span>
-          </label>
-
-          <div style="display:flex;gap:8px;align-items:center">
-            <button id="mvPreviewBtn" class="btn btn-ghost">Preview</button>
-            <div style="margin-left:auto" id="mvCountsPreview" class="muted"></div>
-          </div>
-
-          <div style="margin-top:8px;color:#6b7280;font-size:13px">Notes: you can uncheck classes to exclude them. "Auto-advance" will ignore the destination field and move each selected class to the next class in order. Preview shows how many students will be moved.</div>
+      <div class="mv-right">
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+          <label style="font-weight:700;margin-right:auto">Move TO (destination)</label>
+          <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="mvAutoAdvance" /> <span class="muted">Auto-advance</span></label>
         </div>
+
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+          <input id="mvToSearch" placeholder="Search destination class..." style="flex:1;padding:8px;border-radius:8px;border:1px solid #e6eef8" />
+          <select id="mvToSelect" style="padding:8px;border-radius:8px;border:1px solid #e6eef8;min-width:200px">
+            <option value="">-- pick destination (applies to all if set) --</option>
+            ${classes.map(c => `<option value="${escape(c.name)}">${escape(c.name)} (${escape(c.id||'')})</option>`).join('')}
+          </select>
+        </div>
+
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+          <button id="mvPreviewBtn" class="btn btn-ghost">Preview</button>
+          <div id="mvCountsPreview" class="muted" style="margin-left:auto"></div>
+        </div>
+
+        <div style="font-size:13px;color:#6b7280">Notes: Uncheck classes you don't want to move. Expand a class to choose specific students. "Auto-advance" ignores the global destination and maps each class to its next class automatically.</div>
       </div>
     </div>
 
@@ -2612,124 +2846,273 @@ async function openMoveStudentsModal(sourceClassId){
       <button id="mvCancel" class="btn btn-ghost">Cancel</button>
       <button id="mvExecute" class="btn btn-primary">Move students</button>
     </div>
-  `;  showModal('Move Students — bulk', html);
+  `;
 
-  // small helper to safely query modal DOM elements (modalBody comes from your showModal)
-  const $m = (sel) => (typeof modalBody !== 'undefined' && modalBody) ? modalBody.querySelector(sel) : null;
+  showModal('Move Students — bulk', html);
 
+  const $m = sel => (typeof modalBody !== 'undefined' && modalBody) ? modalBody.querySelector(sel) : null;
   const fromListEl = $m('#mvFromList');
-  const toSelect = $m('#mvToSelect');
+  const mvGlobalSearch = $m('#mvGlobalSearch');
+  const mvToSearch = $m('#mvToSearch');
+  const mvToSelect = $m('#mvToSelect');
   const mvAutoAdvance = $m('#mvAutoAdvance');
 
-  // helper to safely set preview text (won't throw if modal closed)
-  function setPreviewText(txt){
-    try {
-      const el = $m('#mvCountsPreview');
-      if(el) el.textContent = txt;
-    } catch(e){
-      // ignore if modal removed
-    }
+  // render rows into left panel
+  function renderFromRows(filterQ = '') {
+    const q = (filterQ||'').trim().toLowerCase();
+    const htmlRows = rows.map((r, idx) => {
+      const hidden = q && !((r.name||'').toLowerCase().includes(q) || (r.id||'').toLowerCase().includes(q));
+      return `
+        <div class="mv-row ${idx === rows.length-1 ? 'mv-row-last' : ''}" data-idx="${idx}" style="${hidden ? 'display:none' : ''}">
+          <input type="checkbox" class="mv-from-checkbox" data-idx="${idx}" ${r.checked ? 'checked' : ''} />
+          <div style="flex:1;min-width:0">
+            <div style="display:flex;align-items:center;gap:8px">
+              <div class="mv-name">${escape(r.name)}</div>
+              <div class="mv-id muted">${escape(r.id||'')}</div>
+            </div>
+            <div style="margin-top:4px;display:flex;gap:8px;align-items:center">
+              <button class="btn btn-ghost btn-sm pick-btn" data-idx="${idx}">Pick destination</button>
+              <button class="btn btn-ghost btn-sm toggle-students" data-idx="${idx}">${r.expanded ? 'Hide' : 'Students'}</button>
+              <div class="muted" style="margin-left:auto">Dest: <span class="mv-dest">${escape(r.dest||'')}</span></div>
+            </div>
+            <div class="mv-students" data-idx="${idx}" style="display:${r.expanded ? 'block' : 'none'}"></div>
+          </div>
+        </div>
+      `;
+    }).join('');
+    fromListEl.innerHTML = htmlRows;
+
+    // wire per-row buttons
+    fromListEl.querySelectorAll('.mv-from-checkbox').forEach(ch => {
+      ch.onchange = (ev) => {
+        const idx = Number(ev.currentTarget.dataset.idx);
+        rows[idx].checked = !!ev.currentTarget.checked;
+      };
+    });
+    fromListEl.querySelectorAll('.pick-btn').forEach(btn => {
+      btn.onclick = async (ev) => {
+        const idx = Number(ev.currentTarget.dataset.idx);
+        // open pick overlay (does NOT close main modal)
+        const chosen = await window.openPickClass(rows[idx].dest || '');
+        if(chosen){
+          rows[idx].dest = chosen;
+          // reflect in UI
+          const destSpan = fromListEl.querySelector(`.mv-row[data-idx="${idx}"] .mv-dest`);
+          if(destSpan) destSpan.textContent = chosen;
+          // keep main modal open (we did not call closeModal)
+        }
+      };
+    });
+    fromListEl.querySelectorAll('.toggle-students').forEach(btn => {
+      btn.onclick = async (ev) => {
+        const idx = Number(ev.currentTarget.dataset.idx);
+        rows[idx].expanded = !rows[idx].expanded;
+        const container = fromListEl.querySelector(`.mv-students[data-idx="${idx}"]`);
+        // toggle
+        if(!rows[idx].expanded){
+          container.style.display = 'none';
+          btn.textContent = 'Students';
+          return;
+        }
+        // expand: load student list for that class (from cache or Firestore), excluding deleted
+        btn.textContent = 'Hide';
+        container.innerHTML = '<div class="muted">Loading students…</div>';
+        container.style.display = 'block';
+        try{
+          let studs = [];
+          if(Array.isArray(studentsCache) && studentsCache.length){
+            studs = (studentsCache || []).filter(s => (s.classId||'') === rows[idx].name && s.status !== 'deleted');
+          } else {
+            const snap = await getDocs(query(collection(db,'students'), where('classId','==', rows[idx].name)));
+            studs = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(s => s.status !== 'deleted');
+          }
+          // by default, select all students for this class unless user previously set a selection
+          const selSet = new Set(rows[idx].studentsSelected && Array.isArray(rows[idx].studentsSelected) ? rows[idx].studentsSelected : studs.map(s => s.id || s.studentId || s.id));
+          const studsHtml = studs.map(s => `
+            <div class="mv-student-row" data-stud-id="${escape(s.id||s.studentId||s.studentId||'')}">
+              <input type="checkbox" class="mv-stud-ch" data-idx="${idx}" data-stud-id="${escape(s.id||s.studentId||s.id||'')}" ${selSet.has(s.id||s.studentId||s.id) ? 'checked' : ''} />
+              <div style="flex:1;min-width:0">
+                <div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escape(s.fullName||s.name||'—')}</div>
+                <div class="muted" style="font-size:12px">ID: ${escape(s.studentId||s.id||'—')}</div>
+              </div>
+            </div>
+          `).join('');
+          container.innerHTML = `
+            <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
+              <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" class="mv-stud-selectall" data-idx="${idx}" checked /> <span class="muted">Select all students</span></label>
+            </div>
+            ${studsHtml || '<div class="muted">No students</div>'}
+          `;
+          // wire selects
+          container.querySelectorAll('.mv-stud-ch').forEach(ch => {
+            ch.onchange = () => {
+              // recompute selected array
+              const selected = Array.from(container.querySelectorAll('.mv-stud-ch:checked')).map(c => c.dataset.studId);
+              rows[idx].studentsSelected = selected;
+              // update select all checkbox
+              const chkAll = container.querySelector('.mv-stud-selectall');
+              if(chkAll) chkAll.checked = container.querySelectorAll('.mv-stud-ch:checked').length === container.querySelectorAll('.mv-stud-ch').length;
+            };
+          });
+          container.querySelector('.mv-stud-selectall')?.addEventListener('change', (ev) => {
+            const checked = !!ev.target.checked;
+            container.querySelectorAll('.mv-stud-ch').forEach(c => c.checked = checked);
+            rows[idx].studentsSelected = checked ? Array.from(container.querySelectorAll('.mv-stud-ch')).map(c => c.dataset.studId) : [];
+          });
+        } catch(e){
+          console.error('failed load class students', e);
+          container.innerHTML = '<div class="muted">Failed to load students</div>';
+        }
+      };
+    });
   }
 
-  $m('#mvFromSearch')?.addEventListener('input', (ev) => {
-    const qv = (ev.target.value||'').trim().toLowerCase();
-    Array.from(fromListEl.querySelectorAll('label')).forEach(label => {
-      const txt = (label.textContent||'').toLowerCase();
-      label.style.display = txt.includes(qv) ? '' : 'none';
+  // initial render
+  renderFromRows();
+
+  // global search handlers
+  mvGlobalSearch?.addEventListener('input', (ev) => renderFromRows(ev.target.value));
+  $m('#mvSelectAllBtn')?.addEventListener('click', () => {
+    const visibleRows = Array.from(fromListEl.querySelectorAll('.mv-row')).filter(r => r.style.display !== 'none');
+    visibleRows.forEach(r => {
+      const idx = Number(r.dataset.idx);
+      rows[idx].checked = true;
+      const ch = r.querySelector('.mv-from-checkbox');
+      if(ch) ch.checked = true;
     });
   });
-  $m('#mvToSearch')?.addEventListener('input', (ev) => {
-    const qv = (ev.target.value||'').trim().toLowerCase();
-    Array.from(toSelect.options).forEach(opt => {
+
+  // destination search & select (applies to global mvToSelect)
+  mvToSearch?.addEventListener('input', (ev) => {
+    const q = (ev.target.value||'').trim().toLowerCase();
+    Array.from(mvToSelect.options).forEach(opt => {
       if(!opt.value) { opt.style.display = ''; return; }
       const txt = (opt.textContent||'').toLowerCase();
-      opt.style.display = txt.includes(qv) ? '' : 'none';
+      opt.style.display = txt.includes(q) ? '' : 'none';
     });
   });
 
-  $m('#mvSelectAll')?.addEventListener('click', () => {
-    const anyHidden = Array.from(fromListEl.querySelectorAll('label')).some(l => l.style.display === 'none');
-    Array.from(fromListEl.querySelectorAll('input.mv-from')).forEach(ch => {
-      if(anyHidden && ch.closest('label').style.display === 'none') return;
-      ch.checked = true;
-    });
-  });
-
+  // Preview button - counts selected students
+  function setPreviewText(txt){ try { const el = $m('#mvCountsPreview'); if(el) el.textContent = txt; } catch(e){} }
   $m('#mvPreviewBtn').onclick = async () => {
     try {
       setPreviewText('Counting…');
-      const selectedFrom = Array.from(modalBody.querySelectorAll('input.mv-from:checked')).map(i => i.dataset.name);
-      if(selectedFrom.length === 0) { setPreviewText('No source classes selected'); return; }
-      if(mvAutoAdvance && mvAutoAdvance.checked === false && (!toSelect.value || toSelect.value.trim()==='')) {
-        setPreviewText('Choose a destination class or enable Auto-advance');
-        return;
-      }
-      let totalToMove = 0;
-      for(const from of selectedFrom){
-        const cached = (studentsCache || []).filter(s => (s.classId||'') === from && s.status !== 'deleted');
-        if(cached && cached.length) totalToMove += cached.length;
-        else {
-          const snap = await getDocs(query(collection(db,'students'), where('classId','==', from)));
-          if(snap && snap.docs) totalToMove += snap.docs.filter(d => (d.data().status||'') !== 'deleted').length;
+      const selectedRows = rows.filter(r => r.checked);
+      if(selectedRows.length === 0){ setPreviewText('No classes selected'); return; }
+
+      let total = 0;
+      for(const r of selectedRows){
+        if(r.studentsSelected === null){
+          const cached = (studentsCache || []).filter(s => (s.classId||'') === r.name && s.status !== 'deleted');
+          if(cached && cached.length) total += cached.length;
+          else {
+            const snap = await getDocs(query(collection(db,'students'), where('classId','==', r.name)));
+            if(snap && snap.docs) total += snap.docs.filter(d => (d.data().status||'') !== 'deleted').length;
+          }
+        } else {
+          total += (r.studentsSelected || []).length;
         }
       }
-      setPreviewText(`Preview: ${totalToMove} student(s) will be moved`);
+      setPreviewText(`Preview: ${total} student(s) will be moved`);
     } catch(err){
       console.error('preview failed', err);
       setPreviewText('Preview failed');
     }
   };
 
-  // Execute move (robust)
+  // Execute move
   $m('#mvExecute').onclick = async (ev) => {
     const btn = ev.currentTarget;
     try {
-      const selectedFrom = Array.from(modalBody.querySelectorAll('input.mv-from:checked')).map(i => i.dataset.name);
-      if(selectedFrom.length === 0) return toast('Select at least one source class');
+      const selectedRows = rows.filter(r => r.checked);
+      if(selectedRows.length === 0) return toast('Select at least one source class', 'info');
       const auto = mvAutoAdvance && mvAutoAdvance.checked;
-      let dest = toSelect && toSelect.value && toSelect.value.trim();
+      const globalDest = mvToSelect && mvToSelect.value && mvToSelect.value.trim();
 
-      if(!auto && (!dest || dest === '')) return toast('Pick a destination class or enable Auto-advance');
-
+      // Build mapping per source -> destination
       const mapping = {};
       if(auto){
-        const orderedNames = classes.map(c=>c.name);
-        for(const src of selectedFrom){
-          const idx = orderedNames.indexOf(src);
-          const next = (idx >= 0 && idx < orderedNames.length - 1) ? orderedNames[idx+1] : null;
-          mapping[src] = next;
-        }
+        selectedRows.forEach(r => mapping[r.name] = findBestNext(r.name));
       } else {
-        selectedFrom.forEach(src => mapping[src] = dest);
+        selectedRows.forEach(r => mapping[r.name] = (globalDest && globalDest !== '') ? globalDest : r.dest);
       }
 
-      // collect students to move
-      let totalToMove = 0;
+      // detect sources that have no next (mapped to null or same)
+      const finalSources = Object.entries(mapping).filter(([src,to]) => !to || String(to).trim() === '' || to === src).map(([s]) => s);
+
+      // If some classes are final (no next), ask once whether to mark their students graduated
+      let markGraduated = false;
+      if(finalSources.length){
+        const msg = `The following selected classes appear to be the last (no next-number class found):<br/><br/>${finalSources.map(s => escape(s)).join('<br/>')}<br/><br/>Would you like to mark the students in these classes as <strong>graduated</strong>? (Yes → set status='graduated', No → skip moving these students)`;
+        markGraduated = await modalConfirm('Final class detected — graduate students?', msg);
+        // if user declines, we'll skip those classes (mapping for them will be deleted)
+        if(!markGraduated){
+          finalSources.forEach(s => { delete mapping[s]; });
+        }
+      }
+
+      // collect students to move (and students to graduate)
       const studentsToMove = [];
-      for(const src of Object.keys(mapping)){
-        const to = mapping[src];
-        if(!to) continue;
-        const cached = (studentsCache || []).filter(s => (s.classId||'') === src && s.status !== 'deleted');
-        if(cached.length){
-          cached.forEach(s => studentsToMove.push({ id: s.studentId || s.id, name: s.fullName || '', from: src, to }));
-          totalToMove += cached.length;
+      const studentsToGraduate = [];
+
+      for(const r of selectedRows){
+        const to = mapping[r.name];
+        // if mapping absent, skip this source
+        if(!to) {
+          // if user chose to graduate and this source was one of the finals, collect them to graduate
+          if(markGraduated && finalSources.includes(r.name)){
+            // fetch students for r.name
+            let studs = [];
+            if(Array.isArray(studentsCache) && studentsCache.length){
+              studs = (studentsCache || []).filter(s => (s.classId||'') === r.name && s.status !== 'deleted');
+            } else {
+              const snap = await getDocs(query(collection(db,'students'), where('classId','==', r.name)));
+              studs = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(s => s.status !== 'deleted');
+            }
+            studs.forEach(s => studentsToGraduate.push({ id: s.id || s.studentId || s._id, name: s.fullName || s.name || '', from: r.name }));
+          }
+          continue;
+        }
+
+        // get students list for moving
+        let studs = [];
+        if(r.studentsSelected === null){
+          if(Array.isArray(studentsCache) && studentsCache.length){
+            studs = (studentsCache || []).filter(s => (s.classId||'') === r.name && s.status !== 'deleted');
+          } else {
+            const snap = await getDocs(query(collection(db,'students'), where('classId','==', r.name)));
+            studs = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(s => s.status !== 'deleted');
+          }
         } else {
-          const snap = await getDocs(query(collection(db,'students'), where('classId','==', src)));
-          if(snap && snap.docs){
-            snap.docs.forEach(d => {
-              const data = d.data();
-              if(data.status === 'deleted') return;
-              studentsToMove.push({ id: d.id, name: data.fullName || '', from: src, to });
-            });
-            totalToMove += snap.docs.filter(d => d.data().status !== 'deleted').length;
+          const ids = r.studentsSelected || [];
+          if(Array.isArray(studentsCache) && studentsCache.length){
+            studs = studentsCache.filter(s => ids.includes((s.id||s.studentId||s.studentId)));
+          } else {
+            studs = [];
+            for(const sid of ids){
+              try {
+                const docRef = doc(db,'students', sid);
+                const docSnap = await getDoc(docRef);
+                if(docSnap && docSnap.exists()) {
+                  const data = docSnap.data();
+                  if(data.status !== 'deleted') studs.push({ id: docSnap.id, ...data });
+                }
+              } catch(e){ console.warn('failed fetch student', sid, e); }
+            }
           }
         }
+
+        studs.forEach(s => {
+          studentsToMove.push({ id: s.id || s.studentId || s._id, name: s.fullName || s.name || '', from: r.name, to });
+        });
       }
 
-      if(totalToMove === 0) return toast('No students found to move for the selected classes');
+      if(studentsToMove.length === 0 && studentsToGraduate.length === 0) return toast('No students found to move or graduate', 'info');
 
+      // Confirmation: summarise mapping and grad count
       const mappingSummary = Object.entries(mapping).map(([s,t]) => `${escape(s)} → ${t ? escape(t) : '<em>(skipped)</em>'}`).join('<br/>');
-      const ok = await modalConfirm('Confirm move', `Move ${totalToMove} students?<br/><br/>Mapping:<br/>${mappingSummary}<br/><br/>Proceed?`);
+      const gradSummary = studentsToGraduate.length ? `<br/><br/>Graduates: ${studentsToGraduate.length}` : '';
+      const ok = await modalConfirm('Confirm move', `Move ${studentsToMove.length} students?<br/><br/>Mapping:<br/>${mappingSummary}${gradSummary}<br/><br/>Proceed?`);
       if(!ok) return;
 
       setButtonLoading(btn, true, 'Moving...');
@@ -2737,6 +3120,8 @@ async function openMoveStudentsModal(sourceClassId){
       const chunkSize = 50;
       let done = 0;
       const errors = [];
+
+      // 1) Move students
       for(let i=0;i<studentsToMove.length;i+=chunkSize){
         const chunk = studentsToMove.slice(i,i+chunkSize);
         await Promise.all(chunk.map(async sRec => {
@@ -2750,43 +3135,66 @@ async function openMoveStudentsModal(sourceClassId){
             errors.push({ student: sRec, error: String(err && err.message ? err.message : err) });
           }
         }));
-        // safe progress update (no crash if modal closed)
-        setPreviewText(`Progress: ${done}/${totalToMove}`);
+        setPreviewText && setPreviewText(`Progress: ${done}/${studentsToMove.length}`);
+      }
+
+      // 2) Graduate students (if confirmed)
+      if(markGraduated && studentsToGraduate.length){
+        for(let i=0;i<studentsToGraduate.length;i+=chunkSize){
+          const chunk = studentsToGraduate.slice(i,i+chunkSize);
+          await Promise.all(chunk.map(async sRec => {
+            try {
+              await updateDoc(doc(db,'students', sRec.id), { status: 'graduated', classId: '' });
+              const sc = (studentsCache || []).find(x => (x.studentId===sRec.id || x.id===sRec.id));
+              if(sc){ sc.status = 'graduated'; sc.classId = ''; }
+            } catch(err){
+              console.error('graduate student failed', sRec, err);
+              errors.push({ student: sRec, error: String(err && err.message ? err.message : err) });
+            }
+          }));
+        }
       }
 
       setButtonLoading(btn, false);
 
       if(errors.length){
-        toast(`Some students failed to move (${errors.length}). Check console for details.`);
+        toast(`Some operations failed (${errors.length}). Check console.`, 'error', 3000);
       } else {
-        toast(`Successfully moved ${done} students`);
+        toast(`Done: moved ${studentsToMove.length}${markGraduated ? `, graduated ${studentsToGraduate.length}` : ''}` , 'success');
       }
 
-      await loadStudents();
-      renderStudents();
-      await (loadClasses ? loadClasses() : Promise.resolve());
-      renderClasses();
+      // refresh caches and UI
+      if(typeof loadStudents === 'function') await loadStudents();
+      if(typeof renderStudents === 'function') renderStudents();
+      if(typeof loadClasses === 'function') await loadClasses();
+      if(typeof renderClasses === 'function') renderClasses();
 
-      closeModal();
+      // keep UX: DO NOT close main modal automatically in case user wants further actions
+      // (user requested pick should not close main modal), but you can close manually by Cancel or when you prefer.
+      // If you want to auto-close, uncomment next line:
+      // closeModal();
+
     } catch(err){
       console.error('move execution failed', err);
       setButtonLoading(ev.currentTarget, false);
-      toast('Move failed');
+      toast('Move failed' , 'error', 3000);
     }
   };
 
+  // Cancel
   $m('#mvCancel').onclick = closeModal;
 }
+
 
 /* ---------- FIXED: openViewClassModal (single header, counters left, reliable handlers) ---------- */
 async function openViewClassModal(e){
   const id = (e && e.target && e.target.dataset && e.target.dataset.id) ? e.target.dataset.id
            : (e && e.dataset && e.dataset.id) ? e.dataset.id
            : e;
-  if(!id) return toast && toast('Class not found');
+  if(!id) return toast && toast('Class not found', 'info');
 
   const c = (classesCache || []).find(x => x.id === id || x.name === id);
-  if(!c) return toast && toast('Class not found');
+  if(!c) return toast && toast('Class not found' , 'info');
 
   const assigned = (studentsCache || []).filter(s => (s.classId || '') === (c.name || c.id || ''));
   const teachersAssigned = (teachersCache || []).filter(t => {
@@ -2795,7 +3203,7 @@ async function openViewClassModal(e){
     return false;
   });
 
-  // inject small CSS (once)
+  // inject small CSS (once) — updated so mobile rows stay in one horizontal line with ellipsis
   if(!document.getElementById('class-view-styles')){
     const style = document.createElement('style');
     style.id = 'class-view-styles';
@@ -2809,24 +3217,32 @@ async function openViewClassModal(e){
       .cv-tab { padding:8px 12px;border-radius:8px;cursor:pointer;border:1px solid transparent; user-select:none }
       .cv-tab.active { background:#0ea5e9;color:#fff }
       .cv-panel { background:#fff;padding:12px;border-radius:8px;box-shadow:0 6px 18px rgba(2,6,23,0.04); margin-top:8px }
-      .cv-row { padding:10px;border-bottom:1px solid #f1f5f9;display:flex;align-items:center;gap:12px }
-      .cv-left-index { width:36px; text-align:left; font-weight:700; color:#0f172a }
-      .cv-item-main { flex:1; min-width:0 }
-      .cv-meta { color:#64748b;font-size:13px; margin-top:4px }
-      .cv-actions-inline { display:flex;gap:8px; align-items:center }
+      /* rows: keep horizontal layout even on mobile; use ellipsis for overflow */
+      .cv-row { padding:10px;border-bottom:1px solid #f1f5f9;display:flex;align-items:center;gap:12px;flex-wrap:nowrap }
+      .cv-left-index { width:36px; text-align:left; font-weight:700; color:#0f172a; flex: 0 0 36px; }
+      .cv-item-main { flex:1 1 auto; min-width:0; display:flex;gap:8px;align-items:center;overflow:hidden }
+      .cv-item-main .cv-name { font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+      .cv-item-main .cv-meta-inline { color:#64748b;font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-left:6px; }
+      .cv-actions-inline { display:flex;gap:8px; align-items:center; flex: 0 0 auto; margin-left:8px }
       .cv-bottom-actions { position:sticky;bottom:12px;left:0;right:0;display:flex;justify-content:center;gap:12px;padding:12px;background:linear-gradient(180deg, rgba(255,255,255,0), rgba(255,255,255,0.96)); }
       .cv-btn-edit { background:#0ea5e9;color:#fff;border-radius:8px;padding:10px 16px;border:0; cursor:pointer }
       .cv-btn-delete { background:#ef4444;color:#fff;border-radius:8px;padding:10px 16px;border:0; cursor:pointer }
-      .subject-id-blue { color:#0ea5e9; font-weight:600; font-size:13px; }
-      @media(max-width:900px){ .cv-primary .btn { min-width:72px } .cv-row { flex-direction:column;align-items:flex-start } .cv-actions-inline{ margin-top:8px } }
+      .subject-id-blue { color:#0ea5e9; font-weight:600; font-size:13px; margin-left:6px; }
       .muted { color:#6b7280 }
+      /* Small screens: shrink index and meta, keep single-line behaviour */
+      @media(max-width:900px){
+        .cv-left-index { width:28px; flex: 0 0 28px; }
+        .cv-item-main { gap:6px; }
+        .cv-item-main .cv-name { font-size:14px; }
+        .cv-item-main .cv-meta-inline { font-size:12px; color:#6b7280; }
+        .cv-actions-inline { margin-left:8px }
+      }
     `;
     document.head.appendChild(style);
   }
 
   // Build subjects using real subject ids from subjectsCache when present
   const subjectsList = (c.subjects || []).map((subName) => {
-    // subName could be a name or id depending on your data
     let subObj = null;
     if(Array.isArray(subjectsCache)){
       subObj = subjectsCache.find(s => (s.name && String(s.name).trim() === String(subName).trim()) || (s.id && String(s.id) === String(subName)) || (s.subjectId && String(s.subjectId) === String(subName)));
@@ -2837,24 +3253,25 @@ async function openViewClassModal(e){
     };
   });
 
-  // subjects HTML — minimal styling, subject id in blue only (no extra background/padding/rounded)
+  // subjects HTML — single-line per subject (name + id inline)
   const subjectsHtml = subjectsList.length ? subjectsList.map((s,i)=> `
     <div class="cv-row" data-sub="${i}">
       <div class="cv-left-index">${i+1}</div>
       <div class="cv-item-main">
-        <div style="font-weight:700">${escape(s.displayName)}</div>
-        ${s.realId ? `<div class="cv-meta subject-id-blue">${escape(s.realId)}</div>` : `<div class="cv-meta">${escape(s.displayName)}</div>`}
+        <div class="cv-name">${escape(s.displayName)}</div>
+        ${s.realId ? `<div class="cv-meta-inline subject-id-blue">${escape(s.realId)}</div>` : ''}
       </div>
       <div class="cv-actions-inline cv-meta">${i+1}</div>
     </div>
   `).join('') : `<div class="muted">No subjects assigned</div>`;
 
+  // students HTML — single-line per student: name + small meta inline
   const studentsHtml = (assigned.length ? assigned.map((st,i)=> `
     <div class="cv-row" data-student-id="${escape(st.studentId||st.id||'')}">
       <div class="cv-left-index">${i+1}</div>
       <div class="cv-item-main">
-        <div style="font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escape(st.fullName||'—')}</div>
-        <div class="cv-meta">ID: ${escape(st.studentId||st.id||'—')}${(typeof st.fee !== 'undefined' && st.fee !== null) ? ` • Fee: ${escape(String(st.fee))}` : ''}</div>
+        <div class="cv-name">${escape(st.fullName||'—')}</div>
+        <div class="cv-meta-inline">ID: ${escape(st.studentId||st.id||'—')}${(typeof st.fee !== 'undefined' && st.fee !== null) ? ` • Fee: ${escape(String(st.fee))}` : ''}</div>
       </div>
       <div class="cv-actions-inline">
         <button class="btn btn-ghost btn-sm view-student" data-id="${escape(st.studentId||st.id||'')}">View</button>
@@ -2862,15 +3279,15 @@ async function openViewClassModal(e){
     </div>
   `).join('') : `<div class="muted">No students</div>`);
 
+  // teachers HTML — single-line per teacher: name + meta inline
   const teachersHtml = (teachersAssigned.length ? teachersAssigned.map((t,i)=> {
     const assignedToThisClass = (t.subjects || []).filter(s => (c.subjects || []).includes(s));
     return `
       <div class="cv-row" data-teacher-id="${escape(t.id||t.teacherId||'')}">
         <div class="cv-left-index">${i+1}</div>
         <div class="cv-item-main">
-          <div style="font-weight:700">${escape(t.fullName||t.name||'—')}</div>
-          <div class="cv-meta">ID: ${escape(t.id||t.teacherId||'—')} • Salary: ${escape(t.salary||'—')}</div>
-          <div class="cv-meta">Subjects for this class: ${assignedToThisClass.length ? escape(assignedToThisClass.join(', ')) : '—'}</div>
+          <div class="cv-name">${escape(t.fullName||t.name||'—')}</div>
+          <div class="cv-meta-inline">ID: ${escape(t.id||t.teacherId||'—')} • Salary: ${escape(t.salary||'—')} ${assignedToThisClass.length ? `• ${escape(assignedToThisClass.join(', '))}` : ''}</div>
         </div>
         <div class="cv-actions-inline">
           <button class="btn btn-ghost btn-sm view-teacher" data-id="${escape(t.id||t.teacherId||'')}">View</button>
@@ -2970,8 +3387,8 @@ async function openViewClassModal(e){
       root.querySelector('#plainEditSave')?.addEventListener('click', async (ev) => {
         const btn = ev.currentTarget; setButtonLoading(btn,true,'Saving...');
         const newName = (root.querySelector('#plainClassName')?.value||'').trim();
-        if(!newName){ toast('Class name required'); setButtonLoading(btn,false); return; }
-        try{ await updateDoc(doc(db,'classes', c.id), { name: newName }); await loadClasses(); renderClasses(); toast('Class updated'); closeModal(); } catch(err){ console.error(err); toast('Update failed'); }
+        if(!newName){ toast('Class name required' , 'info'); setButtonLoading(btn,false); return; }
+        try{ await updateDoc(doc(db,'classes', c.id), { name: newName }); await loadClasses(); renderClasses(); toast('Class updated', 'success'); closeModal(); } catch(err){ console.error(err); toast('Update failed', 'error', 3000); }
         setButtonLoading(btn,false);
       });
       return;
@@ -2981,7 +3398,7 @@ async function openViewClassModal(e){
         const ok = await modalConfirm('Delete class', `Move <strong>${escape(c.name||'')}</strong> to Recycle Bin?`);
         if(!ok) return;
         const btn = modalRoot.querySelector('#cvDeleteBtn'); setButtonLoading(btn,true,'Deleting...');
-        try{ await deleteClass({ target:{ dataset:{ id: c.id } } }); closeModal(); } catch(err){ console.error(err); toast('Delete failed'); }
+        try{ await deleteClass({ target:{ dataset:{ id: c.id } } }); closeModal(); } catch(err){ console.error(err); toast('Delete failed', 'error', 3000); }
         setButtonLoading(btn,false);
       })();
       return;
@@ -2993,12 +3410,13 @@ async function openViewClassModal(e){
 
 
 
+
 // end openViewClassModal
 
 /* ---------- UPDATED: openTimetableModal (editor + post-save read-only viewer) ---------- */
 async function openTimetableModal(classId){
   const cls = classesCache.find(x => x.id===classId || x.name===classId);
-  if(!cls) return toast('Class not found');
+  if(!cls) return toast('Class not found','info');
 
   // find existing timetable doc (if any)
   let timetableDoc = null;
@@ -3063,6 +3481,7 @@ async function openTimetableModal(classId){
       .tt-icon-btn svg{ width:16px;height:16px;vertical-align:middle }
     `;
     document.head.appendChild(style);
+    
   }
 
   // initial schedule: use existing or empty
@@ -3146,6 +3565,7 @@ async function openTimetableModal(classId){
 
     </div>
   `);
+  
 
   // helpers scoped to modal
   const $ = (sel) => modalBody.querySelector(sel);
@@ -3180,6 +3600,7 @@ async function openTimetableModal(classId){
     selDays.forEach(d => { html += `<th class="tt-day-column">${escapeHtml(d)}<div class="tt-small">Subjects & teachers</div></th>`; });
     html += `</tr></thead><tbody>`;
   
+    
     for(let r=0;r<maxRows;r++){
       html += `<tr data-row="${r}">`;
   
@@ -3230,6 +3651,8 @@ async function openTimetableModal(classId){
   
     html += `</tbody></table></div>`;
     container.innerHTML = html;
+
+    
   
     // populate selects & wire per-cell behavior (subject->teacher mapping, break toggles)
     selDays.forEach(d => {
@@ -3298,7 +3721,7 @@ async function openTimetableModal(classId){
         const d = btn.dataset.day;
         schedule[d] = schedule[d] || [];
         if(schedule[d].length <= rowIndex){
-          toast('No such period to remove for ' + d);
+          toast('No such period to remove for ', 'warning' + d);
           return;
         }
         const ok = window.confirm(`Remove period ${rowIndex+1} for ${d}?`);
@@ -3327,7 +3750,7 @@ async function openTimetableModal(classId){
       btn.onclick = () => {
         const d = btn.dataset.day;
         schedule[d] = schedule[d] || [];
-        if(schedule[d].length === 0) return toast('No periods to remove for ' + d);
+        if(schedule[d].length === 0) return toast('No periods to remove for ', 'warning' + d);
         const ok = window.confirm(`Remove last period for ${d}?`);
         if(!ok) return;
         schedule[d].pop();
@@ -3446,8 +3869,8 @@ function renderTimetableViewer(useSchedule, publishedFlag){
       }
       renderTimetableViewer(schedule, !!wantPublish);
       setButtonLoading(toggleBtn, false);
-      toast(wantPublish ? 'Timetable published' : 'Timetable unpublished');
-    } catch(err){ console.error('toggle publish failed', err); setButtonLoading(toggleBtn, false); toast('Failed to change publish state'); }
+      toast(wantPublish ? 'Timetable published' : 'Timetable unpublished', 'success');
+    } catch(err){ console.error('toggle publish failed', err); setButtonLoading(toggleBtn, false); toast('Failed to change publish state', 'error', 3000); }
   };
   if(viewerDownload) viewerDownload.onclick = () => modalBody.querySelector('#ttDownloadBtn')?.click();
 }
@@ -3480,7 +3903,7 @@ function renderTimetableViewer(useSchedule, publishedFlag){
     setButtonLoading(ev.currentTarget, true, 'Generating...');
     try {
       const selDays = getSelectedDaysOrdered();
-      if(selDays.length === 0){ toast('Select days'); setButtonLoading(ev.currentTarget,false); return; }
+      if(selDays.length === 0){ toast('Select days', 'warning'); setButtonLoading(ev.currentTarget,false); return; }
       const periods = Number($('#ttPeriods')?.value || 7);
       const startTime = $('#ttStartTime')?.value || '07:30';
       const periodMinutes = Number($('#ttPeriodMinutes')?.value || 60);
@@ -3524,8 +3947,8 @@ function renderTimetableViewer(useSchedule, publishedFlag){
 
       renderTimetableEditor();
       wireDayButtons();
-      toast('Generated timetable (edit as needed)');
-    } catch(err){ console.error(err); toast('Generate failed'); }
+      toast('Generated timetable (edit as needed)','info');
+    } catch(err){ console.error(err); toast('Generate failed', 'error', 3000); }
     setButtonLoading(ev.currentTarget, false);
   };
 
@@ -3533,24 +3956,24 @@ function renderTimetableViewer(useSchedule, publishedFlag){
   const clearBtn = $('#ttClearBtn');
   if(clearBtn) clearBtn.onclick = (ev) => {
     const selDays = getSelectedDaysOrdered();
-    if(selDays.length === 0) return toast('Select days to clear');
+    if(selDays.length === 0) return toast('Select days to clear', 'warning');
     const ok = window.confirm(`Clear all periods for selected days (${selDays.join(', ')})? This will remove subjects & teachers from those days.`);
     if(!ok) return;
     // clear
     selDays.forEach(d => { schedule[d] = []; });
     renderTimetableEditor();
     wireDayButtons();
-    toast('Cleared selected days');
+    toast('Cleared selected days', 'warning');
   };
 
   // Save button: build finalSchedule and save (automatically published)
   const saveBtn = $('#ttSaveBtn');
   if(saveBtn) saveBtn.onclick = async (ev) => {
     const selDays = getSelectedDaysOrdered();
-    if(selDays.length === 0) return toast('Select days');
+    if(selDays.length === 0) return toast('Select days','info');
     const container = $('#ttEditorContainer');
     const table = container && container.querySelector('table.tt-table');
-    if(!table) return toast('Nothing to save');
+    if(!table) return toast('Nothing to save', 'warning');
 
     const rows = Array.from(table.querySelectorAll('tbody tr'));
     const finalSchedule = {};
@@ -3625,7 +4048,7 @@ function renderTimetableViewer(useSchedule, publishedFlag){
         timetableDoc = { id: ref.id, ...payload };
       }
 
-      toast('Timetable saved and published');
+      toast('Timetable saved and published','success');
       // update schedule local & show viewer; ensure download visible
       schedule = JSON.parse(JSON.stringify(finalSchedule));
       renderTimetableViewer(schedule, true);
@@ -3634,7 +4057,7 @@ function renderTimetableViewer(useSchedule, publishedFlag){
       renderClasses();
       const globalDl = $('#ttDownloadBtn');
       if(globalDl) globalDl.style.display = '';
-    } catch(err){ console.error('save timetable failed', err); toast('Save failed'); }
+    } catch(err){ console.error('save timetable failed', err); toast('Save failed', 'error', 3000); }
     setButtonLoading(ev.currentTarget, false);
   };
 
@@ -3642,10 +4065,10 @@ function renderTimetableViewer(useSchedule, publishedFlag){
   const downloadBtn = $('#ttDownloadBtn');
   if(downloadBtn) downloadBtn.onclick = async () => {
     try {
-      if(!(timetableDoc && timetableDoc.published)) return toast('Save and publish timetable first');
+      if(!(timetableDoc && timetableDoc.published)) return toast('Save and publish timetable first', 'warning');
       const useSchedule = schedule;
       const selDays = days.filter(d => Array.isArray(useSchedule[d]));
-      if(selDays.length === 0) return toast('Nothing to print');
+      if(selDays.length === 0) return toast('Nothing to print','warning');
 
       // build printable table element (same visual structure)
       const wrapper = document.createElement('div');
@@ -3731,7 +4154,7 @@ function renderTimetableViewer(useSchedule, publishedFlag){
       wrapper.remove();
 
       const jsPDFLib = (window.jspdf && window.jspdf.jsPDF) ? window.jspdf.jsPDF : (window.jsPDF ? window.jsPDF : null);
-      if(!jsPDFLib) { toast('PDF library missing'); return; }
+      if(!jsPDFLib) { toast('PDF library missing', 'warning'); return; }
       const pdf = new jsPDFLib('landscape','pt','a4');
       const pageWidth = pdf.internal.pageSize.getWidth();
       const pageHeight = pdf.internal.pageSize.getHeight();
@@ -3746,7 +4169,7 @@ function renderTimetableViewer(useSchedule, publishedFlag){
       pdf.save(filename);
     } catch(e){
       console.error('Download PDF failed', e);
-      toast('Failed to generate PDF');
+      toast('Failed to generate PDF', 'error', 3000);
     }
   };
 
@@ -3761,59 +4184,134 @@ function renderTimetableViewer(useSchedule, publishedFlag){
 
 
 
-/* ---------- NEW: Set Fee Modal ---------- */
-async function openSetFeeModal(classId, specificStudentIds = null){
-  const cls = classesCache.find(x => x.id===classId || x.name===classId);
-  if(!cls) return toast('Class not found');
+/* ---------- HELPER: create overlay modal (keeps underlying view modal intact) ---------- */
+function createOverlay(title, contentHtml) {
+  const overlay = document.createElement('div');
+  overlay.className = 'overlay-modal';
+  Object.assign(overlay.style, {
+    position: 'fixed', inset: 0, display: 'flex',
+    alignItems: 'center', justifyContent: 'center',
+    background: 'rgba(0,0,0,0.32)', zIndex: 99999, padding: '16px'
+  });
 
-  // default selected = all class students
-  const assigned = (studentsCache||[]).filter(s => (s.classId||'') === (cls.name||cls.id||''));
+  const panel = document.createElement('div');
+  panel.style.maxWidth = '980px';
+  panel.style.width = '100%';
+  panel.style.maxHeight = '88vh';
+  panel.style.overflow = 'auto';
+  panel.style.background = '#fff';
+  panel.style.borderRadius = '10px';
+  panel.style.boxShadow = '0 12px 40px rgba(2,6,23,0.16)';
+  panel.style.padding = '14px';
+
+  const header = document.createElement('div');
+  header.style.display = 'flex';
+  header.style.justifyContent = 'space-between';
+  header.style.alignItems = 'center';
+  header.style.marginBottom = '8px';
+  header.innerHTML = `<strong style="font-size:16px">${escapeHtml(title||'')}</strong><button class="ov-close btn btn-ghost">Close</button>`;
+
+  const body = document.createElement('div');
+  body.className = 'ov-body';
+  body.innerHTML = contentHtml;
+
+  panel.appendChild(header);
+  panel.appendChild(body);
+  overlay.appendChild(panel);
+  document.body.appendChild(overlay);
+
+  // close handlers
+  overlay.querySelector('.ov-close').onclick = () => overlay.remove();
+  overlay.addEventListener('click', (ev) => { if(ev.target === overlay) overlay.remove(); });
+
+  return { overlay, panel, body };
+}
+
+/* ---------- REPLACEMENT: Set Fee overlay (monthly-only, start date default today, notes under start) ---------- */
+async function openSetFeeModal(classId, specificStudentIds = null) {
+  const cls = classesCache.find(x => x.id===classId || x.name===classId);
+  if(!cls) return toast('Class not found', 'info');
+
+  // students list (exclude deleted)
+  const assigned = (studentsCache||[]).filter(s => (s.classId||'') === (cls.name||cls.id||'') && (s.status || '') !== 'deleted');
   const studentsOptions = assigned.map(s => {
-    const sidVal = escape(s.id||s.studentId||'');
+    const sidVal = escapeHtml(s.id||s.studentId||'');
     const checked = specificStudentIds ? (specificStudentIds.includes(s.id||s.studentId)?'checked':'') : 'checked';
-    return `<label style="display:block"><input type="checkbox" class="fee-stu-chk" data-id="${sidVal}" ${checked} /> ${escape(s.fullName||'')} — ${escape(s.studentId||'')}</label>`;
+    return `<label style="display:block;margin-bottom:6px"><input type="checkbox" class="fee-stu-chk" data-id="${sidVal}" ${checked} /> ${escapeHtml(s.fullName||'')} — <span class="muted">${escapeHtml(s.studentId||'')}</span></label>`;
   }).join('');
 
-  showModal(`Set fee — ${escape(cls.name||'')}`, `
-    <div>
-      <label>Apply to students</label>
-      <div style="max-height:220px;overflow:auto;border:1px solid #eef2ff;padding:8px">${studentsOptions || '<div class="muted">No students</div>'}</div>
-    </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">
-      <div><label>Amount</label><input id="feeAmount" type="number" /></div>
-      <div><label>Type</label><select id="feeType"><option value="monthly">Monthly</option><option value="quarterly">Quarterly</option><option value="one-time">One-time</option></select></div>
-      <div><label>Start date</label><input id="feeStart" type="date" /></div>
-      <div><label>Notes</label><input id="feeNotes" /></div>
-    </div>
-    <div style="margin-top:12px;display:flex;justify-content:flex-end;gap:8px">
-      <button id="feeCancel" class="btn btn-ghost">Cancel</button>
-      <button id="feeSave" class="btn btn-primary">Set fee</button>
-    </div>
-  `);
+  // default start date = today in yyyy-mm-dd
+  const today = new Date();
+  const pad2 = n => String(n).padStart(2,'0');
+  const todayStr = `${today.getFullYear()}-${pad2(today.getMonth()+1)}-${pad2(today.getDate())}`;
 
-  document.getElementById('feeCancel').onclick = closeModal;
-  document.getElementById('feeSave').onclick = async (ev) => {
-    const amount = Number(document.getElementById('feeAmount').value || 0);
-    const type = document.getElementById('feeType').value;
-    const start = document.getElementById('feeStart').value || null;
-    const notes = document.getElementById('feeNotes').value || '';
+  const html = `
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <div>
+        <label style="font-weight:700">Apply to students</label>
+        <div style="max-height:220px;overflow:auto;border:1px solid #eef2ff;padding:8px;border-radius:8px">${studentsOptions || '<div class="muted">No students</div>'}</div>
+      </div>
 
-    if(!amount || amount <= 0) return toast('Enter fee amount');
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;align-items:start">
+        <div>
+          <label>Amount</label>
+          <input id="feeAmount" type="number" style="width:100%;padding:8px;border-radius:8px;border:1px solid #e6eef8" />
+        </div>
 
-    const selected = Array.from(modalBody.querySelectorAll('.fee-stu-chk:checked')).map(i => i.dataset.id);
-    if(selected.length === 0) return toast('No students selected');
+        <div>
+          <label>Type</label>
+          <!-- monthly only -->
+          <select id="feeType" style="width:100%;padding:8px;border-radius:8px;border:1px solid #e6eef8">
+            <option value="monthly">Monthly</option>
+          </select>
+        </div>
+
+        <div>
+          <label>Start date</label>
+          <input id="feeStart" type="date" value="${todayStr}" style="width:100%;padding:8px;border-radius:8px;border:1px solid #e6eef8" />
+          <div style="font-size:13px;color:#6b7280;margin-top:6px">Note: this is the first billing date for the monthly fee.</div>
+        </div>
+
+        <div>
+          <label>Notes</label>
+          <input id="feeNotes" style="width:100%;padding:8px;border-radius:8px;border:1px solid #e6eef8" />
+        </div>
+      </div>
+
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:6px">
+        <button id="feeCancel" class="btn btn-ghost">Cancel</button>
+        <button id="feeSave" class="btn btn-primary">Set fee</button>
+      </div>
+    </div>
+  `;
+
+  // open overlay (keeps underlying view modal intact)
+  const { overlay, body } = createOverlay(`Set fee — ${escapeHtml(cls.name||'')}`, html);
+
+  // helpers scoped to overlay body
+  const $o = sel => body.querySelector(sel);
+  $o('#feeCancel').onclick = () => overlay.remove();
+
+  $o('#feeSave').onclick = async (ev) => {
+    const btn = ev.currentTarget;
+    const amount = Number($o('#feeAmount').value || 0);
+    const type = $o('#feeType').value;
+    const start = $o('#feeStart').value || null;
+    const notes = $o('#feeNotes').value || '';
+
+    if(!amount || amount <= 0) { toast('Enter fee amount'); return; }
+    const selected = Array.from(body.querySelectorAll('.fee-stu-chk:checked')).map(i => i.dataset.id);
+    if(selected.length === 0) { toast('No students selected'); return; }
 
     const ok = await modalConfirm('Set Fee', `Set fee ${amount} (${type}) for <strong>${selected.length}</strong> students?`);
     if(!ok) return;
 
-    setButtonLoading(ev.currentTarget, true, 'Applying...');
+    setButtonLoading(btn, true, 'Applying...');
     try {
       const now = Timestamp.now();
-
-      // create fee docs AND update student top-level doc (so views show it immediately)
       await Promise.all(selected.map(async sid => {
         try {
-          // add fee history record
+          // fee history record
           await addDoc(collection(db,'students', sid, 'fees'), {
             amount,
             type,
@@ -3823,18 +4321,15 @@ async function openSetFeeModal(classId, specificStudentIds = null){
             createdBy: currentUser?.uid || null
           });
 
-          // update top-level student doc so lists / modals show current fee
-          const studentDocId = sid; // assumes students are stored by studentId or internal id matching sid
-          await updateDoc(doc(db,'students', studentDocId), {
+          // update top-level student doc (merge)
+          await updateDoc(doc(db,'students', sid), {
             fee: amount,
             feeType: type,
             feeStartDate: start ? new Date(start) : null,
             feeNotes: notes,
             feeUpdatedAt: now
           }).catch(async err => {
-            // if update fails (doc missing), try setDoc to create minimal doc (merge)
-            console.warn('update student fee failed, attempting set (merge):', err);
-            await setDoc(doc(db,'students', studentDocId), {
+            await setDoc(doc(db,'students', sid), {
               fee: amount,
               feeType: type,
               feeStartDate: start ? new Date(start) : null,
@@ -3843,39 +4338,29 @@ async function openSetFeeModal(classId, specificStudentIds = null){
             }, { merge: true });
           });
 
-          // optional quick index: update studentsLatest doc (if you maintain it)
-          try{
-            await setDoc(doc(db,'studentsLatest', sid), { fee: amount, feeType: type, feeStartDate: start ? new Date(start) : null }, { merge: true });
-          }catch(e){ /* ignore */ }
-
           // optimistic local cache update
           const sc = (studentsCache || []).find(x => (x.studentId === sid || x.id === sid));
           if(sc){
-            sc.fee = amount;
-            sc.feeType = type;
-            sc.feeStartDate = start ? new Date(start) : null;
-            sc.feeNotes = notes;
-            sc.feeUpdatedAt = now;
+            sc.fee = amount; sc.feeType = type; sc.feeStartDate = start ? new Date(start) : null; sc.feeNotes = notes; sc.feeUpdatedAt = now;
           }
-        } catch(inner){
-          console.error('apply fee for student failed', sid, inner);
-          // continue - errors per student are collected but don't abort others
-        }
+        } catch(inner){ console.error('apply fee for student failed', sid, inner); }
       }));
 
-      // reload students so UI reflects server state
-      await loadStudents();
-      renderStudents();
+      // refresh lists
+      if(typeof loadStudents === 'function') await loadStudents();
+      if(typeof renderStudents === 'function') renderStudents();
 
       toast('Fees set');
-      closeModal();
+      // close overlay only (do not touch underlying view modal)
+      overlay.remove();
     } catch(err){
       console.error(err);
       toast('Failed to set fees');
     }
-    setButtonLoading(ev.currentTarget, false);
+    setButtonLoading(btn, false);
   };
 }
+
 
 
 
@@ -3935,7 +4420,7 @@ openAddClass.onclick = () => {
 function openEditClassModal(e){
   const id = e && e.target ? e.target.dataset.id : e;
   const c = classesCache.find(x=>x.id===id);
-  if(!c) return toast && toast('Class not found');
+  if(!c) return toast && toast('Class not found', 'info');
   const subjectsHtml = subjectsCache.map(s=>`<label style="margin-right:8px"><input type="checkbox" value="${escape(s.name)}" ${c.subjects?.includes(s.name)?'checked':''} /> ${escape(s.name)}</label>`).join('');
   showModal('Edit Class', `
     <div style="display:grid;grid-template-columns:1fr;gap:8px">
@@ -3971,7 +4456,7 @@ async function deleteClass(e){
       deleted_at: Timestamp.now(),
       deleted_by: who
     });
-    toast('Class moved to Recycle Bin');
+    toast('Class moved to Recycle Bin', 'info');
     await loadClasses();
     renderClasses();
     populateClassFilters && populateClassFilters();
@@ -4117,7 +4602,7 @@ function openViewSubjectModal(e){
   const id = (e && e.target) ? e.target.dataset.id : (e && e.dataset ? e.dataset.id : e);
   if(!id) return;
   const s = subjectsCache.find(x => x.id === id || x.name === id);
-  if(!s) return toast('Subject not found');
+  if(!s) return toast('Subject not found', 'info');
 
   const includedIn = (classesCache || []).filter(c => Array.isArray(c.subjects) && c.subjects.includes(s.name || s.id));
   const classesHtml = includedIn.length ? `<div class="muted">${includedIn.map(c => escape(c.name)).join(', ')}</div>` : `<div class="muted">Not part of any class</div>`;
@@ -4149,7 +4634,7 @@ function openViewSubjectModal(e){
       closeModal();
     } catch(err){
       console.error(err);
-      toast('Delete failed');
+      toast('Delete failed', 'error', 3000);
     }
     setButtonLoading(btn, false);
   };
@@ -4177,10 +4662,10 @@ openAddSubject && (openAddSubject.onclick = () => {
     try{
       let id = modalBody.querySelector('#modalSubId').value.trim();
       const name = modalBody.querySelector('#modalSubName').value.trim();
-      if(!name){ toast('Name required'); setButtonLoading(btn, false); return; }
+      if(!name){ toast('Name required', 'info'); setButtonLoading(btn, false); return; }
       if(!id) id = await generateDefaultId('subjects','SUB',4);
       await setDoc(doc(db,'subjects', id), { id, name });
-      toast('Subject created');
+      toast('Subject created', 'success');
       closeModal();
       await loadSubjects();
       renderSubjects();
@@ -4189,7 +4674,7 @@ openAddSubject && (openAddSubject.onclick = () => {
       showPage('subjects');
     } catch(err){
       console.error('create subject failed', err);
-      toast('Failed to create subject');
+      toast('Failed to create subject', 'error', 3000);
     }
     setButtonLoading(btn, false);
   };
@@ -4199,7 +4684,7 @@ openAddSubject && (openAddSubject.onclick = () => {
 function openEditSubjectModal(e){
   const id = e && e.target ? e.target.dataset.id : e;
   const s = subjectsCache.find(x=>x.id===id);
-  if(!s) return toast && toast('Subject not found');
+  if(!s) return toast && toast('Subject not found', 'info');
   showModal('Edit Subject', `
     <div><label>Subject name</label><input id="modalSubName" value="${escape(s.name)}" /></div>
     <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
@@ -4214,9 +4699,9 @@ function openEditSubjectModal(e){
     setButtonLoading(btn, true, 'Saving...');
     try{
       const name = modalBody.querySelector('#modalSubName').value.trim();
-      if(!name){ toast('Name required'); setButtonLoading(btn, false); return; }
+      if(!name){ toast('Name required' , 'info'); setButtonLoading(btn, false); return; }
       await updateDoc(doc(db,'subjects',id), { name });
-      toast('Subject updated');
+      toast('Subject updated', 'success');
       closeModal();
       await loadSubjects();
       renderSubjects();
@@ -4225,7 +4710,7 @@ function openEditSubjectModal(e){
       showPage('subjects');
     } catch(err){
       console.error('update subject failed', err);
-      toast('Failed to update subject');
+      toast('Failed to update subject' , 'error', 3000);
     }
     setButtonLoading(btn, false);
   };
@@ -4248,7 +4733,7 @@ async function deleteSubject(e){
       deleted_at: Timestamp.now(),
       deleted_by: who
     });
-    toast('Subject moved to Recycle Bin');
+    toast('Subject moved to Recycle Bin', 'info');
     await loadSubjects();
     renderSubjects();
     populateClassFilters && populateClassFilters();
@@ -4256,7 +4741,7 @@ async function deleteSubject(e){
     showPage('subjects');
   } catch(err){
     console.error('delete subject failed', err);
-    toast('Failed to delete subject');
+    toast('Failed to delete subject' , 'error', 3000);
   }
   if(btn) setButtonLoading(btn, false);
 }
@@ -5066,9 +5551,9 @@ async function openExamModal(examId){
   if(!ex){
     try {
       const snap = await getDoc(doc(db,'exams', examId));
-      if(!snap.exists()) return toast && toast('Exam not found');
+      if(!snap.exists()) return toast && toast('Exam not found' , 'error', 3000);
       ex = { id: snap.id, ...snap.data() };
-    } catch(err){ console.error('openExamModal load failed', err); return toast && toast('Failed to load exam'); }
+    } catch(err){ console.error('openExamModal load failed', err); return toast && toast('Failed to load exam' , 'error', 3000); }
   }
 
   const statusLabel = ex.status === 'published' ? 'Published' : (ex.status === 'deactivated' ? 'Deactivated' : 'Unpublished');
@@ -5310,7 +5795,7 @@ openAddExam && (openAddExam.onclick = () => {
       const name = document.getElementById('examName').value.trim();
       const date = document.getElementById('examDate').value || null;
       const linkedFrom = modalBody.querySelector('#linkFromExam').value || null;
-      if(!name){ toast('Name required'); setButtonLoading(btn, false); return; }
+      if(!name){ toast('Name required' , 'info'); setButtonLoading(btn, false); return; }
 
       const chosenSubjects = Array.from(modalBody.querySelectorAll('#examSubjects input.exam-sub:checked')).map(i=>{
         const nm = i.dataset.name;
@@ -5328,7 +5813,7 @@ openAddExam && (openAddExam.onclick = () => {
           for(const cs of chosenSubjects){
             const linkedMax = linkedMap.get(cs.name) || 0;
             if((linkedMax + cs.max) > 100){
-              toast(`Subject ${cs.name} combined max (${linkedMax + cs.max}) exceeds 100.`);
+              toast(`Subject ${cs.name} combined max (${linkedMax + cs.max}) exceeds 100.` , 'success');
               setButtonLoading(btn, false);
               return;
             }
@@ -5359,7 +5844,7 @@ openAddExam && (openAddExam.onclick = () => {
       if(linkedFrom) payload.linkedExamId = linkedFrom;
 
       await addDoc(collection(db,'exams'), payload);
-      toast('Exam created');
+      toast('Exam created', 'success');
       closeModal();
       await loadExams();
       renderExams();
@@ -5367,7 +5852,7 @@ openAddExam && (openAddExam.onclick = () => {
       showPage('exams');
     }catch(err){
       console.error('create exam failed', err);
-      toast('Failed to create exam');
+      toast('Failed to create exam', 'error', 3000);
     }
     setButtonLoading(btn, false);
   };
@@ -5380,7 +5865,7 @@ openAddExam && (openAddExam.onclick = () => {
 function openEditExamModal(e){
   const btn = e.currentTarget || e.target.closest('[data-id]');
   const id = btn?.dataset?.id;
-  if(!id) return toast('Exam not found');
+  if(!id) return toast('Exam not found' , 'info');
   const ex = examsCache.find(x=>x.id===id);
 
   // compute exam subject name set (original exam selection)
@@ -5559,7 +6044,7 @@ function openEditExamModal(e){
     try{
       const name = document.getElementById('examName').value.trim();
       const date = document.getElementById('examDate').value || null;
-      if(!name){ toast('Name required'); setButtonLoading(btn, false); return; }
+      if(!name){ toast('Name required','info'); setButtonLoading(btn, false); return; }
 
       const chosenSubjects = Array.from(modalBody.querySelectorAll('#examSubjects input.exam-sub:checked')).map(i=>{
         const nm = i.dataset.name;
@@ -5589,7 +6074,7 @@ function openEditExamModal(e){
         updatedBy: currentUser && currentUser.uid ? currentUser.uid : null
       });
 
-      toast('Exam updated');
+      toast('Exam updated' , 'success');
       closeModal();
       await loadExams();
       renderExams();
@@ -5597,7 +6082,7 @@ function openEditExamModal(e){
       showPage('exams');
     }catch(err){
       console.error('update exam failed', err);
-      toast('Failed to update exam');
+      toast('Failed to update exam' , 'error', 3000);
     }
     setButtonLoading(btn, false);
   };
@@ -5651,7 +6136,7 @@ async function deleteExam(e){
       deleted_by: who
     });
 
-    toast('Exam moved to Recycle Bin');
+    toast('Exam moved to Recycle Bin' , 'info');
     await loadExams();
     renderExams();
     populateStudentsExamDropdown && populateStudentsExamDropdown();
@@ -5659,7 +6144,7 @@ async function deleteExam(e){
 
   } catch(err){
     console.error('delete exam failed', err);
-    toast('Failed to delete exam');
+    toast('Failed to delete exam' , 'error', 3000);
   }
 
   if(btn) setButtonLoading(btn, false);
@@ -5698,7 +6183,7 @@ async function togglePublishExam(e){
     toast(newStatus === 'published' ? 'Exam published' : 'Exam unpublished');
   }catch(err){
     console.error('togglePublishExam failed', err);
-    toast('Publish/unpublish failed');
+    toast('Publish/unpublish failed' , 'error', 3000);
   } finally {
     if(btn) setButtonLoading(btn, false);
   }
@@ -6199,7 +6684,7 @@ async function openStudentResultModalFor(student){
     }
 
     closeModal();
-    toast(`${student.fullName} successfully recorded exam results`);
+    toast(`${student.fullName} successfully recorded exam results`, 'success');
   };
 
   document.getElementById('cancelRes').onclick = closeModal;
@@ -6579,7 +7064,7 @@ async function openAddStaffModal(){
       // create with a short staffId (best-effort unique)
       const staffId = `STF${String(Date.now()).slice(-6)}`;
       await addDoc(collection(db,'staff'), { fullName: name, phone, role, salary_cents: salaryCents, staffId, createdAt: Timestamp.now(), balance_cents: 0 });
-      toast('Staff added');
+      toast('Staff added' , 'success');
       closeModal();
       await loadStaff();
       await renderPaymentsList('staff');
@@ -7316,7 +7801,7 @@ async function deleteExpense(e){
       deleted_by: who
     });
 
-    toast('Expense moved to Recycle Bin');
+    toast('Expense moved to Recycle Bin' , 'info');
 
     // refresh UI
     if(typeof loadTransactions === 'function') await loadTransactions();
@@ -7325,7 +7810,7 @@ async function deleteExpense(e){
 
   } catch(err){
     console.error('deleteExpense failed', err);
-    toast('Failed to delete expense');
+    toast('Failed to delete expense' , 'error', 3000);
   }
 }
 
@@ -7638,7 +8123,7 @@ async function deleteStaff(e){
     if(typeof loadStaff === 'function') await loadStaff();
     if(typeof loadTransactions === 'function') await loadTransactions();
 
-    toast('Staff moved to Recycle Bin');
+    toast('Staff moved to Recycle Bin' , 'info');
 
     // refresh lists & recycle UI
     renderPaymentsList && renderPaymentsList('staff');
@@ -8623,7 +9108,7 @@ async function deleteTransaction(e){
       updatedAt: Timestamp.now()
     });
 
-    toast('Transaction moved to Recycle Bin');
+    toast('Transaction moved to Recycle Bin' , 'info');
 
     // refresh caches & UI
     if(typeof loadTransactions === 'function') await loadTransactions();
@@ -11233,14 +11718,14 @@ async function renderAdminEditor(classDoc, students, subjectName, dateVal, perio
         try {
           if(typeof deleteDoc === 'function'){
             await deleteDoc(doc(db, ATT_RECORDS_COLL, adminRecId));
-            toast('Undo successful — attendance removed.');
+            toast('Undo successful — attendance removed.', 'warning');
             openAdminPreviewClass(classDoc.name);
           } else {
-            toast('Undo not available (deleteDoc missing).');
+            toast('Undo not available (deleteDoc missing).' , 'warning');
           }
         } catch(err){
           console.error('undo delete failed', err);
-          toast('Undo failed. See console.');
+          toast('Undo failed. See console.' , 'error', 3000);
         } finally {
           if(lastAdminSave && lastAdminSave.timeoutId) { clearTimeout(lastAdminSave.timeoutId); lastAdminSave = null; }
           hideUndo();
@@ -11249,7 +11734,7 @@ async function renderAdminEditor(classDoc, students, subjectName, dateVal, perio
 
     } catch(err){
       console.error('admin save attendance failed', err);
-      toast('Failed to save (see console).');
+      toast('Failed to save (see console).' , 'error', 3000);
     }
   };
 
@@ -11338,7 +11823,7 @@ const students =
       editor.querySelectorAll('.viewRec').forEach(b => b.onclick = async (ev) => {
         const id = ev.currentTarget.dataset.id;
         const snap = await getDoc(doc(db, ATT_RECORDS_COLL, id));
-        if(!snap.exists()) return toast('Record not found.');
+        if(!snap.exists()) return toast('Record not found.' , 'error', 3000);
         const rec = snap.data();
         // show modal with details
         const details = (rec.entries||[]).map(e => {
@@ -11351,7 +11836,7 @@ const students =
       editor.querySelectorAll('.editRec').forEach(b => b.onclick = async (ev) => {
         const id = ev.currentTarget.dataset.id;
         const snap = await getDoc(doc(db, ATT_RECORDS_COLL, id));
-        if(!snap.exists()) return toast('Record not found.');
+        if(!snap.exists()) return toast('Record not found.' , 'error', 3000);
         const rec = { id: snap.id, ...snap.data() };
         // To edit, we open the editor with the record content:
         // Build students list from class (we already have students param), and prefill flags map
@@ -11388,7 +11873,9 @@ const students =
 
   } catch(err){
     console.error('openAttendanceHistory failed', err);
-    toast('Failed to load history.');
+    toast('Failed to load history.' 
+      , 'error', 3000
+    );
   }
 }
 
@@ -11416,10 +11903,10 @@ async function renderAdminEditorWithMap(classDoc, students, subjectName, dateVal
         const subj = document.getElementById('editorSubject').value || '';
         const date = document.getElementById('editorDate').value || nowLocalISODate();
         const periods = Number(document.getElementById('editorPeriods').value || 2);
-        if(!subj) return toast('Select a subject before saving.');
+        if(!subj) return toast('Select a subject before saving.' , 'warning');
         // gather entries
         const rows = Array.from(document.querySelectorAll('.att-row-admin'));
-        if(rows.length === 0) return toast('No students loaded.');
+        if(rows.length === 0) return toast('No students loaded.', 'info');
         const entries = rows.map(r => {
           const sid = r.dataset.student;
           const chks = Array.from(r.querySelectorAll('.admin-att-chk')).filter(c => c.dataset.student === sid).sort((a,b)=>Number(a.dataset.period)-Number(b.dataset.period));
@@ -11439,11 +11926,11 @@ async function renderAdminEditorWithMap(classDoc, students, subjectName, dateVal
             editor_role: 'admin'
           };
           await setDoc(doc(db, ATT_RECORDS_COLL, recordId), data, { merge: true });
-          toast('Attendance updated (admin).');
+          toast('Attendance updated (admin).', 'success');
           openAdminPreviewClass(classDoc.name);
         } catch(err){
           console.error('update record failed', err);
-          toast('Update failed. See console.');
+          toast('Update failed. See console.' , 'error', 3000);
         }
       };
     }
@@ -11477,7 +11964,7 @@ async function exportAttendanceCSVorPDF(className, dateISO, subjectName = '', fo
         const csv = ['date,class,subject,studentId,status,note'].join(',') + '\n' + rowsOld.map(r => `${dateISO},${className},${r.subject||''},${r.studentId||''},${r.status||''},"${(r.note||'').replace(/"/g,'""')}"`).join('\n');
         const blob = new Blob([csv], { type: 'text/csv' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href=url; a.download=`attendance_${className}_${dateISO}.csv`; a.click(); URL.revokeObjectURL(url);
       }
-      toast('Export complete (legacy data).');
+      toast('Export complete (legacy data).' , 'success');
       return;
     }
 
@@ -11493,7 +11980,7 @@ async function exportAttendanceCSVorPDF(className, dateISO, subjectName = '', fo
       const lines = ['date,class,subject,studentId,present_count,periods,percent'];
       rows.forEach(rr => lines.push(`${rr.date},${rr.class},${rr.subject},${rr.studentId},${rr.present_count},${rr.periods},${rr.percent}`));
       const blob = new Blob([lines.join('\n')], { type: 'text/csv' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href=url; a.download=`attendance_${className}_${dateISO}.csv`; a.click(); URL.revokeObjectURL(url);
-      toast('CSV exported.');
+      toast('CSV exported.' , 'success');
     } else {
       const { jsPDF } = window.jspdf;
       const doc = new jsPDF({ unit:'pt', format:'a4' });
@@ -11501,12 +11988,12 @@ async function exportAttendanceCSVorPDF(className, dateISO, subjectName = '', fo
       const body = rows.map(r => [ r.date || '', r.class || '', r.subject || '', r.studentId || '', String(r.present_count||0), String(r.periods || ''), String(r.percent||0) ]);
       doc.autoTable({ startY: 110, head: [['Date','Class','Subject','StudentId','Present','Periods','%']], body, margin:{left:40, right:40}, styles:{fontSize:9} });
       doc.save(`attendance_${className}_${dateISO}.pdf`);
-      toast('PDF exported.');
+      toast('PDF exported.' , 'success');
     }
 
   } catch(err){
     console.error('exportAttendanceCSVorPDF failed', err);
-    toast('Export failed. See console.');
+    toast('Export failed. See console.' , 'error', 3000);
   }
 }
 
@@ -11537,7 +12024,7 @@ async function exportAllSubjectsForClass(className, format='pdf'){
         rows.push({ studentId: sid, studentName: p.studentName || '', subject: subj, percent: p.subjects[subj].percent || 0 });
       }
     }
-    if(rows.length === 0) return toast('No structured attendance records found for this class.');
+    if(rows.length === 0) return toast('No structured attendance records found for this class.' , 'info');
 
     if(format === 'csv'){
       const lines = ['studentId,studentName,subject,percent'];
@@ -11545,7 +12032,7 @@ async function exportAllSubjectsForClass(className, format='pdf'){
       const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a'); a.href = url; a.download = `attendance_${className}_subjects.csv`; a.click(); URL.revokeObjectURL(url);
-      toast('CSV exported.');
+      toast('CSV exported.' , 'success');
       return;
     } else {
       const { jsPDF } = window.jspdf;
@@ -11554,12 +12041,12 @@ async function exportAllSubjectsForClass(className, format='pdf'){
       const body = rows.map(r => [ r.studentId || '', r.studentName || '', r.subject || '', String(r.percent || 0) + '%' ]);
       doc.autoTable({ startY: 110, head: [['StudentId','StudentName','Subject','% Present']], body, margin:{left:40, right:40}, styles:{fontSize:9} });
       doc.save(`attendance_${className}_subjects.pdf`);
-      toast('PDF exported.');
+      toast('PDF exported.', 'success');
     }
 
   } catch(err){
     console.error('exportAllSubjectsForClass failed', err);
-    toast('Export failed. See console.');
+    toast('Export failed. See console.' , 'error', 3000);
   }
 }
 
@@ -11692,7 +12179,7 @@ async function renderUsers(){
       .filter(u => !u.deleted); // exclude soft-deleted
   }catch(err){
     console.error('load users failed', err);
-    toast('Failed to load users');
+    toast('Failed to load users' , 'error', 3000);
   }
 
   // sort users by role then email (superadmins first)
@@ -11868,7 +12355,7 @@ function openAddUserModal(){
     const email = modalBody.querySelector('#newUserEmail').value.trim();
     const name = modalBody.querySelector('#newUserName').value.trim();
     const role = modalBody.querySelector('#newUserRole').value;
-    if(!email) return toast('Email required');
+    if(!email) return toast('Email required', 'info');
     try{
       const payload = {
         email,
@@ -11878,12 +12365,12 @@ function openAddUserModal(){
         createdBy: (currentUser && currentUser.uid) || (auth && auth.currentUser && auth.currentUser.uid) || null
       };
       const ref = await addDoc(collection(db,'users'), payload);
-      toast('Admin added');
+      toast('Admin added' , 'success');
       closeModal();
       renderUsers();
     }catch(err){
       console.error('add admin failed', err);
-      toast('Failed to add');
+      toast('Failed to add' , 'error', 3000);
     }
   };
 }
@@ -11893,7 +12380,7 @@ async function openViewUserModal(e){
   if(!id) return;
   // find correct doc ref/snap
   const { ref, snap } = await getDocRefForId(id);
-  if(!snap || !snap.exists()) return toast('User not found');
+  if(!snap || !snap.exists()) return toast('User not found', 'info');
   const u = { id: snap.id, ...snap.data() };
 
   // determine actions allowed for current user
@@ -11933,7 +12420,7 @@ async function openEditUserModal(e){
   const id = (e && e.target && e.target.dataset && e.target.dataset.id) || (e && e.currentTarget && e.currentTarget.dataset && e.currentTarget.dataset.id);
   if(!id) return;
   const { ref, snap, collectionName } = await getDocRefForId(id);
-  if(!snap || !snap.exists()) return toast('User not found');
+  if(!snap || !snap.exists()) return toast('User not found', 'info');
   const u = { id: snap.id, ...snap.data() };
 
   // check permissions
@@ -11941,7 +12428,7 @@ async function openEditUserModal(e){
   const currentUid = authUser ? authUser.uid : '';
   const currentRole = localStorage.getItem('verifiedRole') || null;
   const perms = canPerformAction(currentRole, currentUid, u);
-  if(!perms.canEdit) return toast('You are not allowed to edit this user');
+  if(!perms.canEdit) return toast('You are not allowed to edit this user', 'warning');
 
   const html = `
     <div style="display:grid;grid-template-columns:1fr;gap:8px">
@@ -11967,7 +12454,7 @@ async function openEditUserModal(e){
     // UI-level re-check:
     const perms2 = canPerformAction(localStorage.getItem('verifiedRole'), currentUid, { ...u, role });
     if(!perms2.canEdit) {
-      toast('You are not allowed to perform this change');
+      toast('You are not allowed to perform this change', 'warning');
       return;
     }
 
@@ -11979,12 +12466,12 @@ async function openEditUserModal(e){
         updatedAt: Timestamp.now(),
         updatedBy: currentUid || null
       });
-      toast('Updated');
+      toast('Updated', 'success');
       closeModal();
       renderUsers();
     }catch(err){
       console.error('update admin failed', err);
-      toast('Failed to update');
+      toast('Failed to update', 'error', 3000);
     }
   };
 }
@@ -11993,14 +12480,14 @@ async function deleteUser(e){
   const id = (e && e.target && e.target.dataset && e.target.dataset.id) || (e && e.currentTarget && e.currentTarget.dataset && e.currentTarget.dataset.id);
   if(!id) return;
   const { ref, snap } = await getDocRefForId(id);
-  if(!snap || !snap.exists()) return toast('User not found');
+  if(!snap || !snap.exists()) return toast('User not found' , 'info');
   const u = { id: snap.id, ...snap.data() };
 
   const authUser = (typeof currentUser !== 'undefined' && currentUser) || (auth && auth.currentUser) || null;
   const currentUid = authUser ? authUser.uid : '';
   const currentRole = localStorage.getItem('verifiedRole') || null;
   const perms = canPerformAction(currentRole, currentUid, u);
-  if(!perms.canDelete) return toast('You are not allowed to delete this user');
+  if(!perms.canDelete) return toast('You are not allowed to delete this user' , 'warning');
 
   // Confirm
   if(!confirm('Move user to Recycle Bin? This is soft-delete and can be restored later.')) return;
@@ -12012,11 +12499,11 @@ async function deleteUser(e){
       deletedAt: Timestamp.now(),
       deletedBy: currentUid || null
     });
-    toast('Moved to Recycle Bin');
+    toast('Moved to Recycle Bin', 'info');
     renderUsers();
   }catch(err){
     console.error('delete admin failed', err);
-    toast('Failed to delete');
+    toast('Failed to delete', 'error', 3000);
   }
 }
 
