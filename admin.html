@@ -755,18 +755,32 @@
       <div id="studentsList"></div>
     </section>
 
-    <section id="pageClasses" class="page">
-    <!-- replace the existing pageClasses .page-header block with this -->
-<div class="page-header" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-  <div style="flex:1;min-width:140px;display:flex;gap:8px;align-items:center">
-    <input id="classSearch" type="search" placeholder="Search class name or ID..." style="flex:1;min-width:120px" />
-    <button id="openAddClass" class="btn btn-primary">+ Add Class</button>
-  </div>
-  <div style="min-width:160px;text-align:right;font-weight:700">
-    <span id="classesTotalCount">Total classes: 0</span>
-  </div>
-</div>
-
+    <section id="pageClasses" class="page" style="padding:12px">
+      <style>
+        /* hide the desktop-only header on small screens to avoid duplicate search/total */
+        @media (max-width: 900px) {
+          .desktop-only-header { display: none !important; }
+        }
+        /* hide mobile-only header on large screens (mobile UI is created by renderClasses()) */
+        @media (min-width: 901px) {
+          .mobile-only-header { display: none !important; }
+        }
+      </style>
+    
+      <!-- Desktop single header (search + add + move all on one line) -->
+      <div class="page-header desktop-only-header" style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:nowrap;">
+        <div style="display:flex;align-items:center;gap:8px;min-width:320px;flex:1">
+          <input id="classSearch" type="search" placeholder="Search class name or students..." style="flex:1;min-width:180px;padding:8px;border:1px solid #e6eef8;border-radius:6px" />
+          <button id="openAddClassDesktop" class="btn btn-primary" style="white-space:nowrap">+ Add class</button>
+          <button id="openMoveAllDesktop" class="btn btn-ghost">Move all</button>
+        </div>
+    
+        <!-- total count on the right for desktop -->
+        <div style="min-width:200px;text-align:right;font-weight:700">
+        </div>
+      </div>
+    
+      <!-- container populated by renderClasses() -->
       <div id="classesList"></div>
     </section>
 
