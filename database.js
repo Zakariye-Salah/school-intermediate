@@ -2300,6 +2300,8 @@ async function sendResetEmailFor(email) {
 
 /* ---------- Improved renderClasses + Move Students modal & logic ---------- */
 
+
+/* ---------- FIXED: renderClasses (mobile header lines, mobile "more" actions, desktop minimal rows) ---------- */
 function renderClasses(){
   if(!classesList) return;
   const q = (classSearch && classSearch.value||'').trim().toLowerCase();
@@ -2313,7 +2315,7 @@ function renderClasses(){
   const total = list.length;
   const mobile = isMobileViewport();
 
-  // Original add button handling (hide on mobile)
+  // add button display toggle (originalAddBtn)
   const originalAddBtn = openAddClass || document.getElementById('openAddClass') || null;
   if(mobile){
     if(originalAddBtn) originalAddBtn.style.display = 'none';
@@ -2321,15 +2323,20 @@ function renderClasses(){
     if(originalAddBtn) originalAddBtn.style.display = '';
   }
 
-  // Mobile view (kept but simplified)
+  // MOBILE: first line search + add, second line total + move all
   if(mobile){
-    let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-      <div style="display:flex;gap:8px;flex:1;align-items:center">
-        <input id="classSearchMobile" class="input" placeholder="Search class name or id..." style="flex:1" value="${escape(classSearch?.value || '')}" />
-        <button id="openAddClassMobile" class="btn btn-primary btn-sm">+ Add</button>
+    let html = `
+      <div style="margin-bottom:8px">
+        <div style="display:flex;gap:8px;align-items:center">
+          <input id="classSearchMobile" class="input" placeholder="Search class name or id..." style="flex:1" value="${escape(classSearch?.value || '')}" />
+          <button id="openAddClassMobile" class="btn btn-primary btn-sm">+ Add</button>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px">
+          <div style="font-weight:700">Total: ${total}</div>
+          <div><button id="openMoveAllMobile" class="btn btn-ghost btn-sm">Move all</button></div>
+        </div>
       </div>
-      <div style="margin-left:12px;font-weight:700">Total: ${total}</div>
-    </div>`;
+    `;
 
     html += `<div id="classesMobileList">`;
     list.forEach((c, idx) => {
@@ -2344,41 +2351,59 @@ function renderClasses(){
           <div style="display:flex;gap:10px;align-items:center;flex:1;min-width:0">
             <div style="min-width:28px;text-align:center;font-weight:700">${idx+1}</div>
             <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:800">${name}</div>
-            <div style="font-size:12px;font-weight:600;margin-left:6px;color:#059669">Total: ${studentsCount}</div>
+            <div style="font-size:12px;color:#64748b;margin-left:6px">Subjects ${subjectsCount}</div>
           </div>
 
           <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
-            <div style="font-size:11px;padding:4px 8px;border-radius:999px;color:#fff;background:#7c3aed;font-weight:700">Subjects ${subjectsCount}</div>
-            <div style="margin-top:6px">
-              <button class="btn btn-ghost btn-sm mobile-class-view" data-id="${id}">View</button>
-              <button class="btn btn-ghost btn-sm mobile-move" data-id="${id}">Move</button>
-            </div>
+            <button class="btn btn-ghost btn-sm mobile-more" data-id="${id}">⋮</button>
           </div>
         </div>
 
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px">
-          <div style="font-size:12px;color:#60a5fa">ID: ${id}</div>
+          <div style="font-size:12px;color:#6b7280">ID: ${id}</div>
+          <div style="font-size:12px;color:#059669">Students ${studentsCount}</div>
         </div>
       </div>`;
     });
     html += `</div>`;
     classesList.innerHTML = html;
 
-    // mobile handlers
-    document.getElementById('openAddClassMobile')?.addEventListener('click', () => {
-      if(typeof openAddClass === 'function') openAddClass();
-      else document.getElementById('openAddClass')?.click();
-    });
+    document.getElementById('openAddClassMobile')?.addEventListener('click', () => { if(typeof openAddClass === 'function') openAddClass(); else document.getElementById('openAddClass')?.click(); });
+    document.getElementById('openMoveAllMobile')?.addEventListener('click', () => openMoveStudentsModal());
+
     const searchMobile = document.getElementById('classSearchMobile');
     if(searchMobile) searchMobile.oninput = (ev) => { if(classSearch) classSearch.value = ev.target.value; renderClasses(); };
 
-    classesList.querySelectorAll('.mobile-class-view').forEach(b => b.onclick = (ev) => openViewClassModal({ target:{ dataset:{ id: ev.currentTarget.dataset.id } } }));
-    classesList.querySelectorAll('.mobile-move').forEach(b => b.onclick = (ev) => openMoveStudentsModal(ev.currentTarget.dataset.id));
+    // mobile "more" buttons open a small action modal
+    classesList.querySelectorAll('.mobile-more').forEach(btn => {
+      btn.onclick = (ev) => {
+        const cid = ev.currentTarget.dataset.id;
+        showModal('Actions', `
+          <div style="display:flex;flex-direction:column;gap:8px;padding:6px">
+            <button id="mView" class="btn btn-ghost">View</button>
+            <button id="mEdit" class="btn btn-ghost">Edit</button>
+            <button id="mDelete" class="btn btn-danger">Delete</button>
+            <button id="mMove" class="btn btn-ghost">Move students</button>
+            <button id="mFee" class="btn btn-ghost">Set fee</button>
+            <button id="mTT" class="btn btn-ghost">Timetable</button>
+            <div style="display:flex;justify-content:flex-end"><button id="mClose" class="btn btn-ghost">Close</button></div>
+          </div>
+        `);
+        const root = (typeof modalBody !== 'undefined' && modalBody) ? modalBody : document;
+        root.querySelector('#mView')?.addEventListener('click', ()=>{ closeModal(); openViewClassModal({ target:{ dataset:{ id: cid } } }); });
+        root.querySelector('#mEdit')?.addEventListener('click', ()=>{ closeModal(); if(typeof openEditClassModal==='function') openEditClassModal({ currentTarget:{ dataset:{ id: cid } } }); else openEditClassModal && openEditClassModal(cid); });
+        root.querySelector('#mDelete')?.addEventListener('click', async ()=>{ const ok = await modalConfirm('Delete Class', `Move <strong>${escape(cid)}</strong> to Recycle Bin?`); if(!ok) return; try{ await deleteClass({ target:{ dataset:{ id: cid } } }); await loadClasses(); renderClasses(); closeModal(); }catch(err){ console.error(err); toast('Delete failed'); } });
+        root.querySelector('#mMove')?.addEventListener('click', ()=>{ closeModal(); openMoveStudentsModal(cid); });
+        root.querySelector('#mFee')?.addEventListener('click', ()=>{ closeModal(); openSetFeeModal(cid); });
+        root.querySelector('#mTT')?.addEventListener('click', ()=>{ closeModal(); openTimetableModal(cid); });
+        root.querySelector('#mClose')?.addEventListener('click', closeModal);
+      };
+    });
 
     return;
   }
 
-  // Desktop table with nicer action buttons and Move All at top
+  // DESKTOP: single header (no duplicates), class name cell contains id and subjects count (muted), actions visible
   let html = `
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:12px">
       <div style="display:flex;gap:12px;align-items:center">
@@ -2407,13 +2432,17 @@ function renderClasses(){
     const id = escape(c.id || '');
     const name = escape(c.name || '');
     const totalStudents = countStudentsInClass(c.name || '') || 0;
+    const subjectsCount = (c.subjects || []).length;
 
     html += `<tr style="border-bottom:1px solid #f1f5f9">
       <td style="padding:8px;vertical-align:middle">${idx+1}</td>
       <td style="padding:8px;vertical-align:middle">${id}</td>
-      <td style="padding:8px;vertical-align:middle">${name}</td>
-      <td style="padding:8px;vertical-align:middle">${totalStudents}</td>
       <td style="padding:8px;vertical-align:middle">
+        <div style="font-weight:700">${name}</div>
+        <div style="font-size:12px;color:#64748b">ID: ${id} • Subjects: ${subjectsCount}</div>
+      </td>
+      <td style="padding:8px;vertical-align:middle">${totalStudents}</td>
+      <td style="padding:8px;vertical-align:middle;display:flex;gap:6px;flex-wrap:wrap">
         <button class="btn btn-ghost btn-sm view-class" data-id="${id}" title="View">View</button>
         <button class="btn btn-ghost btn-sm edit-class" data-id="${id}" title="Edit">Edit</button>
         <button class="btn btn-danger btn-sm del-class" data-id="${id}" title="Delete">Delete</button>
@@ -2429,31 +2458,24 @@ function renderClasses(){
 
   // top-level buttons
   document.getElementById('openMoveAllBtn')?.addEventListener('click', () => openMoveStudentsModal());
-  document.getElementById('openAddClassBtnDesktop')?.addEventListener('click', () => {
-    if(typeof openAddClass === 'function') openAddClass();
-    else document.getElementById('openAddClass')?.click();
-  });
+  document.getElementById('openAddClassBtnDesktop')?.addEventListener('click', () => { if(typeof openAddClass === 'function') openAddClass(); else document.getElementById('openAddClass')?.click(); });
 
   // wire desktop actions
   classesList.querySelectorAll('.view-class').forEach(b=> b.onclick = openViewClassModal);
-  classesList.querySelectorAll('.edit-class').forEach(b=> b.onclick = openEditClassModal);
+  classesList.querySelectorAll('.edit-class').forEach(b=> b.onclick = (ev) => { const id = ev.currentTarget.dataset.id; if(typeof openEditClassModal==='function') openEditClassModal({ currentTarget:{ dataset:{ id } } }); else openEditClassModal && openEditClassModal(id); });
   classesList.querySelectorAll('.del-class').forEach(b=> b.onclick = async (ev) => {
     const id = ev.currentTarget.dataset.id;
     const ok = await modalConfirm('Delete Class', `Are you sure you want to move <strong>${escape(id)}</strong> to Recycle Bin?`);
     if(!ok) return;
     setButtonLoading(ev.currentTarget, true, 'Deleting...');
-    try {
-      await deleteClass({ target: { dataset: { id } } });
-      await loadClasses(); renderClasses();
-    } finally {
-      setButtonLoading(ev.currentTarget, false);
-    }
+    try { await deleteClass({ target: { dataset: { id } } }); await loadClasses(); renderClasses(); } finally { setButtonLoading(ev.currentTarget, false); }
   });
 
   classesList.querySelectorAll('.move-class').forEach(b=> b.onclick = (ev) => openMoveStudentsModal(ev.currentTarget.dataset.id));
   classesList.querySelectorAll('.fee-class').forEach(b=> b.onclick = (ev) => openSetFeeModal(ev.currentTarget.dataset.id));
-  classesList.querySelectorAll('.timetable-class').forEach(b=> b.onclick = (ev) => openTimetableModal(ev.currentTarget.dataset.id));
+  classesList.querySelectorAll('.timetable-class').forEach(b=> b.onclick = (ev) => openTimetableModal(ev.currentCurrent?.dataset?.id || ev.currentTarget.dataset.id));
 }
+
 
 /* ---------- Open Move Students Modal ---------- 
    - if sourceClassId provided, pre-select it in From list
@@ -2689,248 +2711,222 @@ async function openMoveStudentsModal(sourceClassId){
   $m('#mvCancel').onclick = closeModal;
 }
 
-
-/* ---------- NEW: Full-screen / large Class View modal ---------- */
+/* ---------- FIXED: openViewClassModal (single header, counters left, reliable handlers) ---------- */
 async function openViewClassModal(e){
-  // accept event or id string
-  const id = (e && e.target && e.target.dataset) ? e.target.dataset.id : (e && e.dataset ? e.dataset.id : e);
+  const id = (e && e.target && e.target.dataset && e.target.dataset.id) ? e.target.dataset.id
+           : (e && e.dataset && e.dataset.id) ? e.dataset.id
+           : e;
   if(!id) return toast && toast('Class not found');
-  const c = classesCache.find(x => x.id === id || x.name === id);
+
+  const c = (classesCache || []).find(x => x.id === id || x.name === id);
   if(!c) return toast && toast('Class not found');
 
-  // students assigned
   const assigned = (studentsCache || []).filter(s => (s.classId || '') === (c.name || c.id || ''));
-  // teachers assigned to this class (match teacher.assignments or teacher.classes if present)
   const teachersAssigned = (teachersCache || []).filter(t => {
-    // prefer explicit class assignment field; fallback to subjects mapping
     if(t.classIds && Array.isArray(t.classIds)) return t.classIds.includes(c.name) || t.classIds.includes(c.id);
-    // fallback: teacher.subjects overlap
     if(c.subjects && t.subjects) return t.subjects.some(sub => c.subjects.includes(sub));
     return false;
   });
 
-  // build students list (checkboxes + compact rows with expandable details)
-  const studentsRows = assigned.map((s,i) => `
-    <tr style="border-bottom:1px solid #f1f5f9">
-      <td style="padding:8px"><input type="checkbox" class="class-stu-chk" data-id="${escape(s.studentId||s.id||'')}" /></td>
-      <td style="padding:8px">${i+1}</td>
-      <td style="padding:8px">${escape(s.fullName||'')}</td>
-      <td style="padding:8px">${escape(String(s.studentId||'').slice(-4))}</td>
-      <td style="padding:8px">${(s.attendancePercent!=null) ? `${s.attendancePercent}%` : '—'}</td>
-      <td style="padding:8px">
-        <button class="btn btn-ghost btn-sm view-student" data-id="${escape(s.id||s.studentId||'')}">View</button>
-        <button class="btn btn-ghost btn-sm remove-student" data-id="${escape(s.id||s.studentId||'')}">Remove</button>
-      </td>
-    </tr>
-  `).join('');
+  // inject small CSS (once)
+  if(!document.getElementById('class-view-styles')){
+    const style = document.createElement('style');
+    style.id = 'class-view-styles';
+    style.innerHTML = `
+      .cv-root { display:flex;flex-direction:column;gap:12px;max-height:88vh;overflow:auto;font-family:Inter,system-ui,Arial,Helvetica,sans-serif }
+      .cv-header { display:flex;justify-content:space-between;align-items:center;gap:12px; padding-bottom:6px; border-bottom:1px solid #eef2f7 }
+      .cv-title { font-weight:800;font-size:18px }
+      .cv-actions { display:flex;gap:8px;align-items:center }
+      .cv-primary { display:flex;gap:8px;flex-wrap:wrap }
+      .cv-tabs { display:flex;gap:8px;margin-top:8px }
+      .cv-tab { padding:8px 12px;border-radius:8px;cursor:pointer;border:1px solid transparent; user-select:none }
+      .cv-tab.active { background:#0ea5e9;color:#fff }
+      .cv-panel { background:#fff;padding:12px;border-radius:8px;box-shadow:0 6px 18px rgba(2,6,23,0.04); margin-top:8px }
+      .cv-row { padding:10px;border-bottom:1px solid #f1f5f9;display:flex;align-items:center;gap:12px }
+      .cv-left-index { width:36px; text-align:left; font-weight:700; color:#0f172a }
+      .cv-item-main { flex:1; min-width:0 }
+      .cv-meta { color:#64748b;font-size:13px; margin-top:4px }
+      .cv-actions-inline { display:flex;gap:8px; align-items:center }
+      .cv-bottom-actions { position:sticky;bottom:12px;left:0;right:0;display:flex;justify-content:center;gap:12px;padding:12px;background:linear-gradient(180deg, rgba(255,255,255,0), rgba(255,255,255,0.96)); }
+      .cv-btn-edit { background:#0ea5e9;color:#fff;border-radius:8px;padding:10px 16px;border:0; cursor:pointer }
+      .cv-btn-delete { background:#ef4444;color:#fff;border-radius:8px;padding:10px 16px;border:0; cursor:pointer }
+      .subject-id-blue { color:#0ea5e9; font-weight:600; font-size:13px; }
+      @media(max-width:900px){ .cv-primary .btn { min-width:72px } .cv-row { flex-direction:column;align-items:flex-start } .cv-actions-inline{ margin-top:8px } }
+      .muted { color:#6b7280 }
+    `;
+    document.head.appendChild(style);
+  }
 
-  const teachersRows = teachersAssigned.map(t => `
-    <div style="padding:8px;border-bottom:1px solid #f1f5f9;display:flex;justify-content:space-between;align-items:center">
-      <div>
-        <div style="font-weight:700">${escape(t.fullName||t.name||'')}</div>
-        <div class="muted">ID: ${escape(t.id||t.teacherId||'')}</div>
-        <div class="muted">Subjects: ${escape((t.subjectName || t.subjects || []).toString() || '')}</div>
-        <div class="muted">Salary: ${escape(t.salary || '—')}</div>
+  // Build subjects using real subject ids from subjectsCache when present
+  const subjectsList = (c.subjects || []).map((subName) => {
+    // subName could be a name or id depending on your data
+    let subObj = null;
+    if(Array.isArray(subjectsCache)){
+      subObj = subjectsCache.find(s => (s.name && String(s.name).trim() === String(subName).trim()) || (s.id && String(s.id) === String(subName)) || (s.subjectId && String(s.subjectId) === String(subName)));
+    }
+    return {
+      displayName: subObj ? (subObj.name || subName) : subName,
+      realId: subObj ? (subObj.id || subObj.subjectId || '') : ''
+    };
+  });
+
+  // subjects HTML — minimal styling, subject id in blue only (no extra background/padding/rounded)
+  const subjectsHtml = subjectsList.length ? subjectsList.map((s,i)=> `
+    <div class="cv-row" data-sub="${i}">
+      <div class="cv-left-index">${i+1}</div>
+      <div class="cv-item-main">
+        <div style="font-weight:700">${escape(s.displayName)}</div>
+        ${s.realId ? `<div class="cv-meta subject-id-blue">${escape(s.realId)}</div>` : `<div class="cv-meta">${escape(s.displayName)}</div>`}
       </div>
-      <div style="display:flex;flex-direction:column;gap:6px">
-        <button class="btn btn-ghost btn-sm view-teacher" data-id="${escape(t.id||t.teacherId||'')}">View</button>
-        <button class="btn btn-ghost btn-sm unassign-teacher" data-id="${escape(t.id||t.teacherId||'')}">Unassign</button>
+      <div class="cv-actions-inline cv-meta">${i+1}</div>
+    </div>
+  `).join('') : `<div class="muted">No subjects assigned</div>`;
+
+  const studentsHtml = (assigned.length ? assigned.map((st,i)=> `
+    <div class="cv-row" data-student-id="${escape(st.studentId||st.id||'')}">
+      <div class="cv-left-index">${i+1}</div>
+      <div class="cv-item-main">
+        <div style="font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escape(st.fullName||'—')}</div>
+        <div class="cv-meta">ID: ${escape(st.studentId||st.id||'—')}${(typeof st.fee !== 'undefined' && st.fee !== null) ? ` • Fee: ${escape(String(st.fee))}` : ''}</div>
+      </div>
+      <div class="cv-actions-inline">
+        <button class="btn btn-ghost btn-sm view-student" data-id="${escape(st.studentId||st.id||'')}">View</button>
       </div>
     </div>
-  `).join('');
+  `).join('') : `<div class="muted">No students</div>`);
+
+  const teachersHtml = (teachersAssigned.length ? teachersAssigned.map((t,i)=> {
+    const assignedToThisClass = (t.subjects || []).filter(s => (c.subjects || []).includes(s));
+    return `
+      <div class="cv-row" data-teacher-id="${escape(t.id||t.teacherId||'')}">
+        <div class="cv-left-index">${i+1}</div>
+        <div class="cv-item-main">
+          <div style="font-weight:700">${escape(t.fullName||t.name||'—')}</div>
+          <div class="cv-meta">ID: ${escape(t.id||t.teacherId||'—')} • Salary: ${escape(t.salary||'—')}</div>
+          <div class="cv-meta">Subjects for this class: ${assignedToThisClass.length ? escape(assignedToThisClass.join(', ')) : '—'}</div>
+        </div>
+        <div class="cv-actions-inline">
+          <button class="btn btn-ghost btn-sm view-teacher" data-id="${escape(t.id||t.teacherId||'')}">View</button>
+        </div>
+      </div>
+    `;
+  }).join('') : `<div class="muted">No teachers</div>`);
 
   const html = `
-    <div style="display:flex;flex-direction:column;gap:8px;height:100%;max-height:90vh;overflow:auto">
-      <div style="display:flex;justify-content:space-between;align-items:center">
-        <div style="display:flex;gap:12px;align-items:center">
-          <button id="classBackBtn" class="btn btn-ghost">← Back to classes</button>
-          <div>
-            <div style="font-size:18px;font-weight:800">Class — ${escape(c.name||'')}</div>
-            <div class="muted">ID: ${escape(c.id||'')}</div>
-          </div>
+    <div class="cv-root">
+      <div class="cv-header">
+        <div>
+          <div class="cv-title">${escape(c.name||'')}</div>
+          <div class="cv-meta">ID: ${escape(c.id||'')}</div>
         </div>
-        <div style="display:flex;gap:8px">
-          <button id="classAssignTeacherBtn" class="btn btn-ghost">Assign teacher</button>
-          <button id="classMoveBtn" class="btn btn-ghost">Move students</button>
-          <button id="classFeeBtn" class="btn btn-ghost">Set fee</button>
-          <button id="classTimetableBtn" class="btn btn-ghost">Timetable</button>
-          <button id="classEditBtn" class="btn btn-ghost">Edit</button>
-          <button id="classDeleteBtn" class="btn btn-danger">Delete</button>
+        <div class="cv-actions">
+          <div class="cv-primary">
+            <button id="cvMoveBtn" class="btn">Move students</button>
+            <button id="cvFeeBtn" class="btn">Set fee</button>
+            <button id="cvTTBtn" class="btn">Timetable</button>
+          </div>
         </div>
       </div>
 
-      <div style="display:grid;grid-template-columns:320px 1fr 360px;gap:12px;align-items:start">
-        <!-- SUMMARY (left) -->
-        <div style="background:#fff;padding:12px;border-radius:8px;box-shadow:var(--card-shadow,none)">
-          <div style="margin-bottom:8px"><strong>Summary</strong></div>
-          <div><strong>Class ID</strong><div class="muted">${escape(c.id||'')}</div></div>
-          <div style="margin-top:8px"><strong>Class name</strong>
-            <div><input id="inlineClassName" value="${escape(c.name||'')}" style="width:100%"/></div>
+      <div class="cv-tabs" role="tablist">
+        <div id="tabSubjects" class="cv-tab active" role="tab">Subjects</div>
+        <div id="tabStudents" class="cv-tab" role="tab">Students</div>
+        <div id="tabTeachers" class="cv-tab" role="tab">Teachers</div>
+      </div>
+
+      <div class="cv-panel">
+        <div id="cvSubjectsArea" style="display:block">
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
+            <div style="font-weight:700">Subjects</div>
+            <div class="muted">${subjectsList.length} total</div>
           </div>
-          <div style="margin-top:8px"><strong>Total students</strong><div class="muted">${assigned.length}</div></div>
-          <div style="margin-top:8px"><strong>Subjects</strong><div class="muted">${escape((c.subjects||[]).join(', ') || 'No subjects')}</div></div>
-          <div style="margin-top:8px"><strong>Quick stats</strong>
-            <div class="muted">Attendance: ${computeAverageAttendance(assigned)}% · Timetable: ${hasTimetable(c.id) ? 'Yes' : 'No'} · Fees: ${hasFeesForClass(c.id) ? 'Yes' : 'No'}</div>
-          </div>
+          ${subjectsHtml}
         </div>
 
-        <!-- STUDENTS (middle) -->
-        <div style="background:#fff;padding:12px;border-radius:8px;overflow:auto">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-            <div style="display:flex;gap:8px;align-items:center">
-              <input id="classSelectAll" type="checkbox" /> <span style="font-weight:700">Select all</span>
-              <input id="classStudentSearch" class="input" placeholder="Search students..." style="margin-left:8px" />
-            </div>
-            <div style="display:flex;gap:8px">
-              <button id="moveSelectedBtn" class="btn btn-ghost">Move selected</button>
-              <button id="feeSelectedBtn" class="btn btn-ghost">Set fee</button>
-              <button id="exportSelectedBtn" class="btn btn-ghost">Export selected</button>
-            </div>
+        <div id="cvStudentsArea" style="display:none">
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
+            <div style="font-weight:700">Students</div>
+            <div class="muted">${assigned.length} total</div>
           </div>
-
-          <div style="overflow:auto">
-            <table style="width:100%;border-collapse:collapse">
-              <thead><tr style="border-bottom:1px solid #e6eef8"><th></th><th>No</th><th>Name</th><th>ID</th><th>Attendance</th><th>Actions</th></tr></thead>
-              <tbody id="classStudentsTbody">${studentsRows || '<tr><td colspan="6" class="muted">No students</td></tr>'}</tbody>
-            </table>
-          </div>
+          ${studentsHtml}
         </div>
 
-        <!-- TEACHERS & ACTIONS (right) -->
-        <div style="background:#fff;padding:12px;border-radius:8px;overflow:auto">
-          <div style="display:flex;justify-content:space-between;align-items:center">
-            <strong>Teachers (${teachersAssigned.length})</strong>
-            <button id="assignTeacherBtn" class="btn btn-ghost btn-sm">Assign</button>
+        <div id="cvTeachersArea" style="display:none">
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
+            <div style="font-weight:700">Teachers</div>
+            <div class="muted">${teachersAssigned.length} total</div>
           </div>
-          <div style="margin-top:8px">${teachersRows || '<div class="muted">No teachers</div>'}</div>
+          ${teachersHtml}
         </div>
+      </div>
+
+      <div class="cv-bottom-actions">
+        <button id="cvEditBtn" class="cv-btn-edit">Edit</button>
+        <button id="cvDeleteBtn" class="cv-btn-delete">Delete</button>
       </div>
     </div>
   `;
 
-  // show modal: full screen feel (caller decides modal style)
   showModal(`Class — ${escape(c.name||'')}`, html);
 
-  // Back / close
-  document.getElementById('classBackBtn').onclick = () => closeModal();
+  const modalRoot = (typeof modalBody !== 'undefined' && modalBody) ? modalBody : document;
+  const el = (idStr) => modalRoot.querySelector && modalRoot.querySelector(`#${idStr}`);
+  el('cvMoveBtn') && (el('cvMoveBtn').onclick = () => openMoveStudentsModal(c.id));
+  el('cvFeeBtn') && (el('cvFeeBtn').onclick = () => openSetFeeModal(c.id));
+  el('cvTTBtn') && (el('cvTTBtn').onclick = () => openTimetableModal(c.id));
 
-  // Inline edit save
-  document.getElementById('classEditBtn').onclick = () => {
-    document.getElementById('inlineClassName').disabled = false;
-    const saveBtn = document.createElement('button'); saveBtn.className='btn btn-primary'; saveBtn.textContent='Save';
-    saveBtn.onclick = async () => {
-      setButtonLoading(saveBtn, true, 'Saving...');
-      try {
-        const newName = document.getElementById('inlineClassName').value.trim();
-        if(!newName) return toast('Class name required');
-        await updateDoc(doc(db,'classes', c.id), { name: newName });
-        await loadClasses(); renderClasses();
-        toast('Class updated');
-        closeModal();
-      } catch(err){ console.error(err); toast('Update failed'); }
-      setButtonLoading(saveBtn, false);
-    };
-    // append save next to edit button (simple UX)
-    const parent = document.getElementById('classEditBtn').parentElement;
-    parent.appendChild(saveBtn);
-  };
+  function setActiveTab(name){
+    ['Subjects','Students','Teachers'].forEach(tn => {
+      const tabEl = modalRoot.querySelector(`#tab${tn}`);
+      const panel = modalRoot.querySelector(`#cv${tn}Area`);
+      if(tabEl) tabEl.classList.toggle('active', tn === name);
+      if(panel) panel.style.display = (tn === name) ? 'block' : 'none';
+    });
+  }
+  modalRoot.querySelector('#tabSubjects')?.addEventListener('click', () => setActiveTab('Subjects'));
+  modalRoot.querySelector('#tabStudents')?.addEventListener('click', () => setActiveTab('Students'));
+  modalRoot.querySelector('#tabTeachers')?.addEventListener('click', () => setActiveTab('Teachers'));
 
-  // Delete uses modalConfirm and loadingButton
-  document.getElementById('classDeleteBtn').onclick = async () => {
-    const ok = await modalConfirm('Delete class', `Move <strong>${escape(c.name||'')}</strong> to Recycle Bin?`);
-    if(!ok) return;
-    setButtonLoading(document.getElementById('classDeleteBtn'), true, 'Deleting...');
-    try {
-      await deleteClass({ target: { dataset: { id: c.id } } });
-      closeModal();
-    } catch(err){ console.error(err); toast('Delete failed'); }
-    setButtonLoading(document.getElementById('classDeleteBtn'), false);
-  };
+  // delegation for internal buttons
+  modalRoot.addEventListener('click', function delegatedClassView(ev){
+    const t = ev.target;
+    if(!t) return;
+    const vs = t.closest && t.closest('.view-student');
+    if(vs){ const sid = vs.dataset.id; if(typeof openViewStudentModal === 'function') openViewStudentModal({ target: { dataset: { id: sid } } }); else window.location.href = `student.html?studentId=${encodeURIComponent(sid)}`; return; }
+    const vt = t.closest && t.closest('.view-teacher');
+    if(vt){ const tid = vt.dataset.id; if(typeof openViewTeacherModal === 'function') openViewTeacherModal({ target: { dataset: { id: tid } } }); else window.location.href = `teacher.html?teacherId=${encodeURIComponent(tid)}`; return; }
+    if(t.id === 'cvEditBtn' || (t.closest && t.closest('#cvEditBtn'))){
+      if(typeof openEditClassModal === 'function'){ try{ openEditClassModal({ currentTarget:{ dataset:{ id: c.id } } }); }catch(e){ try{ openEditClassModal(c.id); }catch(_){} } return; }
+      showModal('Edit class name', `<div><label>Class name</label><div><input id="plainClassName" value="${escape(c.name||'')}" style="width:100%;padding:8px;border:1px solid #e6eef8;border-radius:6px" /></div></div><div style="margin-top:10px;display:flex;justify-content:flex-end;gap:8px"><button id="plainEditCancel" class="btn btn-ghost">Cancel</button><button id="plainEditSave" class="btn btn-primary">Save</button></div>`);
+      const root = (typeof modalBody !== 'undefined' && modalBody) ? modalBody : document;
+      root.querySelector('#plainEditCancel')?.addEventListener('click', closeModal);
+      root.querySelector('#plainEditSave')?.addEventListener('click', async (ev) => {
+        const btn = ev.currentTarget; setButtonLoading(btn,true,'Saving...');
+        const newName = (root.querySelector('#plainClassName')?.value||'').trim();
+        if(!newName){ toast('Class name required'); setButtonLoading(btn,false); return; }
+        try{ await updateDoc(doc(db,'classes', c.id), { name: newName }); await loadClasses(); renderClasses(); toast('Class updated'); closeModal(); } catch(err){ console.error(err); toast('Update failed'); }
+        setButtonLoading(btn,false);
+      });
+      return;
+    }
+    if(t.id === 'cvDeleteBtn' || (t.closest && t.closest('#cvDeleteBtn'))){
+      (async ()=>{
+        const ok = await modalConfirm('Delete class', `Move <strong>${escape(c.name||'')}</strong> to Recycle Bin?`);
+        if(!ok) return;
+        const btn = modalRoot.querySelector('#cvDeleteBtn'); setButtonLoading(btn,true,'Deleting...');
+        try{ await deleteClass({ target:{ dataset:{ id: c.id } } }); closeModal(); } catch(err){ console.error(err); toast('Delete failed'); }
+        setButtonLoading(btn,false);
+      })();
+      return;
+    }
+  }, { once:false });
 
-  // Student actions wiring (delegated)
-  modalBody.querySelectorAll('.view-student').forEach(b => b.onclick = ev => {
-    const sid = ev.currentTarget.dataset.id;
-    // open student page — reuse existing navigation
-    window.location.href = `student.html?studentId=${encodeURIComponent(sid)}`;
-  });
-  modalBody.querySelectorAll('.remove-student').forEach(b => b.onclick = async (ev) => {
-    const sid = ev.currentTarget.dataset.id;
-    const ok = await modalConfirm('Unassign student', `Remove student <strong>${escape(sid)}</strong> from ${escape(c.name)}?`);
-    if(!ok) return;
-    setButtonLoading(ev.currentTarget, true, 'Removing...');
-    try {
-      // update student doc classId -> null (or '')
-      await updateDoc(doc(db,'students', sid), { classId: null });
-      await loadStudents(); renderClasses(); closeModal();
-    } catch(err){ console.error(err); toast('Failed'); }
-    setButtonLoading(ev.currentTarget, false);
-  });
-
-  // Teachers wiring
-  modalBody.querySelectorAll('.view-teacher').forEach(b => b.onclick = ev => {
-    const tid = ev.currentTarget.dataset.id;
-    // open teacher page
-    window.location.href = `teacher.html?teacherId=${encodeURIComponent(tid)}`;
-  });
-  modalBody.querySelectorAll('.unassign-teacher').forEach(b => b.onclick = async (ev) => {
-    const tid = ev.currentTarget.dataset.id;
-    const ok = await modalConfirm('Unassign teacher', `Unassign teacher <strong>${escape(tid)}</strong> from ${escape(c.name)}?`);
-    if(!ok) return;
-    setButtonLoading(ev.currentTarget, true, 'Unassigning...');
-    try {
-      // TODO: adjust this to however you store teacher assignments; this is a generic example
-      await updateDoc(doc(db,'teachers', tid), { classIds: arrayRemove(c.name) });
-      await loadTeachers(); closeModal(); renderClasses();
-    } catch(err){ console.error(err); toast('Failed'); }
-    setButtonLoading(ev.currentTarget, false);
-  });
-
-  // Bulk controls
-  const selectAll = document.getElementById('classSelectAll');
-  selectAll && (selectAll.onclick = (ev) => {
-    const checked = ev.target.checked;
-    modalBody.querySelectorAll('.class-stu-chk').forEach(ch => ch.checked = checked);
-  });
-
-  document.getElementById('moveSelectedBtn').onclick = () => {
-    const sel = Array.from(modalBody.querySelectorAll('.class-stu-chk:checked')).map(i => i.dataset.id);
-    if(sel.length === 0) return toast('No students selected');
-    openMoveStudentsModal(c.id, sel);
-  };
-  document.getElementById('feeSelectedBtn').onclick = () => {
-    const sel = Array.from(modalBody.querySelectorAll('.class-stu-chk:checked')).map(i => i.dataset.id);
-    openSetFeeModal(c.id, sel.length ? sel : null); // if no specific, inside modal default all
-  };
-
-  document.getElementById('classMoveBtn').onclick = () => openMoveStudentsModal(c.id);
-  document.getElementById('classFeeBtn').onclick = () => openSetFeeModal(c.id);
-  document.getElementById('classTimetableBtn').onclick = () => openTimetableModal(c.id);
-  document.getElementById('classAssignTeacherBtn').onclick = () => {
-    // simple assign teacher picker (list of teachers)
-    const opts = teachersCache.map(t => `<option value="${escape(t.id||t.teacherId||'')}">${escape(t.fullName||t.name||'')} — ${escape(t.subjectName||t.subjects||'')}</option>`).join('');
-    showModal('Assign teacher', `
-      <label>Select teacher</label>
-      <select id="assignTeacherSelect">${opts}</select>
-      <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
-        <button id="assignTeacherCancel" class="btn btn-ghost">Cancel</button>
-        <button id="assignTeacherOk" class="btn btn-primary">Assign</button>
-      </div>
-    `);
-    document.getElementById('assignTeacherCancel').onclick = closeModal;
-    document.getElementById('assignTeacherOk').onclick = async () => {
-      const tid = document.getElementById('assignTeacherSelect').value;
-      if(!tid) return toast('Select a teacher');
-      setButtonLoading(document.getElementById('assignTeacherOk'), true, 'Assigning...');
-      try {
-        // naive assign: append class name to teacher.classIds array (requires server support or arrayUnion)
-        await updateDoc(doc(db,'teachers', tid), { classIds: (teachersCache.find(x=>x.id===tid)?.classIds||[]).concat([c.name]) });
-        await loadTeachers(); toast('Teacher assigned'); closeModal(); closeModal(); // both modals
-        await loadClasses(); renderClasses();
-      } catch(err){ console.error(err); toast('Failed'); }
-      setButtonLoading(document.getElementById('assignTeacherOk'), false);
-    };
-  };
+  ['cvMoveBtn','cvFeeBtn','cvTTBtn','cvEditBtn','cvDeleteBtn'].forEach(idStr => { const elx = modalRoot.querySelector && modalRoot.querySelector(`#${idStr}`); if(elx) elx.setAttribute('aria-pressed','false'); });
 }
+
+
+
+// end openViewClassModal
 
 /* ---------- UPDATED: openTimetableModal (editor + post-save read-only viewer) ---------- */
 async function openTimetableModal(classId){
