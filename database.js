@@ -26,6 +26,14 @@ const tabSubjects = document.getElementById('tabSubjects');
 const tabExams = document.getElementById('tabExams');
 const tabTeachers = document.getElementById('tabTeachers'); // NEW: should exist in HTML
 
+
+const openAddClass =document.getElementById('openAddClassDesktop');
+
+
+// const openAddClass = document.getElementById('openAddClass');
+const classesList = document.getElementById('classesList');
+const classSearch = document.getElementById('classSearch');
+
 const pageStudents = document.getElementById('pageStudents');
 const pageClasses = document.getElementById('pageClasses');
 const pageSubjects = document.getElementById('pageSubjects');
@@ -40,9 +48,7 @@ const studentsList = document.getElementById('studentsList');
 const openAddStudent = document.getElementById('openAddStudent');
 const studentsExamForTotals = document.getElementById('studentsExamForTotals');
 
-const openAddClass = document.getElementById('openAddClass');
-const classesList = document.getElementById('classesList');
-const classSearch = document.getElementById('classSearch');
+
 
 const openAddSubject = document.getElementById('openAddSubject');
 const subjectsList = document.getElementById('subjectsList');
@@ -2301,180 +2307,241 @@ async function sendResetEmailFor(email) {
 /* ---------- Improved renderClasses + Move Students modal & logic ---------- */
 
 
-/* ---------- FIXED: renderClasses (mobile header lines, mobile "more" actions, desktop minimal rows) ---------- */
-function renderClasses(){
-  if(!classesList) return;
-  const q = (classSearch && classSearch.value||'').trim().toLowerCase();
+// REPLACE your existing renderClasses() with this version.
+// Key change: delete button now shows modalConfirm(...) first. If user confirms,
+// we mark the class deleted, remove it from classesCache and update UI immediately.
+async function renderClasses(){
+  try{
+    const classesList = document.getElementById('classesList');
+    if(!classesList) return;
 
-  let list = (classesCache || []).slice();
-  list = list.filter(c => {
-    if(!q) return true;
-    return (c.name||'').toLowerCase().includes(q) || (String(c.id||'')).toLowerCase().includes(q);
-  });
+    const desktopSearchEl = document.getElementById('classSearch');
+    if(typeof window.classSearch === 'undefined' && desktopSearchEl) window.classSearch = desktopSearchEl;
 
-  const total = list.length;
-  const mobile = isMobileViewport();
+    const q = (window.classSearch && window.classSearch.value || '').trim().toLowerCase();
 
-  // add button display toggle (originalAddBtn)
-  const originalAddBtn = openAddClass || document.getElementById('openAddClass') || null;
-  if(mobile){
+    const allRaw = Array.isArray(classesCache) ? classesCache.slice() : [];
+    const all = allRaw.filter(c => !c.deleted); // hide deleted
+    let list = all.slice();
+    if(q){
+      list = list.filter(c => ((c.name||'').toLowerCase().includes(q) || String(c.id||'').toLowerCase().includes(q)));
+    }
+
+    const totalAll = all.length;
+    const totalFiltered = list.length;
+    const mobile = typeof isMobileViewport === 'function' ? isMobileViewport() : (window.innerWidth <= 900);
+
+    const headerCounterEl = document.getElementById('classesTotalCount');
+    if(headerCounterEl){
+      headerCounterEl.textContent = (totalFiltered === totalAll)
+        ? `Total classes: ${totalAll}`
+        : `Total classes: ${totalAll} · Showing: ${totalFiltered}`;
+    }
+
+    const originalAddBtn = document.getElementById('openAddClass');
     if(originalAddBtn) originalAddBtn.style.display = 'none';
-  } else {
-    if(originalAddBtn) originalAddBtn.style.display = '';
-  }
 
-  // MOBILE: first line search + add, second line total + move all
-  if(mobile){
+    // MOBILE (unchanged)
+    if(mobile){
+      let html = `
+        <div class="mobile-only-header" style="margin-bottom:8px">
+          <div style="display:flex;gap:8px;align-items:center">
+            <input id="classSearchMobile" class="input" placeholder="Search class name or id..." style="flex:1;padding:8px;border:1px solid #e6eef8;border-radius:6px" value="${escapeHtml(window.classSearch?.value || '')}" />
+            <button id="openAddClassMobile" class="btn btn-primary btn-sm">+ Add</button>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px">
+            <div style="font-weight:700">Total: ${totalAll}</div>
+            <div style="display:flex;gap:8px;align-items:center">
+              ${ totalFiltered !== totalAll ? `<div class="muted">Showing: ${totalFiltered}</div>` : '' }
+              <button id="openMoveAllMobile" class="btn btn-ghost btn-sm">Move all</button>
+            </div>
+          </div>
+        </div>
+      `;
+
+      html += `<div id="classesMobileList">`;
+      list.forEach((c, idx) => {
+        const name = escapeHtml(c.name || '');
+        const id = escapeHtml(c.id || '');
+        const studentsCount = (typeof countStudentsInClass === 'function') ? countStudentsInClass(c.name || '') : (c._studentsCount || 0);
+        const subjectsCount = (c.subjects || []).length;
+
+        html += `
+        <div style="padding:12px;border-bottom:1px solid #f1f5f9">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+            <div style="display:flex;gap:10px;align-items:center;flex:1;min-width:0">
+              <div style="min-width:28px;text-align:center;font-weight:700">${idx+1}</div>
+              <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:800">${name}</div>
+              <div style="font-size:12px;color:#64748b;margin-left:6px">Subjects ${subjectsCount}</div>
+            </div>
+            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
+              <button class="btn btn-ghost btn-sm mobile-more" data-id="${id}" aria-label="Open view">⋮</button>
+            </div>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px">
+            <div style="font-size:12px;color:#6b7280">ID: ${id}</div>
+            <div style="font-size:12px;color:#059669">Students ${studentsCount}</div>
+          </div>
+        </div>`;
+      });
+      html += `</div>`;
+
+      classesList.innerHTML = html;
+
+      const addMobileBtn = document.getElementById('openAddClassMobile');
+      if(addMobileBtn) addMobileBtn.onclick = () => { if(typeof openAddClass === 'function') openAddClass(); else document.getElementById('openAddClass')?.click(); };
+
+      const openMoveAllMobileBtn = document.getElementById('openMoveAllMobile');
+      if(openMoveAllMobileBtn) openMoveAllMobileBtn.onclick = () => { if(typeof openMoveStudentsModal === 'function') openMoveStudentsModal(); };
+
+      const searchMobile = document.getElementById('classSearchMobile');
+      if(searchMobile) searchMobile.oninput = (ev) => { if(window.classSearch) classSearch.value = ev.target.value; renderClasses(); };
+
+      classesList.querySelectorAll('.mobile-more').forEach(btn => {
+        btn.onclick = (ev) => {
+          const cid = ev.currentTarget.dataset.id;
+          if(typeof openViewClassModal === 'function') openViewClassModal({ target:{ dataset:{ id: cid } } });
+          else window.location.href = `class.html?classId=${encodeURIComponent(cid)}`;
+        };
+      });
+
+      return;
+    }
+
+    // DESKTOP
+    const addBtnDesktop = document.getElementById('openAddClassDesktop');
+    if(addBtnDesktop) addBtnDesktop.onclick = () => { if(typeof openAddClass === 'function') openAddClass(); else document.getElementById('openAddClass')?.click(); };
+    const moveAllDesktop = document.getElementById('openMoveAllDesktop');
+    if(moveAllDesktop) moveAllDesktop.onclick = () => { if(typeof openMoveStudentsModal === 'function') openMoveStudentsModal(); };
+
     let html = `
-      <div style="margin-bottom:8px">
-        <div style="display:flex;gap:8px;align-items:center">
-          <input id="classSearchMobile" class="input" placeholder="Search class name or id..." style="flex:1" value="${escape(classSearch?.value || '')}" />
-          <button id="openAddClassMobile" class="btn btn-primary btn-sm">+ Add</button>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:12px">
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <div style="display:flex;gap:12px;align-items:center">
+            <strong style="font-size:1rem">Total classes: ${totalAll}</strong>
+            ${ totalFiltered !== totalAll ? `<div class="muted">Showing: ${totalFiltered}</div>` : '' }
+          </div>
+          <div class="muted">Columns: No, Class, Total students, Total subjects</div>
         </div>
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px">
-          <div style="font-weight:700">Total: ${total}</div>
-          <div><button id="openMoveAllMobile" class="btn btn-ghost btn-sm">Move all</button></div>
-        </div>
+        <div style="display:flex;gap:8px;align-items:center"></div>
       </div>
     `;
 
-    html += `<div id="classesMobileList">`;
+    html += `<div style="overflow:auto"><table style="width:100%;border-collapse:collapse">
+      <thead>
+        <tr style="text-align:left;border-bottom:1px solid #e6eef8">
+          <th style="padding:8px;width:48px">No</th>
+          <th style="padding:8px">Class</th>
+          <th style="padding:8px;width:140px">Total students</th>
+          <th style="padding:8px;width:140px">Total subjects</th>
+          <th style="padding:8px;width:220px">Actions</th>
+        </tr>
+      </thead><tbody>`;
+
     list.forEach((c, idx) => {
-      const name = escape(c.name || '');
-      const id = escape(c.id || '');
-      const studentsCount = countStudentsInClass(c.name || '') || 0;
+      const name = escapeHtml(c.name || '');
+      const id = escapeHtml(c.id || '');
+      const totalStudents = (typeof countStudentsInClass === 'function') ? countStudentsInClass(c.name || '') : (c._studentsCount || 0);
       const subjectsCount = (c.subjects || []).length;
 
-      html += `
-      <div style="padding:12px;border-bottom:1px solid #f1f5f9">
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
-          <div style="display:flex;gap:10px;align-items:center;flex:1;min-width:0">
-            <div style="min-width:28px;text-align:center;font-weight:700">${idx+1}</div>
-            <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:800">${name}</div>
-            <div style="font-size:12px;color:#64748b;margin-left:6px">Subjects ${subjectsCount}</div>
-          </div>
-
-          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
-            <button class="btn btn-ghost btn-sm mobile-more" data-id="${id}">⋮</button>
-          </div>
-        </div>
-
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px">
-          <div style="font-size:12px;color:#6b7280">ID: ${id}</div>
-          <div style="font-size:12px;color:#059669">Students ${studentsCount}</div>
-        </div>
-      </div>`;
+      html += `<tr style="border-bottom:1px solid #f1f5f9" data-class-id="${id}">
+        <td style="padding:8px;vertical-align:middle">${idx+1}</td>
+        <td style="padding:8px;vertical-align:middle">
+          <div style="font-weight:700">${name}</div>
+          <div style="font-size:12px;color:#64748b">ID: ${id}</div>
+        </td>
+        <td style="padding:8px;vertical-align:middle">${totalStudents}</td>
+        <td style="padding:8px;vertical-align:middle">${subjectsCount}</td>
+        <td style="padding:8px;vertical-align:middle;display:flex;gap:6px;flex-wrap:wrap">
+          <button class="btn btn-ghost btn-sm view-class" data-id="${id}" title="View">View</button>
+          <button class="btn btn-ghost btn-sm edit-class" data-id="${id}" title="Edit">Edit</button>
+          <button class="btn btn-danger btn-sm del-class" data-id="${id}" title="Delete">Delete</button>
+        </td>
+      </tr>`;
     });
-    html += `</div>`;
+
+    html += `</tbody></table></div>`;
     classesList.innerHTML = html;
 
-    document.getElementById('openAddClassMobile')?.addEventListener('click', () => { if(typeof openAddClass === 'function') openAddClass(); else document.getElementById('openAddClass')?.click(); });
-    document.getElementById('openMoveAllMobile')?.addEventListener('click', () => openMoveStudentsModal());
-
-    const searchMobile = document.getElementById('classSearchMobile');
-    if(searchMobile) searchMobile.oninput = (ev) => { if(classSearch) classSearch.value = ev.target.value; renderClasses(); };
-
-    // mobile "more" buttons open a small action modal
-    classesList.querySelectorAll('.mobile-more').forEach(btn => {
-      btn.onclick = (ev) => {
-        const cid = ev.currentTarget.dataset.id;
-        showModal('Actions', `
-          <div style="display:flex;flex-direction:column;gap:8px;padding:6px">
-            <button id="mView" class="btn btn-ghost">View</button>
-            <button id="mEdit" class="btn btn-ghost">Edit</button>
-            <button id="mDelete" class="btn btn-danger">Delete</button>
-            <button id="mMove" class="btn btn-ghost">Move students</button>
-            <button id="mFee" class="btn btn-ghost">Set fee</button>
-            <button id="mTT" class="btn btn-ghost">Timetable</button>
-            <div style="display:flex;justify-content:flex-end"><button id="mClose" class="btn btn-ghost">Close</button></div>
-          </div>
-        `);
-        const root = (typeof modalBody !== 'undefined' && modalBody) ? modalBody : document;
-        root.querySelector('#mView')?.addEventListener('click', ()=>{ closeModal(); openViewClassModal({ target:{ dataset:{ id: cid } } }); });
-        root.querySelector('#mEdit')?.addEventListener('click', ()=>{ closeModal(); if(typeof openEditClassModal==='function') openEditClassModal({ currentTarget:{ dataset:{ id: cid } } }); else openEditClassModal && openEditClassModal(cid); });
-        root.querySelector('#mDelete')?.addEventListener('click', async ()=>{ const ok = await modalConfirm('Delete Class', `Move <strong>${escape(cid)}</strong> to Recycle Bin?`); if(!ok) return; try{ await deleteClass({ target:{ dataset:{ id: cid } } }); await loadClasses(); renderClasses(); closeModal(); }catch(err){ console.error(err); toast('Delete failed'); } });
-        root.querySelector('#mMove')?.addEventListener('click', ()=>{ closeModal(); openMoveStudentsModal(cid); });
-        root.querySelector('#mFee')?.addEventListener('click', ()=>{ closeModal(); openSetFeeModal(cid); });
-        root.querySelector('#mTT')?.addEventListener('click', ()=>{ closeModal(); openTimetableModal(cid); });
-        root.querySelector('#mClose')?.addEventListener('click', closeModal);
+    // actions
+    classesList.querySelectorAll('.view-class').forEach(b => {
+      b.onclick = (ev) => {
+        const id = ev.currentTarget.dataset.id;
+        if(typeof openViewClassModal === 'function') openViewClassModal({ target:{ dataset:{ id } } });
+        else window.location.href = `class.html?classId=${encodeURIComponent(id)}`;
       };
     });
 
-    return;
+    classesList.querySelectorAll('.edit-class').forEach(b => {
+      b.onclick = (ev) => {
+        const id = ev.currentTarget.dataset.id;
+        if(typeof openEditClassModal === 'function'){
+          try{ openEditClassModal(id); } catch(e){ try{ openEditClassModal({ currentTarget:{ dataset:{ id } } }); }catch(_){} }
+        } else {
+          window.location.href = `class-edit.html?classId=${encodeURIComponent(id)}`;
+        }
+      };
+    });
+
+    // DELETE: show modalConfirm first, then delete and update UI immediately if confirmed
+    classesList.querySelectorAll('.del-class').forEach(b => {
+      b.onclick = async (ev) => {
+        const btn = ev.currentTarget;
+        const id = btn.dataset.id;
+        if(!id) return;
+
+        // show modal confirm
+        const ok = await modalConfirm('Delete Class', `Move <strong>${escapeHtml(id)}</strong> to Recycle Bin?`);
+        if(!ok) return; // user cancelled
+
+        setButtonLoading(btn, true, 'Deleting...');
+        try {
+          const who = (currentUser && currentUser.uid) || (auth && auth.currentUser && auth.currentUser.uid) || null;
+
+          // Update Firestore to mark deleted
+          await updateDoc(doc(db, 'classes', id), {
+            deleted: true,
+            deletedAt: Timestamp.now(),
+            deletedBy: who
+          });
+
+          // remove from in-memory cache and DOM
+          classesCache = (classesCache || []).filter(x => !(x.id === id));
+          const row = classesList.querySelector(`tr[data-class-id="${CSS.escape(id)}"]`);
+          if(row) row.remove();
+
+          // adjust header count
+          const visible = (classesCache || []).filter(c => !c.deleted);
+          const visibleCount = visible.length;
+          if(headerCounterEl){
+            headerCounterEl.textContent = `Total classes: ${visibleCount}`;
+          }
+
+          // refresh filters/students
+          if(typeof populateClassFilters === 'function') populateClassFilters();
+          if(typeof loadStudents === 'function') await loadStudents();
+          if(typeof renderStudents === 'function') renderStudents();
+
+          toast('Class moved to Recycle Bin');
+        } catch(err){
+          console.error('delete class failed', err);
+          toast('Delete failed');
+        } finally {
+          setButtonLoading(btn, false);
+          if(typeof renderClasses === 'function') renderClasses();
+        }
+      };
+    });
+
+    if(desktopSearchEl) desktopSearchEl.oninput = (ev) => { if(window.classSearch) classSearch.value = ev.target.value; renderClasses(); };
+
+  }catch(err){
+    console.error('renderClasses failed', err);
+    const classesList = document.getElementById('classesList');
+    if(classesList) classesList.innerHTML = `<div class="muted">Failed to render classes</div>`;
   }
-
-  // DESKTOP: single header (no duplicates), class name cell contains id and subjects count (muted), actions visible
-  let html = `
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:12px">
-      <div style="display:flex;gap:12px;align-items:center">
-        <strong style="font-size:1rem">Total classes: ${total}</strong>
-        <div class="muted">Columns: No, ID, Name, Total students</div>
-      </div>
-      <div style="display:flex;gap:8px;align-items:center">
-        <button id="openMoveAllBtn" class="btn btn-ghost">Move students (bulk)</button>
-        <button id="openAddClassBtnDesktop" class="btn btn-primary">+ Add class</button>
-      </div>
-    </div>
-  `;
-
-  html += `<div style="overflow:auto"><table style="width:100%;border-collapse:collapse">
-    <thead>
-      <tr style="text-align:left;border-bottom:1px solid #e6eef8">
-        <th style="padding:8px;width:48px">No</th>
-        <th style="padding:8px;width:140px">ID</th>
-        <th style="padding:8px">Class</th>
-        <th style="padding:8px;width:120px">Total students</th>
-        <th style="padding:8px;width:340px">Actions</th>
-      </tr>
-    </thead><tbody>`;
-
-  list.forEach((c, idx) => {
-    const id = escape(c.id || '');
-    const name = escape(c.name || '');
-    const totalStudents = countStudentsInClass(c.name || '') || 0;
-    const subjectsCount = (c.subjects || []).length;
-
-    html += `<tr style="border-bottom:1px solid #f1f5f9">
-      <td style="padding:8px;vertical-align:middle">${idx+1}</td>
-      <td style="padding:8px;vertical-align:middle">${id}</td>
-      <td style="padding:8px;vertical-align:middle">
-        <div style="font-weight:700">${name}</div>
-        <div style="font-size:12px;color:#64748b">ID: ${id} • Subjects: ${subjectsCount}</div>
-      </td>
-      <td style="padding:8px;vertical-align:middle">${totalStudents}</td>
-      <td style="padding:8px;vertical-align:middle;display:flex;gap:6px;flex-wrap:wrap">
-        <button class="btn btn-ghost btn-sm view-class" data-id="${id}" title="View">View</button>
-        <button class="btn btn-ghost btn-sm edit-class" data-id="${id}" title="Edit">Edit</button>
-        <button class="btn btn-danger btn-sm del-class" data-id="${id}" title="Delete">Delete</button>
-        <button class="btn btn-ghost btn-sm move-class" data-id="${id}" title="Move students">Move</button>
-        <button class="btn btn-ghost btn-sm fee-class" data-id="${id}" title="Set fee">Fee</button>
-        <button class="btn btn-ghost btn-sm timetable-class" data-id="${id}" title="Timetable">Timetable</button>
-      </td>
-    </tr>`;
-  });
-
-  html += `</tbody></table></div>`;
-  classesList.innerHTML = html;
-
-  // top-level buttons
-  document.getElementById('openMoveAllBtn')?.addEventListener('click', () => openMoveStudentsModal());
-  document.getElementById('openAddClassBtnDesktop')?.addEventListener('click', () => { if(typeof openAddClass === 'function') openAddClass(); else document.getElementById('openAddClass')?.click(); });
-
-  // wire desktop actions
-  classesList.querySelectorAll('.view-class').forEach(b=> b.onclick = openViewClassModal);
-  classesList.querySelectorAll('.edit-class').forEach(b=> b.onclick = (ev) => { const id = ev.currentTarget.dataset.id; if(typeof openEditClassModal==='function') openEditClassModal({ currentTarget:{ dataset:{ id } } }); else openEditClassModal && openEditClassModal(id); });
-  classesList.querySelectorAll('.del-class').forEach(b=> b.onclick = async (ev) => {
-    const id = ev.currentTarget.dataset.id;
-    const ok = await modalConfirm('Delete Class', `Are you sure you want to move <strong>${escape(id)}</strong> to Recycle Bin?`);
-    if(!ok) return;
-    setButtonLoading(ev.currentTarget, true, 'Deleting...');
-    try { await deleteClass({ target: { dataset: { id } } }); await loadClasses(); renderClasses(); } finally { setButtonLoading(ev.currentTarget, false); }
-  });
-
-  classesList.querySelectorAll('.move-class').forEach(b=> b.onclick = (ev) => openMoveStudentsModal(ev.currentTarget.dataset.id));
-  classesList.querySelectorAll('.fee-class').forEach(b=> b.onclick = (ev) => openSetFeeModal(ev.currentTarget.dataset.id));
-  classesList.querySelectorAll('.timetable-class').forEach(b=> b.onclick = (ev) => openTimetableModal(ev.currentCurrent?.dataset?.id || ev.currentTarget.dataset.id));
 }
+
 
 
 /* ---------- Open Move Students Modal ---------- 
