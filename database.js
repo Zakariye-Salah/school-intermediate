@@ -268,15 +268,14 @@ function showPage(id) {
 }
 
 
-function showModal(title, html){
+function showModal(title, html, fullscreen = false){
   modalTitle.textContent = title;
   modalBody.innerHTML = html;
 
+  modal.classList.toggle('fullscreen', fullscreen);
+
   modalBackdrop.style.display = 'flex';
-
-  // force reflow so animation works
   modalBackdrop.offsetHeight;
-
   modalBackdrop.classList.add('show');
 }
 
@@ -286,12 +285,20 @@ function closeModal(){
   setTimeout(()=>{
     modalBackdrop.style.display = 'none';
     modalBody.innerHTML = '';
+    modal.classList.remove('fullscreen');
   }, 200);
 }
+
 
 modalClose.onclick = closeModal;
 modalBackdrop.onclick = (e) => { if(e.target === modalBackdrop) closeModal(); };
 
+
+document.addEventListener('keydown', (e)=>{
+  if(e.key === 'Escape' && modalBackdrop.classList.contains('show')){
+    closeModal();
+  }
+});
 
 
 /**
