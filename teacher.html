@@ -20,6 +20,8 @@
   <nav class="nav">
     <button id="tabProfile" class="tab active">Profile</button>
     <button id="tabAttendance" class="tab">Attendance</button>
+    <button id="tabQuizzes" class="tab">Quizzes</button>
+
   
     <!-- 🔔 Announcements tab -->
     <button id="tabTeacherAnnouncements" class="tab" style="position:relative">
@@ -81,6 +83,26 @@
     </div>
   </div>
 </section>
+<section id="pageTeacherQuizzes" class="page" style="display:none;padding:12px;max-width:1100px">
+  <div class="panel">
+    <div class="panel-header" style="display:flex;justify-content:space-between;align-items:center">
+      <div>
+        <strong>Quizzes</strong>
+        <div class="muted small">Create and manage quizzes for classes you teach</div>
+      </div>
+
+      <div style="display:flex;gap:8px;align-items:center">
+        <select id="quizFilterClass" class="select">
+          <option value="__all">All your classes</option>
+        </select>
+        <button id="btnNewQuiz" class="btn btn-primary">+ New Quiz</button>
+      </div>
+    </div>
+
+    <div id="teacherQuizzesList" style="margin-top:12px">Loading quizzes…</div>
+  </div>
+</section>
+
 
   </main>
 
