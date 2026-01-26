@@ -3,9 +3,14 @@
 import { db } from './firebase-config.js';
 // import { doc, getDoc, getDocs, collection, query, where } from 'https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore.js';
 
-// add orderBy and limit to your firebase/firestore imports
-import { collection, doc, getDocs, getDoc, query, where, orderBy, limit, addDoc, updateDoc, deleteDoc, setDoc, Timestamp } from 'https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore.js';
+// // add orderBy and limit to your firebase/firestore imports
+// import { collection, doc, getDocs, getDoc, query, where, orderBy, limit, addDoc, updateDoc, deleteDoc, setDoc, Timestamp } 
+// from 'https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore.js';
 // or your project's firebase import style — just ensure orderBy & limit are present
+
+// -------- STUDENT: render quizzes for a student (main.js) --------
+import { collection, where,orderBy,query as qFn, where as whereFn, getDocs,getDoc ,doc,query,getDoc as getDocFn, limit ,addDoc as addDocFn, collection as collectionFn, setDoc as setDocFn, doc as docFn, orderBy as orderByFn , updateDoc, deleteDoc, Timestamp} 
+from 'https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore.js';
 
 
 
@@ -66,55 +71,182 @@ function c2p(cents){
   return (n / 100).toFixed(2);
 }
 
-/** small toast: shows a temporary message bottom-right */
-function toast(msg, opts = {}) {
+const toastContainer = document.getElementById('toast-container');
+
+
+const MAX_TOASTS = 5;
+
+/* ---------------- SOUND (uses your asset) ---------------- */
+// point to your file (make sure path is correct relative to the page)
+const toastSound = new Audio('assets/notification.mp3');
+toastSound.preload = 'auto';
+toastSound.volume = 0.9;
+
+let audioUnlocked = false; // will flip true after a successful play
+
+// safe play helper — tries to play now, otherwise registers a one-time gesture unlock
+async function playToastSound() {
+  if (!toastSound) return;
   try {
-    const timeout = typeof opts === 'object' && opts.timeout ? opts.timeout : 3500;
-    // create container once
-    let container = document.getElementById('app-toast-container');
-    if(!container){
-      container = document.createElement('div');
-      container.id = 'app-toast-container';
-      Object.assign(container.style, {
-        position: 'fixed',
-        right: '18px',
-        bottom: '18px',
-        zIndex: 999999,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '8px',
-        alignItems: 'flex-end',
-        pointerEvents: 'none'
-      });
-      document.body.appendChild(container);
-    }
-    const el = document.createElement('div');
-    el.textContent = String(msg || '');
-    Object.assign(el.style, {
-      background: 'rgba(17,24,39,0.95)',
-      color: '#fff',
-      padding: '8px 12px',
-      borderRadius: '8px',
-      boxShadow: '0 6px 18px rgba(0,0,0,0.22)',
-      fontSize: '13px',
-      pointerEvents: 'auto',
-      opacity: '1',
-      transition: 'opacity 300ms ease, transform 300ms ease'
-    });
-    container.appendChild(el);
-    // auto-hide
-    setTimeout(()=> {
-      el.style.opacity = '0';
-      el.style.transform = 'translateY(6px)';
-      setTimeout(()=> { try{ el.remove(); }catch(e){} }, 320);
-    }, timeout);
-    return el;
-  } catch (e) {
-    // fallback: console + alert (non-blocking)
-    console.warn('toast error', e);
-    try { console.log(msg); } catch(e2){}
+    // if audio already unlocked, just restart then play
+    toastSound.currentTime = 0;
+    await toastSound.play();
+    audioUnlocked = true;
+  } catch (err) {
+    // play was blocked by browser autoplay policy — register a one-time unlock on user gesture
+    // we do not spam listeners: use { once: true } so it auto-removes after first gesture
+    const unlock = async () => {
+      try {
+        toastSound.currentTime = 0;
+        await toastSound.play();
+        audioUnlocked = true;
+      } catch (e) {
+        // still blocked — ignore
+      }
+    };
+    document.addEventListener('click', unlock, { once: true, passive: true });
+    document.addEventListener('keydown', unlock, { once: true, passive: true });
+    document.addEventListener('touchstart', unlock, { once: true, passive: true });
   }
 }
+
+
+/**
+ * toast(message, type, duration)
+ * type: success | error | warning | info
+ */
+
+function toast(msg, type = 'info', duration = 2200) {
+  if (!toastContainer) return;
+
+  // queue limit
+  while (toastContainer.children.length >= MAX_TOASTS) {
+    toastContainer.firstChild.remove();
+  }
+
+  const toastEl = document.createElement('div');
+  toastEl.className = `toast ${type}`;
+
+  const iconMap = { success: '✓', error: '✕', warning: '⚠', info: 'ℹ' };
+
+  toastEl.innerHTML = `
+    <div class="icon" aria-hidden="true">${iconMap[type] || 'ℹ'}</div>
+    <div class="msg">${msg}</div>
+    <button class="close" aria-label="Close toast">✕</button>
+    <div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"></div>
+  `;
+
+  // append
+  toastContainer.appendChild(toastEl);
+
+  // close btn
+  const closeBtn = toastEl.querySelector('.close');
+  if (closeBtn) closeBtn.onclick = () => removeToast(toastEl);
+
+  // progress bar animation
+  const bar = toastEl.querySelector('.bar');
+  if (bar) {
+    bar.style.transition = `transform ${duration}ms linear`;
+    // ensure the style change runs in next frame
+    requestAnimationFrame(() => { bar.style.transform = 'scaleX(0)'; });
+  }
+
+  // play sound (safe)
+  playToastSound().catch(() => { /* ignore sound failures */ });
+
+  // auto remove
+  const autoRemoveTimer = setTimeout(() => removeToast(toastEl), duration);
+
+  // Pause removal on hover / focus (nice UX)
+  toastEl.addEventListener('mouseenter', () => {
+    clearTimeout(autoRemoveTimer);
+    if (bar) bar.style.transition = ''; // pause progress
+  });
+  toastEl.addEventListener('mouseleave', () => {
+    // resume with remaining time (simple approach: remove after small delay)
+    // For simplicity we remove after 800ms when leaving; adjust if you want precise remaining time logic
+    setTimeout(() => removeToast(toastEl), 800);
+    if (bar) {
+      // restart a short finish transition to hide
+      bar.style.transition = `transform 800ms linear`;
+      requestAnimationFrame(() => { bar.style.transform = 'scaleX(0)'; });
+    }
+  });
+}
+
+function removeToast(el) {
+  if (!el) return;
+  el.style.opacity = '0';
+  el.style.transform = 'translateY(-6px) scale(.96)';
+  setTimeout(() => el.remove(), 260);
+}
+
+
+
+const modalBackdrop = document.getElementById('modalBackdrop');
+const modal = document.getElementById('modal');
+const modalTitle = document.getElementById('modalTitle');
+const modalBody = document.getElementById('modalBody');
+const modalClose = document.getElementById('modalClose');
+
+function showModal(title, html, fullscreen = false){
+  modalTitle.textContent = title;
+  modalBody.innerHTML = html;
+
+  modal.classList.toggle('fullscreen', fullscreen);
+
+  modalBackdrop.style.display = 'flex';
+  modalBackdrop.offsetHeight;
+  modalBackdrop.classList.add('show');
+}
+function closeModal(){
+  modalBackdrop.classList.remove('show');
+
+  setTimeout(()=>{
+    modalBackdrop.style.display = 'none';
+    modalBody.innerHTML = '';
+    modal.classList.remove('fullscreen');
+  }, 200);
+}
+
+
+modalClose.onclick = closeModal;
+modalBackdrop.onclick = (e) => { if(e.target === modalBackdrop) closeModal(); };
+
+function setButtonLoading(btn, loading, loadingText = 'Saving...'){
+  if(!btn) return;
+  if(loading){
+    btn.disabled = true;
+    btn.dataset._orig = btn.innerHTML;
+    btn.innerHTML = loadingText;
+  } else {
+    btn.disabled = false;
+    if(btn.dataset._orig){
+      btn.innerHTML = btn.dataset._orig;
+      delete btn.dataset._orig;
+    }
+  }
+}
+
+function modalConfirm(title, htmlMessage){
+  return new Promise(resolve => {
+    showModal(title, `
+      <div style="margin-bottom:16px">${htmlMessage}</div>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button class="btn btn-ghost" id="mcCancel">Cancel</button>
+        <button class="btn btn-danger" id="mcOk">Yes</button>
+      </div>
+    `);
+
+    document.getElementById('mcCancel').onclick = () => {
+      closeModal(); resolve(false);
+    };
+    document.getElementById('mcOk').onclick = () => {
+      closeModal(); resolve(true);
+    };
+  });
+}
+
 
 /* ---------- Audio / unlock logic ---------- */
 /*
@@ -2396,6 +2528,401 @@ window.renderTimetableViewerForStudent = renderTimetableViewerForStudent;
 
 
 
+// ---------------- STUDENT SIDE ----------------
+// RENDERS active (takeable) QUIZZES FOR STUDENT — inline list with live HH:MM:SS time-left
+async function renderQuizzesForStudent(studentId){
+  const resultArea = document.getElementById('resultArea');
+  if(!resultArea) return;
+
+  resultArea.style.display = 'block';
+  resultArea.innerHTML = `<div class="card muted">Loading quizzes…</div>`;
+
+  try {
+    // load student
+    const sSnap = (typeof getDocFn === 'function' && typeof docFn === 'function')
+      ? await getDocFn(docFn(db,'students', studentId))
+      : await getDoc(doc(db,'students', studentId)).catch(()=>null);
+    if(!sSnap || !sSnap.exists()){ resultArea.innerHTML = `<div class="card muted">Student not found.</div>`; return; }
+    const sData = sSnap.data();
+    const classId = sData.classId || sData.class || sData.className;
+    if(!classId){ resultArea.innerHTML = `<div class="card muted">No class assigned.</div>`; return; }
+
+    // fetch quizzes for class
+    const collFn = typeof collectionFn === 'function' ? collectionFn : collection;
+    const qFnLocal = typeof query === 'function' ? query : null;
+    const whereFnLocal = typeof where === 'function' ? where : null;
+    const orderByFnLocal = typeof orderBy === 'function' ? orderBy : null;
+    const q = qFnLocal ? qFnLocal(collFn(db,'quizzes'), whereFnLocal('classId','==', classId), orderByFnLocal ? orderByFnLocal('createdAt','desc') : undefined) : null;
+    const snap = q ? await getDocs(q) : await getDocs(collFn(db,'quizzes'));
+    const docs = (snap && snap.docs) ? snap.docs.map(d => ({ id: d.id, ...d.data() })) : [];
+
+    // fetch all responses by this student to prevent retakes
+    const respSnap = await getDocs(query(collection(db,'quiz_responses'), where('studentId','==', String(studentId))));
+    const respondedIds = new Set(respSnap.docs.map(d=>d.data().quizId));
+
+    // helpers
+    const toMs = (ts) => {
+      if(!ts) return null;
+      if(typeof ts === 'number') return Number(ts);
+      if(ts.seconds) return Number(ts.seconds)*1000;
+      const p = Date.parse(ts);
+      return isNaN(p) ? null : p;
+    };
+    const nowMs = Date.now();
+    const formatHMS = (ms) => {
+      if(ms <= 0) return '00:00:00';
+      const s = Math.floor(ms/1000);
+      const h = Math.floor(s/3600); const m = Math.floor((s%3600)/60); const r = s%60;
+      return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(r).padStart(2,'0')}`;
+    };
+
+    // Filter only quizzes that are active AND in active window (students see only currently open)
+    const visible = docs.filter(qd => {
+      if(!qd.active) return false;
+      const startMs = toMs(qd.startAt) || toMs(qd.createdAt) || null;
+      const endMsExplicit = toMs(qd.endAt) || null;
+      const durationMs = (Number(qd.durationMinutes) || 0) * 60 * 1000;
+      const endMsComputed = startMs ? (startMs + durationMs) : null;
+      const endMs = endMsExplicit || endMsComputed;
+      if(!startMs || !endMs) return false; // hide ambiguous timing for safety
+      return (nowMs >= startMs && nowMs < endMs);
+    });
+
+    if(!visible.length){
+      resultArea.innerHTML = `<div class="card muted">No active quizzes for your class right now.</div>`;
+      return;
+    }
+
+    // build table-like list: title, id, class, subject, total points, time-left, action
+    resultArea.innerHTML = `
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <h3 style="margin:0">Active quizzes</h3>
+          <div class="muted small">Class: ${escapeHtml(String(classId))}</div>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
+        ${visible.map(qd => {
+          const startMs = toMs(qd.startAt) || toMs(qd.createdAt) || 0;
+          const endMsExplicit = toMs(qd.endAt) || null;
+          const durationMs = (Number(qd.durationMinutes) || 0) * 60 * 1000;
+          const endMs = endMsExplicit || (startMs ? startMs + durationMs : 0);
+          const left = Math.max(0, endMs - nowMs);
+          const totalPoints = (qd.questions||[]).reduce((s,q)=> s + (Number(q.points||1)),0);
+          const already = respondedIds.has(qd.id);
+          return `
+            <div class="quiz-row" data-end="${endMs}" data-quiz="${escapeHtml(qd.id)}" style="padding:10px;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center">
+              <div style="min-width:0">
+                <div style="font-weight:800">${escapeHtml(qd.title || '(untitled)')}</div>
+                <div class="muted small">ID: ${escapeHtml(qd.id)} • Class: ${escapeHtml(qd.classId||'')} • Subject: ${escapeHtml(qd.subjectName||qd.subject||'')}</div>
+                <div class="muted small">Total points: ${String(totalPoints)}</div>
+                <div style="margin-top:6px"><div style="font-weight:700">Time left: <span class="quiz-time-left">${formatHMS(left)}</span></div></div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end">
+                <div>
+                  ${ already
+                    ? `<button class="btn btn-ghost btn-sm view-summary" data-id="${escapeHtml(qd.id)}">View summary</button>`
+                    : `<button class="btn btn-primary btn-sm take-quiz" data-id="${escapeHtml(qd.id)}">Take quiz</button>`
+                  }
+                </div>
+                <div class="muted small">Duration: ${escapeHtml(String(qd.durationMinutes||0))}m</div>
+              </div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    `;
+
+    // live countdown hh:mm:ss (per-second)
+    let intv = window._studentQuizTicker;
+    if(intv) clearInterval(intv);
+    window._studentQuizTicker = setInterval(() => {
+      document.querySelectorAll('.quiz-row').forEach(row => {
+        const end = Number(row.dataset.end||0);
+        const leftMs = end - Date.now();
+        const span = row.querySelector('.quiz-time-left');
+        if(span){
+          if(leftMs <= 0){
+            span.textContent = '00:00:00';
+            const btn = row.querySelector('.take-quiz');
+            if(btn){ btn.disabled = true; btn.classList.remove('btn-primary'); btn.classList.add('btn-ghost'); btn.textContent = 'Ended'; }
+          } else {
+            const s = Math.floor(leftMs/1000);
+            const h = Math.floor(s/3600), m = Math.floor((s%3600)/60), r = s%60;
+            span.textContent = `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(r).padStart(2,'0')}`;
+          }
+        }
+      });
+    }, 1000);
+
+    // wire take buttons (inline taker) and view-summary
+    resultArea.querySelectorAll('.take-quiz').forEach(b => b.onclick = ev => {
+      const qid = ev.currentTarget.dataset.id;
+      openTakeQuizInline(studentId, qid);
+    });
+    resultArea.querySelectorAll('.view-summary').forEach(b => b.onclick = async ev => {
+      const qid = ev.currentTarget.dataset.id;
+      // fetch student's response for this quiz
+      const rSnap = await getDocs(query(collection(db,'quiz_responses'), where('quizId','==', qid), where('studentId','==', String(studentId))));
+      if(!rSnap || !rSnap.size){ // shouldn't happen, but fallback
+        alert('Summary not found.');
+        return;
+      }
+      const r = rSnap.docs[0].data();
+      // show inline summary
+      resultArea.innerHTML = renderStudentSummaryInline(r, qid, sData);
+    });
+
+  } catch(err){
+    console.error('renderQuizzesForStudent', err);
+    resultArea.innerHTML = `<div class="card muted">Failed to load quizzes.</div>`;
+  }
+}
+window.renderQuizzesForStudent = renderQuizzesForStudent;
+
+
+// helper: render a student's summary inline (called after submit or when viewing existing response)
+function renderStudentSummaryInline(responseDoc, quizId, studentData){
+  // responseDoc must include fields: score, maxScore, answers (array), answeredCount, skippedCount, correctCount, incorrectCount
+  const answers = responseDoc.answers || [];
+  const answered = answers.filter(a => typeof a.selectedIndex !== 'undefined' && a.selectedIndex !== null).length;
+  const skipped = answers.length - answered;
+  // compute correct/incorrect quickly (if stored, use stored fields)
+  const correct = typeof responseDoc.correctCount !== 'undefined' ? responseDoc.correctCount : answers.reduce((s,a,i)=> s + ((a.selectedIndex !== null && a.selectedIndex === a.correctIndex) ? 1 : 0),0);
+  const incorrect = answered - correct;
+  const score = responseDoc.score ?? 0;
+  const maxScore = responseDoc.maxScore ?? (answers.reduce((s,a)=> s + (a.pointsGot || 0),0) + 0);
+  const studentName = studentData?.fullName || studentData?.name || responseDoc.studentName || 'Student';
+  const sid = studentData?.id || responseDoc.studentId || '—';
+  const cls = studentData?.classId || studentData?.class || studentData?.className || responseDoc.classId || '—';
+
+  return `
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div style="font-weight:900">Quiz summary</div>
+        <div class="muted small">Quiz ID: ${escapeHtml(quizId)}</div>
+      </div>
+      <div style="margin-top:8px">
+        <div><strong>Name:</strong> ${escapeHtml(studentName)}</div>
+        <div><strong>ID:</strong> ${escapeHtml(String(sid))}</div>
+        <div><strong>Class:</strong> ${escapeHtml(String(cls))}</div>
+        <div style="margin-top:8px"><strong>Score:</strong> ${escapeHtml(String(score))} / ${escapeHtml(String(maxScore))}</div>
+        <div style="margin-top:8px"><strong>Answered:</strong> ${answered} • <strong>Skipped:</strong> ${skipped} • <strong>Correct:</strong> ${correct} • <strong>Incorrect:</strong> ${incorrect}</div>
+      </div>
+    </div>
+  `;
+}
+
+
+// ---------------- INLINE QUIZ TAKER (no modal) ----------------
+async function openTakeQuizInline(studentId, quizId){
+  const resultArea = document.getElementById('resultArea');
+  if(!resultArea) return;
+
+  try {
+    // fetch student & quiz (support wrappers)
+    const sSnap = (typeof getDocFn === 'function' && typeof docFn === 'function')
+      ? await getDocFn(docFn(db,'students', studentId))
+      : await getDoc(doc(db,'students', studentId));
+    if(!sSnap || !sSnap.exists()){ resultArea.innerHTML = `<div class="card muted">Student not found.</div>`; return; }
+    const qSnap = (typeof getDocFn === 'function' && typeof docFn === 'function')
+      ? await getDocFn(docFn(db,'quizzes', quizId))
+      : await getDoc(doc(db,'quizzes', quizId));
+    if(!qSnap || !qSnap.exists()){ resultArea.innerHTML = `<div class="card muted">Quiz not found or removed.</div>`; return; }
+    const quiz = { id: qSnap.id, ...qSnap.data() };
+
+    // check if student already submitted
+    const existing = await getDocs(query(collection(db,'quiz_responses'), where('quizId','==', quiz.id), where('studentId','==', String(studentId))));
+    if(existing.size > 0){
+      const docResp = existing.docs[0].data();
+      // show inline summary (no modal) and return
+      resultArea.innerHTML = renderStudentSummaryInline(docResp, quiz.id, { id: studentId, fullName: sSnap.data().name || sSnap.data().fullName, classId: sSnap.data().classId || sSnap.data().class || sSnap.data().className });
+      return;
+    }
+
+    // ensure class match
+    const classId = sSnap.data().classId || sSnap.data().class || sSnap.data().className;
+    if(String(classId) !== String(quiz.classId)) { resultArea.innerHTML = `<div class="card muted">This quiz is not for your class.</div>`; return; }
+
+    // compute times
+    const toMs = (ts) => {
+      if(!ts) return null;
+      if(typeof ts === 'number') return Number(ts);
+      if(ts.seconds) return Number(ts.seconds)*1000;
+      const p = Date.parse(ts);
+      return isNaN(p) ? null : p;
+    };
+    const now = Date.now();
+    const startMs = toMs(quiz.startAt) || toMs(quiz.createdAt) || null;
+    const endMsExplicit = toMs(quiz.endAt) || null;
+    const durMs = (Number(quiz.durationMinutes) || 0) * 60 * 1000;
+    const endMs = endMsExplicit || (startMs ? startMs + durMs : null);
+    if(!startMs || !endMs){ resultArea.innerHTML = `<div class="card muted">Quiz timing info missing. Contact teacher.</div>`; return; }
+    if(now < startMs){ resultArea.innerHTML = `<div class="card muted">This quiz starts at ${new Date(startMs).toLocaleString()}</div>`; return; }
+    if(now >= endMs){ resultArea.innerHTML = `<div class="card muted">This quiz ended at ${new Date(endMs).toLocaleString()}</div>`; return; }
+
+    // prepare questions, shuffle if needed; preserve correct index mapping
+    let questions = JSON.parse(JSON.stringify(quiz.questions || []));
+    if(quiz.randomizeQuestions) questions = shuffleArray(questions);
+    questions = questions.map(q => {
+      const choices = (q.choices||[]).map((c, idx) => ({ id: idx, text: c }));
+      const correctText = (q.choices && typeof q.correctIndex !== 'undefined') ? q.choices[q.correctIndex] : null;
+      const correctIndexAfter = choices.findIndex(x => x.text === correctText);
+      return { text: q.text, choices, correctIndex: correctIndexAfter, points: q.points || 1 };
+    });
+    if(quiz.randomizeChoices) questions = questions.map(q => ({ ...q, choices: shuffleArray(q.choices) }));
+
+    const answers = questions.map(() => ({ selectedIndex: null }));
+    let currentIndex = 0;
+    let timeLeftSec = Math.ceil((endMs - now)/1000);
+    let timerInterval = null;
+
+    // UI builder (inline), with scrollable questions area and sticky footer controls
+    function buildQuestionHtml(idx){
+      const qq = questions[idx];
+      const chHtml = qq.choices.map((c,ci) =>
+        `<div style="margin:6px 0"><label><input type="radio" name="qchoice" data-choice="${ci}" ${answers[idx].selectedIndex===ci ? 'checked':''}/> ${escapeHtml(c.text)}</label></div>`
+      ).join('');
+      return `
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <div style="font-weight:800">${escapeHtml(qq.text || `Q${idx+1}`)}</div>
+          <div>${chHtml}</div>
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div class="muted">Points: ${qq.points}</div>
+            <div><button id="skipBtn" class="btn btn-ghost btn-sm">Skip</button></div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderInline(){
+      resultArea.innerHTML = `
+        <div class="card" style="display:flex;flex-direction:column;gap:8px;max-height:75vh">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div>
+              <div style="font-weight:900">${escapeHtml(quiz.title)}</div>
+              <div class="muted small">Quiz ID: ${escapeHtml(quiz.id)} • Subject: ${escapeHtml(quiz.subjectName || '')}</div>
+            </div>
+            <div style="text-align:right">
+              <div class="muted small">Time left</div>
+              <div id="inlineQuizTimer" style="font-weight:900">${formatHMS(timeLeftSec*1000)}</div>
+            </div>
+          </div>
+
+          <div id="inlineQuestionArea" style="overflow:auto;padding:8px;border:1px solid #f1f5f9;border-radius:6px;flex:1">
+            ${buildQuestionHtml(currentIndex)}
+          </div>
+
+          <div style="position:sticky;bottom:0;background:var(--card, #fff);padding-top:8px;padding-bottom:8px;display:flex;justify-content:space-between;align-items:center;gap:8px">
+            <div>
+              <button id="prevQ" class="btn btn-ghost btn-sm">Prev</button>
+              <button id="nextQ" class="btn btn-ghost btn-sm">Next</button>
+            </div>
+            <div style="display:flex;gap:8px">
+              <div class="muted small" id="inlineProgress">Question ${currentIndex+1} / ${questions.length}</div>
+              <button id="submitInline" class="btn btn-primary">Submit</button>
+            </div>
+          </div>
+        </div>
+      `;
+
+      // wire events
+      const qArea = document.getElementById('inlineQuestionArea');
+      qArea.querySelectorAll('input[name="qchoice"]').forEach(inp => inp.onchange = () => answers[currentIndex].selectedIndex = Number(inp.dataset.choice));
+      document.getElementById('skipBtn')?.addEventListener('click', () => { answers[currentIndex].selectedIndex = null; if(currentIndex < questions.length-1){ currentIndex++; refreshQuestionArea(); }});
+      document.getElementById('prevQ').onclick = () => { if(currentIndex>0){ currentIndex--; refreshQuestionArea(); } };
+      document.getElementById('nextQ').onclick = () => { if(currentIndex < questions.length-1){ currentIndex++; refreshQuestionArea(); } };
+      document.getElementById('submitInline').onclick = async () => {
+        if(!confirm('Submit your answers now? You will not be able to change them.')) return;
+        await submitResponses();
+      };
+      document.getElementById('inlineProgress').textContent = `Question ${currentIndex+1} / ${questions.length}`;
+    }
+
+    function refreshQuestionArea(){
+      const qArea = document.getElementById('inlineQuestionArea');
+      if(!qArea) return;
+      qArea.innerHTML = buildQuestionHtml(currentIndex);
+      qArea.querySelectorAll('input[name="qchoice"]').forEach(inp => inp.onchange = () => answers[currentIndex].selectedIndex = Number(inp.dataset.choice));
+      document.getElementById('skipBtn')?.addEventListener('click', () => { answers[currentIndex].selectedIndex = null; if(currentIndex < questions.length-1){ currentIndex++; refreshQuestionArea(); }});
+      document.getElementById('inlineProgress').textContent = `Question ${currentIndex+1} / ${questions.length}`;
+    }
+
+    function startTimer(){
+      const timerEl = document.getElementById('inlineQuizTimer');
+      if(timerInterval) clearInterval(timerInterval);
+      timerInterval = setInterval(async () => {
+        timeLeftSec--;
+        if(timerEl) timerEl.textContent = formatHMS(timeLeftSec*1000);
+        if(timeLeftSec <= 0){
+          clearInterval(timerInterval);
+          await submitResponses();
+        }
+      }, 1000);
+    }
+
+    async function submitResponses(){
+      // compute answered/skipped/correct/incorrect and points
+      let total = 0, answeredCount = 0, skippedCount = 0, correctCount = 0, incorrectCount = 0;
+      const answersPayload = answers.map((a,i) => {
+        const sel = (typeof a.selectedIndex !== 'undefined' && a.selectedIndex !== null) ? a.selectedIndex : null;
+        if(sel === null) skippedCount++; else answeredCount++;
+        const correct = questions[i].correctIndex;
+        const got = (sel !== null && sel === correct) ? (questions[i].points||1) : 0;
+        if(sel !== null){
+          if(got>0) correctCount++; else incorrectCount++;
+        }
+        total += got;
+        return { selectedIndex: sel, correctIndex: correct, pointsGot: got };
+      });
+
+      try {
+        const payload = {
+          quizId: quiz.id,
+          studentId,
+          studentName: sSnap.data().name || '',
+          classId,
+          answers: answersPayload,
+          score: total,
+          maxScore: questions.reduce((s,q)=>s + (q.points||1),0),
+          submittedAt: Timestamp.now(),
+          // summary fields for easy teacher view
+          answeredCount, skippedCount, correctCount, incorrectCount
+        };
+        if(typeof addDocFn === 'function' && typeof collectionFn === 'function'){
+          await addDocFn(collectionFn(db,'quiz_responses'), payload);
+        } else {
+          await addDoc(collection(db,'quiz_responses'), payload);
+        }
+
+        // show summary inline (no modal)
+        resultArea.innerHTML = renderStudentSummaryInline(payload, quiz.id, { id: studentId, fullName: sSnap.data().name || sSnap.data().fullName, classId });
+        // refresh list
+        if(typeof renderQuizzesForStudent === 'function') renderQuizzesForStudent(studentId);
+      } catch(e){
+        console.error('submitResponses failed', e);
+        resultArea.innerHTML = `<div class="card muted">Submission failed. Try again.</div>`;
+      } finally {
+        if(timerInterval) clearInterval(timerInterval);
+      }
+    }
+
+    // start UI
+    renderInline();
+    startTimer();
+
+    // local helpers
+    function formatHMS(ms){ if(ms<=0) return '00:00:00'; const s = Math.floor(ms/1000); const h = Math.floor(s/3600); const m = Math.floor((s%3600)/60); const r = s%60; return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(r).padStart(2,'0')}`; }
+    function shuffleArray(arr){ const a=(arr||[]).slice(); for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]] } return a; }
+
+  } catch(e){
+    console.error('openTakeQuizInline', e);
+    resultArea.innerHTML = `<div class="card muted">Failed to open quiz.</div>`;
+  }
+}
+window.openTakeQuizInline = openTakeQuizInline;
+
 
 
 
@@ -2520,6 +3047,14 @@ if(mode === 'timetable'){
     hideLoader && hideLoader();
   }
 
+  return;
+}
+if(mode === 'quizzes'){
+  hideCardsUI();
+  const id = studentIdInput.value.trim();
+  if(!id){ message.textContent = 'Fadlan geli ID sax ah.'; studentIdInput.focus(); hideLoader(); return; }
+  await renderQuizzesForStudent(id);
+  hideLoader();
   return;
 }
 
