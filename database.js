@@ -377,15 +377,7 @@ onAuthStateChanged(auth, async user => {
 btnLogout.onclick = async ()=>{ await signOut(auth); window.location.href='login.html'; };
 
 /* data loading */
-async function loadAll(){
-  showLoader({ message: 'Initializing', sub: 'Loading school data…' });
-  try {
-    await Promise.all([loadClasses(), loadSubjects(), loadStudents(), loadExams(), loadTeachers()]);
-    // ... rest of your existing code ...
-  } finally {
-    hideLoader();
-  }
-}
+
 
 async function loadAll(){
   // fetch everything fresh
