@@ -77,80 +77,118 @@ const modal = document.getElementById('modal');
 const modalTitle = document.getElementById('modalTitle');
 const modalBody = document.getElementById('modalBody');
 const modalClose = document.getElementById('modalClose');
-
 const toastContainer = document.getElementById('toast-container');
-const historyEl = document.getElementById('toast-history');
-const historyBtn = document.getElementById('toast-history-btn');
+
 
 const MAX_TOASTS = 5;
 const toastHistory = [];
 
-/* sound */
-const toastSound = new Audio(
-  'data:audio/mp3;base64,//uQxAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAACcQCA'
-);
+/* ---------------- SOUND (uses your asset) ---------------- */
+// point to your file (make sure path is correct relative to the page)
+const toastSound = new Audio('assets/notification.mp3');
+toastSound.preload = 'auto';
+toastSound.volume = 0.9;
 
-historyBtn.onclick = ()=>{
-  historyEl.style.display = historyEl.style.display === 'block' ? 'none' : 'block';
-};
+let audioUnlocked = false; // will flip true after a successful play
+
+// safe play helper — tries to play now, otherwise registers a one-time gesture unlock
+async function playToastSound() {
+  if (!toastSound) return;
+  try {
+    // if audio already unlocked, just restart then play
+    toastSound.currentTime = 0;
+    await toastSound.play();
+    audioUnlocked = true;
+  } catch (err) {
+    // play was blocked by browser autoplay policy — register a one-time unlock on user gesture
+    // we do not spam listeners: use { once: true } so it auto-removes after first gesture
+    const unlock = async () => {
+      try {
+        toastSound.currentTime = 0;
+        await toastSound.play();
+        audioUnlocked = true;
+      } catch (e) {
+        // still blocked — ignore
+      }
+    };
+    document.addEventListener('click', unlock, { once: true, passive: true });
+    document.addEventListener('keydown', unlock, { once: true, passive: true });
+    document.addEventListener('touchstart', unlock, { once: true, passive: true });
+  }
+}
+
+
 
 /**
  * toast(message, type, duration)
+ * type: success | error | warning | info
  */
-function toast(msg, type='info', duration=2200){
-  if(!toastContainer) return;
+function toast(msg, type = 'info', duration = 2200) {
+  if (!toastContainer) return;
 
-  /* queue limit */
-  while(toastContainer.children.length >= MAX_TOASTS){
+  // queue limit
+  while (toastContainer.children.length >= MAX_TOASTS) {
     toastContainer.firstChild.remove();
   }
 
   const toastEl = document.createElement('div');
   toastEl.className = `toast ${type}`;
 
-  const iconMap = { success:'✓', error:'✕', warning:'⚠', info:'ℹ' };
+  const iconMap = { success: '✓', error: '✕', warning: '⚠', info: 'ℹ' };
 
   toastEl.innerHTML = `
-    <div class="icon">${iconMap[type] || 'ℹ'}</div>
+    <div class="icon" aria-hidden="true">${iconMap[type] || 'ℹ'}</div>
     <div class="msg">${msg}</div>
-    <div class="close">✕</div>
-    <div class="bar"></div>
+    <button class="close" aria-label="Close toast">✕</button>
+    <div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"></div>
   `;
 
+  // append
   toastContainer.appendChild(toastEl);
 
-  /* history */
-  toastHistory.unshift({ msg, type, time:new Date().toLocaleTimeString() });
-  renderHistory();
+  // close btn
+  const closeBtn = toastEl.querySelector('.close');
+  if (closeBtn) closeBtn.onclick = () => removeToast(toastEl);
 
-  /* close btn */
-  toastEl.querySelector('.close').onclick = ()=> removeToast(toastEl);
-
-  /* progress bar */
+  // progress bar animation
   const bar = toastEl.querySelector('.bar');
-  bar.style.transition = `transform ${duration}ms linear`;
-  requestAnimationFrame(()=> bar.style.transform = 'scaleX(0)');
+  if (bar) {
+    bar.style.transition = `transform ${duration}ms linear`;
+    // ensure the style change runs in next frame
+    requestAnimationFrame(() => { bar.style.transform = 'scaleX(0)'; });
+  }
 
-  /* sound */
-  try{ toastSound.currentTime=0; toastSound.play(); }catch(e){}
+  // play sound (safe)
+  playToastSound().catch(() => { /* ignore sound failures */ });
 
-  /* auto remove */
-  setTimeout(()=> removeToast(toastEl), duration);
+  // auto remove
+  const autoRemoveTimer = setTimeout(() => removeToast(toastEl), duration);
+
+  // Pause removal on hover / focus (nice UX)
+  toastEl.addEventListener('mouseenter', () => {
+    clearTimeout(autoRemoveTimer);
+    if (bar) bar.style.transition = ''; // pause progress
+  });
+  toastEl.addEventListener('mouseleave', () => {
+    // resume with remaining time (simple approach: remove after small delay)
+    // For simplicity we remove after 800ms when leaving; adjust if you want precise remaining time logic
+    setTimeout(() => removeToast(toastEl), 800);
+    if (bar) {
+      // restart a short finish transition to hide
+      bar.style.transition = `transform 800ms linear`;
+      requestAnimationFrame(() => { bar.style.transform = 'scaleX(0)'; });
+    }
+  });
 }
 
-function removeToast(el){
-  if(!el) return;
-  el.style.opacity='0';
-  el.style.transform='translateY(-6px) scale(.96)';
-  setTimeout(()=> el.remove(), 250);
+function removeToast(el) {
+  if (!el) return;
+  el.style.opacity = '0';
+  el.style.transform = 'translateY(-6px) scale(.96)';
+  setTimeout(() => el.remove(), 260);
 }
 
-function renderHistory(){
-  historyEl.innerHTML = toastHistory
-    .slice(0,20)
-    .map(t=>`<div class="item"><strong>${t.type}</strong> · ${t.msg}<br><small>${t.time}</small></div>`)
-    .join('');
-}
+
 
 
 
@@ -340,6 +378,16 @@ btnLogout.onclick = async ()=>{ await signOut(auth); window.location.href='login
 
 /* data loading */
 async function loadAll(){
+  showLoader({ message: 'Initializing', sub: 'Loading school data…' });
+  try {
+    await Promise.all([loadClasses(), loadSubjects(), loadStudents(), loadExams(), loadTeachers()]);
+    // ... rest of your existing code ...
+  } finally {
+    hideLoader();
+  }
+}
+
+async function loadAll(){
   // fetch everything fresh
   await Promise.all([loadClasses(), loadSubjects(), loadStudents(), loadExams(), loadTeachers()]);
 
@@ -470,6 +518,116 @@ function populateStudentsExamDropdown(){
   }
 }
 
+/* ========== GLOBAL LOADER JS ========== */
+(function(){
+  if(window.__globalLoaderInstalled) return;
+  window.__globalLoaderInstalled = true;
+
+  // create DOM
+  const existing = document.getElementById('globalLoader');
+  let globalLoader = existing;
+  if(!globalLoader){
+    globalLoader = document.createElement('div');
+    globalLoader.id = 'globalLoader';
+    globalLoader.innerHTML = `
+      <div class="gl-card" role="status" aria-live="polite" aria-atomic="true">
+        <div class="gl-spinner" aria-hidden="true"><div class="gl-dot"></div></div>
+        <div class="gl-body">
+          <div class="gl-title">Loading…</div>
+          <div class="gl-sub">Preparing data</div>
+          <div class="gl-progress"><div class="gl-fill" style="width:0%"></div></div>
+        </div>
+        <div class="gl-dots" aria-hidden="true">
+          <div class="gl-dot-sm"></div><div class="gl-dot-sm"></div><div class="gl-dot-sm"></div>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(globalLoader);
+  }
+
+  const card = globalLoader.querySelector('.gl-card');
+  const titleEl = globalLoader.querySelector('.gl-title');
+  const subEl = globalLoader.querySelector('.gl-sub');
+  const fillEl = globalLoader.querySelector('.gl-fill');
+
+  // lock scroll while loader visible
+  function _lockScroll(){ document.documentElement.style.overflow = 'hidden'; document.body.style.overflow = 'hidden'; }
+  function _unlockScroll(){ document.documentElement.style.overflow = ''; document.body.style.overflow = ''; }
+
+  // exported functions
+  window.showLoader = function showLoader(options = {}){
+    // options: { message, sub, progress (0-100), fullscreen (bool), accent }
+    const { message = 'Loading…', sub = 'Please wait', progress = null, fullscreen = false, accent = null } = options || {};
+    titleEl.textContent = message;
+    subEl.textContent = sub;
+    if(typeof accent === 'string' && accent.trim()){
+      card.style.setProperty('--gl-accent', accent);
+    } else {
+      card.style.removeProperty('--gl-accent');
+    }
+    if(progress === null){
+      fillEl.style.width = '0%';
+      fillEl.style.transition = 'none';
+      // subtle indeterminate growth
+      setTimeout(()=> fillEl.style.transition = 'width 400ms linear', 30);
+    } else {
+      const p = Math.max(0, Math.min(100, Number(progress)));
+      fillEl.style.width = p + '%';
+      fillEl.style.transition = 'width 300ms linear';
+    }
+
+    if(fullscreen) globalLoader.classList.add('fullscreen');
+    else globalLoader.classList.remove('fullscreen');
+
+    globalLoader.classList.add('show');
+    _lockScroll();
+
+    // accessibility
+    card.setAttribute('aria-hidden', 'false');
+  };
+
+  window.hideLoader = function hideLoader(){
+    globalLoader.classList.remove('show');
+    _unlockScroll();
+    // clear any inline progress transition
+    setTimeout(()=> {
+      fillEl.style.transition = '';
+      card.removeAttribute('aria-hidden');
+    }, 220);
+  };
+
+  window.updateLoaderProgress = function updateLoaderProgress(percent){
+    if(percent == null) return;
+    const p = Math.max(0, Math.min(100, Number(percent)));
+    fillEl.style.width = p + '%';
+  };
+
+  // small helper to create inline loader markup (returns element)
+  window.createInlineLoader = function createInlineLoader(text = 'Loading'){
+    const el = document.createElement('span');
+    el.className = 'inline-loader';
+    el.innerHTML = `<span class="dot" aria-hidden="true"></span><span class="text">${text}</span>`;
+    return el;
+  };
+
+  // navigation helper: show loader while renderFn runs
+  window.navigateTo = async function navigateTo(pageId, renderFn, opts = {}){
+    // opts can include loaderMessage, loaderSub, fullscreen
+    try {
+      showLoader({ message: opts.loaderMessage || 'Loading page…', sub: opts.loaderSub || 'Fetching data', fullscreen: !!opts.fullscreen, accent: opts.accent || null });
+      // show page skeleton first (non-blocking)
+      try{ showPage(pageId); } catch(e){ console.warn('showPage failed in navigateTo', e); }
+      if(typeof renderFn === 'function') await renderFn();
+    } catch(err){
+      console.error('navigateTo failed', err);
+      // show a brief error toast (safe if toast exists)
+      try{ toast && toast('Failed to load page', 'error', 2800); }catch(e){}
+    } finally {
+      hideLoader();
+    }
+  };
+
+})();
 
 
 /*
@@ -4646,8 +4804,8 @@ function openViewSubjectModal(e){
     setButtonLoading(btn, false);
   };
 }
-
 /* ---------- Add Subject ---------- */
+
 openAddSubject && (openAddSubject.onclick = () => {
   showModal('Add Subject', `
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
@@ -5197,10 +5355,10 @@ function openEditStudentModal(e){
         closeModal();
         await loadStudents();
         renderStudents();
-        toast(`${name} updated`);
+        toast(`${name} updated`,'success');
       }catch(err){
         console.error(err);
-        toast('Failed to update');
+        toast('Failed to update', 'error', 3000);
       }
       setButtonLoading(btn, false);
     };
@@ -5250,8 +5408,8 @@ openAddStudent && (openAddStudent.onclick = () => {
       if(gender && !['Male','Female'].includes(gender)){ alert('Gender must be Male or Female'); setButtonLoading(btn, false); return; }
       if(!id) id = await generateDefaultId('students','STD',9);
       await setDoc(doc(db,'students',id), { studentId:id, fullName:name, motherName: mother || '', phone, parentPhone: parentPhone || '', age, gender: gender || null, fee: fee, classId, status:'active' });
-      closeModal(); await loadStudents(); renderStudents(); toast(`${name} created`);
-    }catch(err){ console.error(err); toast('Failed to create'); }
+      closeModal(); await loadStudents(); renderStudents(); toast(`${name} created`,'success');
+    }catch(err){ console.error(err); toast('Failed to create', 'error', 3000); }
     setButtonLoading(btn, false);
   };
 });
@@ -5283,8 +5441,8 @@ async function deleteOrUnblockStudent(e){
   try{
     await updateDoc(doc(db,'students',s.studentId), { status:'deleted' });
     await setDoc(doc(db,'studentsLatest', s.studentId), { blocked:true, blockMessage:'Removed by admin' }, { merge:true });
-    await loadStudents(); renderStudents(); toast(`${s.fullName} deleted and blocked`);
-  }catch(err){ console.error(err); toast('Failed to delete'); }
+    await loadStudents(); renderStudents(); toast(`${s.fullName} deleted and blocked`,'warning');
+  }catch(err){ console.error(err); toast('Failed to delete', 'error', 3000); }
   setButtonLoading(btn, false);
 }
 
@@ -7563,7 +7721,7 @@ async function openPayModal(btnOrEvent){
         await updateTargetBalanceGeneric(targetType, tx.target_id, -amountCents);
       }
 
-      toast('Payment recorded');
+      toast('Payment recorded','success');
       closeModal();
       await loadTransactions();
       const active = document.querySelector('#pagePayments .tab.active');
@@ -7638,14 +7796,14 @@ async function openAdjustmentModal(btnOrEvent){
       };
       await addDoc(collection(db,'transactions'), tx);
       await updateTargetBalanceGeneric(targetType, tx.target_id, signedCents); // signedCents may be negative or positive
-      toast('Adjustment saved');
+      toast('Adjustment saved','success');
       closeModal();
       await loadTransactions();
       renderPaymentsList('students');
       renderPaymentsList('teachers');
       renderPaymentsList('staff');
       renderDashboard && renderDashboard();
-    }catch(err){ console.error(err); toast('Failed to save adjustment'); }
+    }catch(err){ console.error(err); toast('Failed to save adjustment', 'error', 3000); }
   };
 }
 
@@ -7659,7 +7817,7 @@ async function openViewTransactionsModal(btnOrEvent){
   const targetType = view === 'students' ? 'student' : (view === 'teachers' ? 'teacher' : 'staff');
 
   const target = await resolveTargetByAnyId(view, id);
-  if(!target) return toast('Target not found');
+  if(!target) return toast('Target not found','info');
 
   // fetch transactions for that target
   const snap = await getDocs(collection(db,'transactions'));
