@@ -1,0 +1,109 @@
+/* ========== PROFESSIONAL GLOBAL LOADER ========== */
+/* overlay */
+#globalLoader {
+  position: fixed;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 99800; /* above modal (90k), below toasts (99k) — adjust if needed */
+  background: rgba(3,8,18,0.48);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  padding: 20px;
+}
+
+/* visible */
+#globalLoader.show { display: flex; }
+
+/* card */
+.gl-card {
+  display: flex;
+  gap: 18px;
+  align-items: center;
+  background: linear-gradient(180deg, #fff, #fbfdff);
+  color: #0f1724;
+  border-radius: 12px;
+  padding: 18px 20px;
+  box-shadow: 0 20px 60px rgba(2,6,23,0.18);
+  max-width: 820px;
+  width: 100%;
+  max-height: 84vh;
+  transform-origin: center;
+}
+
+/* dark-friendly */
+@media (prefers-color-scheme: dark){
+  .gl-card { background: linear-gradient(180deg,#071022,#05111a); color: #e6eef8; box-shadow: 0 22px 80px rgba(0,0,0,0.7); }
+}
+
+/* left: spinner */
+.gl-spinner {
+  width: 84px;
+  height: 84px;
+  flex: 0 0 84px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  position: relative;
+}
+
+/* SVG circle style */
+.gl-spinner svg { width: 84px; height: 84px; display:block; }
+.gl-ring { stroke: rgba(11,116,255,0.12); stroke-width: 10; fill: none; }
+.gl-head { stroke: var(--gl-accent, #0b74ff); stroke-width: 10; stroke-linecap: round; fill: none; stroke-dasharray: 100; stroke-dashoffset: 70; transform-origin: center; animation: gl-spin 1.05s linear infinite, gl-head-slide 1.45s ease-in-out infinite; }
+
+/* small inner badge (optional) */
+.gl-badge {
+  position: absolute;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--gl-accent, #0b74ff);
+  display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:12px;
+  box-shadow: 0 8px 18px rgba(11,116,255,0.12);
+  right: 6px; bottom: 6px;
+  transform: translate(0,0);
+}
+
+/* spin animation */
+@keyframes gl-spin { to { transform: rotate(360deg); } }
+/* head pulsing slide */
+@keyframes gl-head-slide {
+  0% { stroke-dashoffset: 100; }
+  50% { stroke-dashoffset: 30; }
+  100% { stroke-dashoffset: 100; }
+}
+
+/* content area */
+.gl-body { flex: 1 1 auto; min-width: 0; }
+.gl-title { font-size: 18px; font-weight: 800; margin-bottom: 6px; }
+.gl-sub { font-size: 13px; color: #6b7280; margin-bottom: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* progress bar */
+.gl-progress {
+  height: 8px;
+  width: 100%;
+  background: rgba(11,116,255,0.06);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.gl-progress .gl-fill {
+  width: 0%;
+  height:100%;
+  background: linear-gradient(90deg, var(--gl-accent,#0b74ff), #06b6d4);
+  transition: width 280ms linear;
+}
+
+/* small trailing dots */
+.gl-dots { display:flex; gap:6px; align-items:center; margin-left:12px; }
+.gl-dot-sm { width:8px; height:8px; border-radius:50%; background: rgba(11,116,255,0.16); animation: gl-dots 1s infinite ease-in-out; }
+.gl-dot-sm:nth-child(2){ animation-delay:.12s } .gl-dot-sm:nth-child(3){ animation-delay:.24s }
+@keyframes gl-dots { 0% { transform: translateY(0); opacity:.6 } 50% { transform: translateY(-6px); opacity:1 } 100% { transform: translateY(0); opacity:.6 } }
+
+/* small responsive tweaks */
+@media(max-width:720px){
+  .gl-card { gap:12px; padding:14px; }
+  .gl-spinner { width:64px; height:64px; flex:0 0 64px; }
+  .gl-title{ font-size:16px }
+}
