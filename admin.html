@@ -1007,6 +1007,87 @@
   border-radius: 0;
 }
 
+/* QUIZ CARD STYLES - responsive for mobile and desktop */
+.quiz-card {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px;
+  border-bottom: 1px solid #eee;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 0 0 rgba(0,0,0,0);
+}
+
+/* layout: left content and right actions */
+.quiz-card .left {
+  flex: 1 1 auto;
+  min-width: 0; /* allow ellipsis */
+}
+.quiz-card .right {
+  flex: 0 0 auto;
+  display:flex;
+  gap:8px;
+  align-items:center;
+}
+
+/* top row: title + status */
+.q-top {
+  display:flex;
+  align-items:center;
+  gap:8px;
+}
+.q-title {
+  font-weight:800;
+  font-size:16px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.q-status {
+  font-weight:700;
+  font-size:12px;
+  padding:4px 8px;
+  border-radius:999px;
+}
+.q-status.active { color:#065f46; background:#dcfce7; border:1px solid #bbf7d0; }
+.q-status.inactive { color:#7f1d1d; background:#fee2e2; border:1px solid #fecaca; }
+
+/* meta rows */
+.q-meta { margin-top:6px; color:#6b7280; font-size:13px; }
+.q-meta .id { display:block; white-space:normal; word-break:break-word; }
+
+/* pill row */
+.q-pills { margin-top:8px; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+.pill {
+  padding:6px 10px;
+  border-radius:999px;
+  font-weight:700;
+  font-size:13px;
+  display:inline-block;
+}
+.pill.duration { background:#eef2ff; color:#3730a3; border:1px solid #dbeafe; }
+.pill.timeleft { background:#fff1f2; color:#b91c1c; border:1px solid #fecaca; }
+
+/* action buttons: allow wrap on small screens */
+.q-actions {
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+  justify-content:flex-end;
+  margin-top:8px;
+}
+.q-actions .btn { white-space:nowrap; }
+
+/* responsive: stack on small screens */
+@media (max-width:820px) {
+  .quiz-card { flex-direction: column; align-items:stretch; }
+  .quiz-card .right { align-self:flex-end; margin-top:4px; }
+  .q-top { gap:6px; }
+  .q-title { font-size:15px; }
+}
+
  </style>
 </head>
 <body>
@@ -1034,6 +1115,9 @@
 
 
     <button id="tabAttendance" class="tab">Attendance</button>
+    <!-- add in your <nav class="tabs"> -->
+    <button id="tabQuizzes" class="tab">Quizzes</button>
+
     <button id="gotoLeaderboardBtn" class="btn">Competition</button>
     <button id="tabRecycle" class="tab">Recycle Bin</button>
     <button id="tabUsers" class="tab">Users</button>
@@ -1106,6 +1190,18 @@
       </div>
       <div id="teachersList"></div>
     </section>
+
+    <!-- Admin Quizzes page -->
+<section id="pageQuizzes" class="page" style="display:none; padding:12px;">
+  <div class="page-header" style="display:flex;gap:8px;align-items:center;margin-bottom:12px;">
+    <input id="adminQuizSearch" type="text" placeholder="Search quizzes (title, id)..." style="flex:1;min-width:180px;padding:8px;border:1px solid #e6eef8;border-radius:6px" />
+    <select id="adminQuizFilterClass" style="min-width:160px"></select>
+    <select id="adminQuizFilterSubject" style="min-width:160px"></select>
+    <button id="btnNewQuizAdmin" class="btn btn-primary">+ Add Quiz</button>
+  </div>
+
+  <div id="adminQuizzesList" style="display:flex;flex-direction:column;gap:8px"></div>
+</section>
 
 
     <!-- Dashboard page (renderDashboard should populate this) -->
