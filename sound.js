@@ -2,8 +2,8 @@
 
 // configure how many files you have — adjust if you create more/less
 const BG_COUNT = 16;       // bg1.mp3 .. bg20.mp3 (your folder)
-const CORRECT_COUNT = 8;  // correct1.mp3 .. correct30.mp3
-const WRONG_COUNT = 33;    // wrong1.mp3 .. wrong30.mp3
+const CORRECT_COUNT = 19;  // correct1.mp3 .. correct30.mp3
+const WRONG_COUNT = 35;    // wrong1.mp3 .. wrong30.mp3
 
 // streak thresholds (files should be named streak10.mp3, streak20.mp3, ...)
 // include higher thresholds you want; if a streak n doesn't match, manager picks nearest lower threshold.
