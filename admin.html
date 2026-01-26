@@ -5,8 +5,10 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Admin — School</title>
 <!-- admin-mobile-styles -->
+ <link rel="stylesheet" href="loading.css">
 
-<style>
+ <style>
+  
   :root{
     --bg:#f8fafc; --card:#fff; --muted:#6b7280; --primary:#0ea5e9; --danger:#ef4444; --radius:12px;
   }
@@ -59,7 +61,8 @@
 
   /* --------- Payments UI tweaks (mobile two-row header, colors, loader) --------- */
 
-/* container row splitting for payments header */
+ 
+  /* container row splitting for payments header */
 .page-header {
   gap: 8px;
 }
@@ -1004,7 +1007,7 @@
   border-radius: 0;
 }
 
-</style>
+ </style>
 </head>
 <body>
   <header>
@@ -1203,8 +1206,6 @@
 
   <div id="toast-container"></div>
 
-  <button id="toast-history-btn" title="Notifications">🔔</button>
-  <div id="toast-history"></div>
   
   <!-- Add these BEFORE database.js -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
