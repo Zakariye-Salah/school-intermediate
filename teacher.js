@@ -198,9 +198,8 @@ async function renderTeacherQuizzesPage(){
         return;
       }
 
-      // Build row HTML (table-like card rows)
       listEl.innerHTML = rows.map(q => {
-        const subj = q.subjectName || (subjectsCache.find(s=>s.id===q.subjectId)||{}).name || '—';
+        const subj = q.subjectName || (subjectsCache.find(s=>s.id===q.subjectId)||{}).name || (q.subject||'—');
         const totalPoints = (q.questions||[]).reduce((s,qq) => s + (qq.points||1),0);
 
         const toMs = (ts) => {
@@ -216,23 +215,36 @@ async function renderTeacherQuizzesPage(){
         const left = endMs ? Math.max(0, endMs - Date.now()) : null;
         const leftText = left === null ? '—' : formatLeftHMS(left);
 
+        // Build a compact card layout (mobile-friendly)
         return `
-          <div class="quiz-row-teacher" data-quizid="${escapeHtml(q.id)}" style="padding:10px;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center">
-            <div style="min-width:0">
-              <div style="font-weight:800">${escapeHtml(q.title || '(untitled)')}</div>
-              <div class="muted" style="font-size:13px">ID: ${escapeHtml(q.id)} • Class: ${escapeHtml(q.classId||'—')} • Subject: ${escapeHtml(subj)}</div>
-              <div class="muted" style="font-size:13px">Duration: ${q.durationMinutes||0}m · Questions: ${ (q.questions||[]).length } · Points: ${ totalPoints }</div>
-              <div style="margin-top:6px" class="muted small">Time left: <span class="teacher-time-left" data-end="${endMs||0}">${escapeHtml(leftText)}</span></div>
+          <div class="quiz-card quiz-row-teacher" data-quizid="${escapeHtml(q.id)}">
+            <div class="left">
+              <div class="q-top">
+                <div class="q-title">${escapeHtml(q.title || '(untitled)')}</div>
+                <div class="q-status ${q.active ? 'active' : 'inactive'}">${q.active ? 'Active' : 'Inactive'}</div>
+              </div>
+
+              <div class="q-meta">
+                <span class="id"><strong>ID:</strong> ${escapeHtml(q.id)}</span>
+                <span class="cls-sub"><strong>Class:</strong> ${escapeHtml(q.classId||'—')} • <strong>Subject:</strong> ${escapeHtml(subj)}</span>
+              </div>
+
+              <div class="q-pills">
+                <span class="pill duration">Duration: ${escapeHtml(String(q.durationMinutes||0))}m</span>
+                <span class="pill timeleft" data-end="${endMs||0}">Time left: ${escapeHtml(leftText)}</span>
+                <span class="muted" style="font-weight:700">Points: ${totalPoints}</span>
+              </div>
             </div>
 
-            <div style="display:flex;gap:8px;align-items:center">
-              <div>${q.active ? `<span style="color:#0ea5e9;font-weight:700">Active</span>` : `<span class="muted">Inactive</span>`}</div>
-              <button class="btn btn-ghost btn-sm open-quiz" data-id="${escapeHtml(q.id)}">Open</button>
-              <button class="btn btn-ghost btn-sm edit-quiz" data-id="${escapeHtml(q.id)}">Edit</button>
-              <button class="btn btn-ghost btn-sm history-quiz" data-id="${escapeHtml(q.id)}">History</button>
-              <button class="btn ${q.active ? 'btn-ghost' : 'btn-primary'} btn-sm toggle-quiz" data-id="${escapeHtml(q.id)}">${q.active ? 'Deactivate' : 'Activate'}</button>
-              <button class="btn btn-sm btn-outline add-time" data-id="${escapeHtml(q.id)}">+ Add time</button>
-              <button class="btn btn-danger btn-sm del-quiz" data-id="${escapeHtml(q.id)}">Delete</button>
+            <div class="right">
+              <div class="q-actions" style="margin:0;">
+                <button class="btn btn-ghost btn-sm open-quiz" data-id="${escapeHtml(q.id)}">Open</button>
+                <button class="btn btn-ghost btn-sm edit-quiz" data-id="${escapeHtml(q.id)}">Edit</button>
+                <button class="btn btn-ghost btn-sm history-quiz" data-id="${escapeHtml(q.id)}">History</button>
+                <button class="btn ${q.active ? 'btn-ghost' : 'btn-primary'} btn-sm toggle-quiz" data-id="${escapeHtml(q.id)}">${q.active ? 'Deactivate' : 'Activate'}</button>
+                <button class="btn btn-sm btn-outline add-time" data-id="${escapeHtml(q.id)}">+ Add time</button>
+                <button class="btn btn-danger btn-sm del-quiz" data-id="${escapeHtml(q.id)}">Delete</button>
+              </div>
             </div>
           </div>
         `;
@@ -249,13 +261,13 @@ async function renderTeacherQuizzesPage(){
       // ensure live teacher ticker runs (update every second)
       if(window._teacherTimeTicker) clearInterval(window._teacherTimeTicker);
       window._teacherTimeTicker = setInterval(() => {
-        document.querySelectorAll('.teacher-time-left').forEach(el => {
+        document.querySelectorAll('.quiz-card .timeleft').forEach(el => {
           const end = Number(el.dataset.end || 0);
-          if(!end || end <= 0){ el.textContent = '—'; return; }
+          if(!end || end <= 0){ el.textContent = 'Time left: —'; return; }
           const left = end - Date.now();
-          if(left <= 0){ el.textContent = '00:00:00'; }
+          if(left <= 0){ el.textContent = 'Time left: 00:00:00'; }
           else {
-            el.textContent = formatLeftHMS(left);
+            el.textContent = 'Time left: ' + formatLeftHMS(left);
           }
         });
       }, 1000);
