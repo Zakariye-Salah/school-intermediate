@@ -1,9 +1,27 @@
 // teacher.js — updated per your requests
 import { auth, db } from './firebase-config.js';
 import { onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/9.22.2/firebase-auth.js';
+// import {
+//   collection, query, where, getDocs, getDoc, doc, setDoc, Timestamp
+// } from 'https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore.js';
+
+// ---------- QUIZ: teacher side (Firestore collection: 'quizzes', responses: 'quiz_responses') ----------
 import {
-  collection, query, where, getDocs, getDoc, doc, setDoc, Timestamp
+  collection,
+  addDoc,
+  setDoc,
+  doc,
+  getDocs,
+  getDoc,
+  updateDoc,
+  deleteDoc,
+  query,
+  where,
+  orderBy,
+  limit,
+  Timestamp
 } from 'https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore.js';
+
 
 /* UI refs (must match teacher.html) */
 const tabProfile = document.getElementById('tabProfile');
@@ -23,8 +41,8 @@ const tabTeacherAnnouncements = document.getElementById('tabTeacherAnnouncements
 const pageTeacherAnnouncements = document.getElementById('pageTeacherAnnouncements');
 const teacherAnnouncementsList = document.getElementById('teacherAnnouncementsList');
 
-
-tabTeacherAnnouncements.onclick = () => showTab('announcements');
+const tabQuizzes = document.getElementById('tabQuizzes');
+const pageQuizzes = document.getElementById('pageTeacherQuizzes');
 
 
 const modalBackdrop = document.getElementById('modalBackdrop');
@@ -44,6 +62,12 @@ function showTab(tab){
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   document.querySelectorAll('.page').forEach(p=>p.style.display='none');
 
+  if(tab === 'quizzes'){
+    tabQuizzes.classList.add('active');
+    pageQuizzes.style.display = 'block';
+    renderTeacherQuizzesPage(); // will be added below
+    return;
+  }
   if(tab === 'profile'){
     tabProfile.classList.add('active');
     pageProfile.style.display = 'block';
@@ -61,6 +85,8 @@ function showTab(tab){
 
 tabProfile.onclick = () => showTab('profile');
 tabAttendance.onclick = () => showTab('attendance');
+tabQuizzes && (tabQuizzes.onclick = () => showTab('quizzes'));
+tabTeacherAnnouncements.onclick = () => showTab('announcements');
 btnLogout.onclick = async ()=> { await signOut(auth); window.location.href='login.html'; };
 
 /* state + caches */
@@ -95,6 +121,7 @@ onAuthStateChanged(auth, async user => {
   try {
     // find teacher doc
     let found = null;
+    
     const q1 = await getDocs(query(collection(db,'teachers'), where('authUid','==', uid)));
     if(q1.size>0) found = q1.docs[0];
     else {
@@ -126,7 +153,602 @@ if(nameEl) nameEl.textContent = currentTeacher.fullName || currentTeacher.teache
     alert('Failed to load teacher record or supporting data');
   }
 });
+function formatLeftHMS(ms){
+  if(!ms || ms<=0) return '00:00:00';
+  const s = Math.floor(ms/1000); const h = Math.floor(s/3600); const m = Math.floor((s%3600)/60); const r = s%60;
+  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(r).padStart(2,'0')}`;
+}
 
+
+// helper: only subjects of selected class that teacher is assigned to
+function subjectsForClassForCurrentTeacher(classNameOrId){
+  const classDoc = (classesCache||[]).find(c => (c.name===classNameOrId || c.id===classNameOrId));
+  if(!classDoc) return [];
+  const classSubjects = Array.isArray(classDoc.subjects) ? classDoc.subjects.map(String) : [];
+  return (currentTeacher.subjects||[]).filter(s => classSubjects.includes(s));
+}
+
+// renderTeacherQuizzesPage — full updated version (live time-left + Add time button)
+async function renderTeacherQuizzesPage(){
+  const listEl = document.getElementById('teacherQuizzesList');
+  const filterEl = document.getElementById('quizFilterClass');
+  if(!listEl || !filterEl) return;
+
+  // populate class filter (teacher classes only)
+  filterEl.innerHTML = '<option value="__all">All your classes</option>';
+  (currentTeacher.classes||[]).forEach(c => {
+    const o = document.createElement('option'); o.value = c; o.textContent = c; filterEl.appendChild(o);
+  });
+
+  try {
+    // load quizzes ordered by createdAt desc
+    const snap = await getDocs(query(collection(db,'quizzes'), orderBy('createdAt','desc')));
+    const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+    // scope: teacher sees quizzes where createdBy === teacher OR quiz.classId in teacher.classes
+    const mySet = docs.filter(x =>
+      (x.createdBy === currentTeacher.id) ||
+      ((x.classId || '') && (currentTeacher.classes||[]).includes(String(x.classId)))
+    );
+
+    function renderListFor(filterClass){
+      const rows = mySet.filter(q => filterClass === '__all' ? true : String(q.classId) === String(filterClass));
+      if(rows.length === 0){
+        listEl.innerHTML = '<div class="muted">No quizzes found.</div>';
+        return;
+      }
+
+      // Build row HTML (table-like card rows)
+      listEl.innerHTML = rows.map(q => {
+        const subj = q.subjectName || (subjectsCache.find(s=>s.id===q.subjectId)||{}).name || '—';
+        const totalPoints = (q.questions||[]).reduce((s,qq) => s + (qq.points||1),0);
+
+        const toMs = (ts) => {
+          if(!ts) return null;
+          if(typeof ts === 'number') return Number(ts);
+          if(ts.seconds) return Number(ts.seconds) * 1000;
+          const p = Date.parse(ts); return isNaN(p) ? null : p;
+        };
+        const startMs = toMs(q.startAt) || toMs(q.createdAt) || null;
+        const endMsExplicit = toMs(q.endAt) || null;
+        const durMs = (Number(q.durationMinutes) || 0) * 60 * 1000;
+        const endMs = endMsExplicit || (startMs ? startMs + durMs : null);
+        const left = endMs ? Math.max(0, endMs - Date.now()) : null;
+        const leftText = left === null ? '—' : formatLeftHMS(left);
+
+        return `
+          <div class="quiz-row-teacher" data-quizid="${escapeHtml(q.id)}" style="padding:10px;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center">
+            <div style="min-width:0">
+              <div style="font-weight:800">${escapeHtml(q.title || '(untitled)')}</div>
+              <div class="muted" style="font-size:13px">ID: ${escapeHtml(q.id)} • Class: ${escapeHtml(q.classId||'—')} • Subject: ${escapeHtml(subj)}</div>
+              <div class="muted" style="font-size:13px">Duration: ${q.durationMinutes||0}m · Questions: ${ (q.questions||[]).length } · Points: ${ totalPoints }</div>
+              <div style="margin-top:6px" class="muted small">Time left: <span class="teacher-time-left" data-end="${endMs||0}">${escapeHtml(leftText)}</span></div>
+            </div>
+
+            <div style="display:flex;gap:8px;align-items:center">
+              <div>${q.active ? `<span style="color:#0ea5e9;font-weight:700">Active</span>` : `<span class="muted">Inactive</span>`}</div>
+              <button class="btn btn-ghost btn-sm open-quiz" data-id="${escapeHtml(q.id)}">Open</button>
+              <button class="btn btn-ghost btn-sm edit-quiz" data-id="${escapeHtml(q.id)}">Edit</button>
+              <button class="btn btn-ghost btn-sm history-quiz" data-id="${escapeHtml(q.id)}">History</button>
+              <button class="btn ${q.active ? 'btn-ghost' : 'btn-primary'} btn-sm toggle-quiz" data-id="${escapeHtml(q.id)}">${q.active ? 'Deactivate' : 'Activate'}</button>
+              <button class="btn btn-sm btn-outline add-time" data-id="${escapeHtml(q.id)}">+ Add time</button>
+              <button class="btn btn-danger btn-sm del-quiz" data-id="${escapeHtml(q.id)}">Delete</button>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      // wire actions
+      listEl.querySelectorAll('.open-quiz').forEach(b => b.onclick = ev => openViewQuizModal(ev.currentTarget.dataset.id));
+      listEl.querySelectorAll('.edit-quiz').forEach(b => b.onclick = ev => openEditQuizModal(ev.currentTarget.dataset.id));
+      listEl.querySelectorAll('.history-quiz').forEach(b => b.onclick = ev => openQuizHistoryModal(ev.currentTarget.dataset.id));
+      listEl.querySelectorAll('.toggle-quiz').forEach(b => b.onclick = ev => toggleActivateQuiz(ev.currentTarget.dataset.id));
+      listEl.querySelectorAll('.del-quiz').forEach(b => b.onclick = ev => deleteQuiz(ev.currentTarget.dataset.id));
+      listEl.querySelectorAll('.add-time').forEach(b => b.onclick = ev => addExtraTime(ev.currentTarget.dataset.id));
+
+      // ensure live teacher ticker runs (update every second)
+      if(window._teacherTimeTicker) clearInterval(window._teacherTimeTicker);
+      window._teacherTimeTicker = setInterval(() => {
+        document.querySelectorAll('.teacher-time-left').forEach(el => {
+          const end = Number(el.dataset.end || 0);
+          if(!end || end <= 0){ el.textContent = '—'; return; }
+          const left = end - Date.now();
+          if(left <= 0){ el.textContent = '00:00:00'; }
+          else {
+            el.textContent = formatLeftHMS(left);
+          }
+        });
+      }, 1000);
+    }
+
+    filterEl.onchange = () => renderListFor(filterEl.value || '__all');
+    renderListFor('__all');
+
+  } catch(err){
+    console.error('renderTeacherQuizzesPage', err);
+    listEl.innerHTML = `<div class="muted">Failed to load quizzes.</div>`;
+  }
+}
+
+
+// ---------- create / edit modal ----------
+// openCreateQuizModal (mobile-friendly, sticky footer)
+async function openCreateQuizModal(prefill){
+  const classOptions = (currentTeacher.classes||[]).map(c=>`<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+  const defaultClass = (prefill && prefill.classId) ? prefill.classId : (currentTeacher.classes && currentTeacher.classes[0]) || '';
+
+  const html = `
+    <div style="display:flex;flex-direction:column;max-height:80vh">
+      <div style="overflow:auto;padding:10px">
+        <label>Title</label><input id="quizTitle" value="${escapeHtml(prefill?.title||'')}" />
+        <label style="margin-top:8px">Class</label>
+        <select id="quizClass">${classOptions}</select>
+
+        <label style="margin-top:8px">Subject (only your assigned subjects for selected class)</label>
+        <select id="quizSubject"></select>
+
+        <label style="margin-top:8px">Duration (minutes)</label>
+        <input id="quizDuration" type="number" min="1" value="${prefill?.durationMinutes || 30}" />
+
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <label><input id="randQuestions" type="checkbox" /> Randomize questions</label>
+          <label><input id="randChoices" type="checkbox" /> Randomize choices</label>
+        </div>
+
+        <div id="questionsEditor" style="margin-top:12px"></div>
+      </div>
+
+      <div style="position:sticky;bottom:0;background:var(--card,#fff);padding:10px;border-top:1px solid #eee;display:flex;justify-content:flex-end;gap:8px">
+        <button id="cancelQuiz" class="btn btn-ghost">Cancel</button>
+        <button id="addQuestionBtn" class="btn btn-ghost">+ Add question</button>
+        <button id="saveQuizBtn" class="btn btn-primary">Save quiz</button>
+      </div>
+    </div>
+  `;
+  showModal('Create quiz', html);
+  modalBody.querySelector('#quizClass').value = defaultClass;
+
+  function refreshSubjectOptions(){
+    const cls = modalBody.querySelector('#quizClass').value;
+    const opts = subjectsForClassForCurrentTeacher(cls).map(s => {
+      const docS = subjectsCache.find(x => x.name === s || x.id === s);
+      const label = docS ? (docS.name || s) : s;
+      const val = docS ? docS.id : s;
+      return `<option value="${escapeHtml(val)}">${escapeHtml(label)}</option>`;
+    }).join('');
+    modalBody.querySelector('#quizSubject').innerHTML = opts || '<option value="">(no subjects assigned)</option>';
+  }
+  refreshSubjectOptions();
+  modalBody.querySelector('#quizClass').onchange = refreshSubjectOptions;
+
+  // questions editor
+  const questions = [{ text:'Example: 1+2 = ?', choices:['1','2','3','4'], correctIndex:2, points:1 }];
+  function renderQuestionsEditor(questionsArr = []) {
+    const root = modalBody.querySelector('#questionsEditor');
+    if(!questionsArr.length){ root.innerHTML = `<div class="muted">No questions yet.</div>`; return; }
+    root.innerHTML = questionsArr.map((q,i)=> {
+      const choicesHtml = (q.choices||[]).map((c,ci)=>`<div style="display:flex;gap:8px;align-items:center"><input name="q${i}_choice" data-q="${i}" data-c="${ci}" type="radio" ${q.correctIndex===ci ? 'checked':''} /> <input class="choiceText" data-q="${i}" data-c="${ci}" value="${escapeHtml(c||'')}" /></div>`).join('');
+      return `<div style="border:1px dashed #e6eef8;padding:8px;margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between"><div style="font-weight:700">Q${i+1}</div><div><button class="btn btn-ghost btn-sm remove-question" data-i="${i}">Remove</button></div></div>
+        <div style="margin-top:6px"><input class="qText" data-q="${i}" value="${escapeHtml(q.text||'')}" style="width:100%" /></div>
+        <div style="margin-top:6px">Points: <input type="number" class="qPoints" data-q="${i}" value="${q.points||1}" min="0" style="width:80px" /></div>
+        <div style="margin-top:8px">${choicesHtml}</div>
+        <div style="margin-top:6px"><button class="btn btn-ghost btn-sm add-choice" data-q="${i}">+ Choice</button></div>
+      </div>`;
+    }).join('');
+
+    // wire
+    root.querySelectorAll('.remove-question').forEach(b => b.onclick = () => { questionsArr.splice(Number(b.dataset.i),1); renderQuestionsEditor(questionsArr); });
+    root.querySelectorAll('.add-choice').forEach(b => b.onclick = () => { const qi = Number(b.dataset.q); questionsArr[qi].choices = questionsArr[qi].choices || []; questionsArr[qi].choices.push('New choice'); renderQuestionsEditor(questionsArr); });
+    root.querySelectorAll('.choiceText').forEach(inp => inp.oninput = () => { const qi = Number(inp.dataset.q), ci = Number(inp.dataset.c); questionsArr[qi].choices[ci] = inp.value; });
+    root.querySelectorAll('.qText').forEach(inp => inp.oninput = () => { questionsArr[Number(inp.dataset.q)].text = inp.value; });
+    root.querySelectorAll('.qPoints').forEach(inp => inp.oninput = () => { questionsArr[Number(inp.dataset.q)].points = Number(inp.value) || 0; });
+    root.querySelectorAll(`input[name^="q"]`).forEach(r => r.onchange = () => { const qi = Number(r.dataset.q), ci = Number(r.dataset.c); questionsArr[qi].correctIndex = ci; });
+  }
+  renderQuestionsEditor(questions);
+
+  modalBody.querySelector('#addQuestionBtn').onclick = () => { questions.push({ text:'New question', choices:['Option A','Option B'], correctIndex:0, points:1 }); renderQuestionsEditor(questions); };
+  modalBody.querySelector('#cancelQuiz').onclick = closeModal;
+
+  modalBody.querySelector('#saveQuizBtn').onclick = async () => {
+    const btn = modalBody.querySelector('#saveQuizBtn'); setButtonLoading(btn, true, 'Saving...');
+    try {
+      const title = (modalBody.querySelector('#quizTitle').value||'').trim();
+      const classId = modalBody.querySelector('#quizClass').value;
+      const subjectId = modalBody.querySelector('#quizSubject').value;
+      const durationMinutes = Number(modalBody.querySelector('#quizDuration').value) || 30;
+      const randomizeQuestions = modalBody.querySelector('#randQuestions').checked;
+      const randomizeChoices = modalBody.querySelector('#randChoices').checked;
+      if(!title || !classId || !subjectId){ toast('Title, class and subject are required'); setButtonLoading(btn,false); return; }
+
+      const qs = questions.map(q => ({ text: (q.text||'').toString(), choices: (q.choices||[]).map(c=> (c||'').toString()), correctIndex: Number(q.correctIndex||0), points: Number(q.points||1) }));
+      const docObj = {
+        title, classId, subjectId,
+        durationMinutes, randomizeQuestions, randomizeChoices,
+        questions: qs,
+        active: false,
+        createdBy: currentTeacher.id,
+        createdAt: Timestamp.now()
+      };
+      await addDoc(collection(db,'quizzes'), docObj);
+      toast('Quiz created');
+      closeModal();
+      await renderTeacherQuizzesPage();
+    } catch(e){
+      console.error('saveQuiz failed', e); toast('Failed to save quiz');
+    } finally { setButtonLoading(btn,false); }
+  };
+}
+
+// showEditQuizModalFull — edit existing quiz (same mobile-friendly layout)
+async function showEditQuizModalFull(qdoc){
+  // qdoc: { id, title, classId, subjectId, durationMinutes, randomizeQuestions, randomizeChoices, questions }
+  const classOptions = (currentTeacher.classes||[]).map(c=>`<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+  const html = `
+    <div style="display:flex;flex-direction:column;max-height:80vh">
+      <div style="overflow:auto;padding:10px">
+        <label>Title</label><input id="e_quizTitle" value="${escapeHtml(qdoc.title||'')}" />
+        <label style="margin-top:8px">Class</label>
+        <select id="e_quizClass">${classOptions}</select>
+
+        <label style="margin-top:8px">Subject</label><select id="e_quizSubject"></select>
+
+        <label style="margin-top:8px">Duration (minutes)</label><input id="e_quizDuration" type="number" min="1" value="${qdoc.durationMinutes||30}" />
+
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <label><input id="e_randQuestions" type="checkbox" ${qdoc.randomizeQuestions ? 'checked' : ''} /> Randomize questions</label>
+          <label><input id="e_randChoices" type="checkbox" ${qdoc.randomizeChoices ? 'checked' : ''} /> Randomize choices</label>
+        </div>
+
+        <div id="e_questionsEditor" style="margin-top:12px"></div>
+      </div>
+
+      <div style="position:sticky;bottom:0;background:var(--card,#fff);padding:10px;border-top:1px solid #eee;display:flex;justify-content:flex-end;gap:8px">
+        <button id="e_cancelQuiz" class="btn btn-ghost">Cancel</button>
+        <button id="e_saveQuizBtn" class="btn btn-primary">Save changes</button>
+      </div>
+    </div>
+  `;
+  showModal('Edit quiz', html);
+  modalBody.querySelector('#e_quizClass').value = qdoc.classId || '';
+
+  function refreshSubjectOptionsE(){
+    const cls = modalBody.querySelector('#e_quizClass').value;
+    const opts = subjectsForClassForCurrentTeacher(cls).map(s => {
+      const docS = subjectsCache.find(x => x.name === s || x.id === s);
+      const label = docS ? (docS.name || s) : s;
+      const val = docS ? docS.id : s;
+      return `<option value="${escapeHtml(val)}">${escapeHtml(label)}</option>`;
+    }).join('');
+    modalBody.querySelector('#e_quizSubject').innerHTML = opts || '<option value="">(no subjects)</option>';
+    modalBody.querySelector('#e_quizSubject').value = qdoc.subjectId || '';
+  }
+  refreshSubjectOptionsE();
+  modalBody.querySelector('#e_quizClass').onchange = refreshSubjectOptionsE;
+
+  // render existing questions
+  const questions = JSON.parse(JSON.stringify(qdoc.questions || []));
+  function renderQuestionsEditorE(){
+    const root = modalBody.querySelector('#e_questionsEditor');
+    if(!questions.length){ root.innerHTML = `<div class="muted">No questions</div>`; return; }
+    root.innerHTML = questions.map((q,i)=>`<div style="border:1px dashed #eee;padding:8px;margin-bottom:6px">
+      <div style="display:flex;justify-content:space-between"><div style="font-weight:700">Q${i+1}</div><div><button class="e_remove_q btn btn-ghost btn-sm" data-i="${i}">Remove</button></div></div>
+      <div style="margin-top:6px"><input class="e_qText" data-q="${i}" value="${escapeHtml(q.text||'')}" style="width:100%"/></div>
+      <div style="margin-top:6px">Points: <input class="e_qPoints" data-q="${i}" value="${q.points||1}" style="width:80px" type="number" min="0"/></div>
+      <div style="margin-top:6px">${(q.choices||[]).map((c,ci)=>`<div style="display:flex;gap:8px;align-items:center"><input name="e_q${i}_choice" data-q="${i}" data-c="${ci}" type="radio" ${q.correctIndex===ci ? 'checked':''}/> <input class="e_choiceText" data-q="${i}" data-c="${ci}" value="${escapeHtml(c||'')}" /></div>`).join('')}</div>
+      <div style="margin-top:6px"><button class="e_add_choice btn btn-ghost btn-sm" data-q="${i}">+ Choice</button></div>
+    </div>`).join('');
+    root.querySelectorAll('.e_remove_q').forEach(b=>b.onclick=()=>{questions.splice(Number(b.dataset.i),1);renderQuestionsEditorE();});
+    root.querySelectorAll('.e_add_choice').forEach(b=>b.onclick=()=>{const qi=Number(b.dataset.q);questions[qi].choices.push('New');renderQuestionsEditorE();});
+    root.querySelectorAll('.e_choiceText').forEach(inp=>inp.oninput=()=>{questions[Number(inp.dataset.q)].choices[Number(inp.dataset.c)] = inp.value;});
+    root.querySelectorAll('.e_qText').forEach(inp=>inp.oninput=()=>{questions[Number(inp.dataset.q)].text = inp.value;});
+    root.querySelectorAll('.e_qPoints').forEach(inp=>inp.oninput=()=>{questions[Number(inp.dataset.q)].points = Number(inp.value)||0;});
+    root.querySelectorAll(`input[name^="e_q"]`).forEach(r=>r.onchange=()=>{const qi=Number(r.dataset.q), ci=Number(r.dataset.c);questions[qi].correctIndex = ci;});
+  }
+  renderQuestionsEditorE();
+
+  modalBody.querySelector('#e_cancelQuiz').onclick = closeModal;
+  modalBody.querySelector('#e_saveQuizBtn').onclick = async () => {
+    const btn = modalBody.querySelector('#e_saveQuizBtn'); setButtonLoading(btn,true,'Saving...');
+    try {
+      const title = (modalBody.querySelector('#e_quizTitle').value||'').trim();
+      const classId = modalBody.querySelector('#e_quizClass').value;
+      const subjectId = modalBody.querySelector('#e_quizSubject').value;
+      const durationMinutes = Number(modalBody.querySelector('#e_quizDuration').value) || 30;
+      const randomizeQuestions = modalBody.querySelector('#e_randQuestions').checked;
+      const randomizeChoices = modalBody.querySelector('#e_randChoices').checked;
+      if(!title || !classId || !subjectId){ toast('Title/class/subject required'); setButtonLoading(btn,false); return; }
+
+      // ensure update path uses doc(db,'quizzes', id)
+      await updateDoc(doc(db,'quizzes', qdoc.id), {
+        title, classId, subjectId, durationMinutes, randomizeQuestions, randomizeChoices, questions, updatedAt: Timestamp.now()
+      });
+      toast('Quiz updated');
+      closeModal();
+      await renderTeacherQuizzesPage();
+    } catch(e){ console.error('update quiz', e); toast('Failed to update'); }
+    setButtonLoading(btn,false);
+  };
+}
+
+
+
+async function openEditQuizModal(quizId){
+  try {
+    const snap = await getDoc(doc(db,'quizzes', quizId));
+    if(!snap.exists()) return toast('Quiz not found');
+    const qdoc = { id: snap.id, ...snap.data() };
+    // open dedicated edit modal for updates
+    showEditQuizModalFull(qdoc);
+  } catch(e){ console.error(e); toast('Failed to load quiz'); }
+}
+
+
+
+// ensure button opens the create-quiz modal
+try {
+  const newQuizBtn = document.getElementById('btnNewQuiz');
+  if (newQuizBtn) {
+    newQuizBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      try {
+        // openCreateQuizModal should exist in this file
+        if (typeof openCreateQuizModal === 'function') {
+          openCreateQuizModal({});
+        } else {
+          console.error('openCreateQuizModal is not defined');
+          toast('Quiz editor not available (function missing).');
+        }
+      } catch (err) {
+        console.error('Failed to open quiz modal', err);
+        toast('Failed to open quiz editor');
+      }
+    });
+  } else {
+    console.warn('#btnNewQuiz not found in DOM');
+  }
+} catch (err) {
+  console.error('btnNewQuiz wiring error', err);
+}
+
+
+
+// ---------- delete ----------
+async function deleteQuiz(id){
+  const ok = await modalConfirm('Delete quiz','Delete permanently? This will remove all students references.');
+  if(!ok) return;
+  try {
+    await deleteDoc(doc(db,'quizzes', id));
+    toast('Deleted');
+    await renderTeacherQuizzesPage();
+  } catch(e){ console.error(e); toast('Delete failed'); }
+}
+
+async function toggleActivateQuiz(id){
+  try {
+    const snap = await getDoc(doc(db,'quizzes',id));
+    if(!snap.exists()) return toast('Quiz not found');
+    const cur = snap.data();
+    const isActive = !!cur.active;
+    const updates = { active: !isActive, updatedAt: Timestamp.now() };
+
+    // if activating now and no startAt, set startAt = now, and endAt = now + duration (or existing endAt)
+    if(!isActive){
+      const hasStart = !!cur.startAt;
+      const nowTs = Timestamp.now();
+      if(!hasStart){
+        updates.startAt = nowTs;
+        // compute endAt from durationMinutes if not present
+        const dur = Number(cur.durationMinutes || 0);
+        if(dur > 0){
+          const endMs = Date.now() + dur * 60 * 1000;
+          updates.endAt = Timestamp.fromMillis ? Timestamp.fromMillis(endMs) : nowTs; // fallback if fromMillis missing
+          // If fromMillis not available in your SDK, set endAt as plain number or use admin to set it.
+          // Many SDKs support Timestamp.fromMillis — keep this line.
+        }
+      }
+    }
+    await updateDoc(doc(db,'quizzes',id), updates);
+    toast(!isActive ? 'Activated' : 'Deactivated');
+    await renderTeacherQuizzesPage();
+  } catch(e){ console.error('Toggle failed', e); toast('Toggle failed'); }
+}
+
+
+
+// ---------- open quick view modal (teacher) ----------
+async function openViewQuizModal(id){
+  const snap = await getDoc(doc(db,'quizzes', id));
+  if(!snap.exists()) return toast('Not found');
+  const qd = { id: snap.id, ...snap.data() };
+  // counts: total students in class, submissions, pending
+  const classStudents = studentsCache.filter(s => String(s.classId||s.class||s.className||'') === String(qd.classId||''));
+  const totalStudents = classStudents.length;
+  const respSnap = await getDocs(query(collection(db,'quiz_responses'), where('quizId','==', qd.id)));
+  const totalSubmitted = respSnap.size;
+  const notSubmitted = totalStudents - totalSubmitted;
+  const html = `
+    <div>
+      <div style="font-weight:800">${escapeHtml(qd.title)}</div>
+      <div class="muted">Quiz ID: ${qd.id} · Class: ${escapeHtml(qd.classId||'')} · Subject: ${escapeHtml(qd.subjectName||'')}</div>
+      <div style="margin-top:8px">Duration: ${qd.durationMinutes} minutes</div>
+      <div style="margin-top:8px">Total students: ${totalStudents} · Submitted: ${totalSubmitted} · Not yet: ${notSubmitted}</div>
+      <div style="margin-top:12px;text-align:right">
+        <button id="openQuizHistoryInView" class="btn btn-ghost">Open history</button>
+        <button id="closeViewQuiz" class="btn btn-ghost">Close</button>
+      </div>
+    </div>
+  `;
+  showModal(`Quiz — ${escapeHtml(qd.title)}`, html);
+  modalBody.querySelector('#closeViewQuiz').onclick = closeModal;
+  modalBody.querySelector('#openQuizHistoryInView').onclick = () => { closeModal(); openQuizHistoryModal(qd.id); };
+}
+
+
+// openQuizHistoryModal — single column layout (header -> summary -> students list with rank)
+async function openQuizHistoryModal(quizId){
+  const snap = await getDoc(doc(db,'quizzes',quizId));
+  if(!snap.exists()) return toast('Quiz not found');
+  const qd = { id: snap.id, ...snap.data() };
+
+  // fetch responses ordered by score desc for ranking
+  const respSnap = await getDocs(query(collection(db,'quiz_responses'), where('quizId','==', quizId), orderBy('score','desc')));
+  const responses = respSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+  // compute question-level summary (percent correct)
+  const questions = qd.questions || [];
+  const qStats = questions.map((q,i)=>({ index:i, total:0, correct:0 }));
+  responses.forEach(r => {
+    (r.answers||[]).forEach((a, ai) => {
+      qStats[ai] = qStats[ai] || { index: ai, total:0, correct:0 };
+      qStats[ai].total++;
+      if(typeof a.selectedIndex !== 'undefined' && a.selectedIndex === (questions[ai]?.correctIndex)) qStats[ai].correct++;
+    });
+  });
+  const summaryHtml = qStats.map(s => {
+    const pct = s.total ? Math.round((s.correct/s.total)*100) : 0;
+    const qtxt = escapeHtml(questions[s.index]?.text || `Q${s.index+1}`);
+    return `<div style="padding:6px;border-bottom:1px solid #f1f5f9"><div style="font-weight:700">${qtxt}</div><div class="muted">${pct}% correct (${s.correct}/${s.total})</div></div>`;
+  }).join('') || `<div class="muted">No question data yet.</div>`;
+
+  // students list (rank, name, id, class, score, view)
+  const studentsHtml = responses.map((r, idx) => {
+    const name = escapeHtml(r.studentName || r.studentId || 'Student');
+    const sid = escapeHtml(r.studentId || '');
+    const cls = escapeHtml(r.classId || '');
+    const score = String(r.score || 0);
+    return `<div style="padding:8px;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center">
+      <div style="min-width:0">
+        <div style="font-weight:700">${idx+1}. ${name}</div>
+        <div class="muted small">ID: ${sid} • Class: ${cls}</div>
+      </div>
+      <div style="text-align:right;display:flex;flex-direction:column;gap:6px;align-items:flex-end">
+        <div style="font-weight:900">${score}</div>
+        <div><button class="btn btn-ghost btn-sm view-resp" data-id="${r.id}">View</button></div>
+      </div>
+    </div>`;
+  }).join('') || `<div class="muted">No responses yet.</div>`;
+
+  // header details (single column)
+  const subj = qd.subjectName || (subjectsCache.find(s=>s.id===qd.subjectId)||{}).name || '—';
+  const status = qd.active ? '<span style="color:#0ea5e9;font-weight:700">Active</span>' : '<span class="muted">Inactive</span>';
+  const html = `
+    <div style="max-height:80vh;overflow:auto;padding:10px">
+      <div style="margin-bottom:8px">
+        <div style="font-weight:900">${escapeHtml(qd.title)}</div>
+        <div class="muted small">Quiz ID: ${qd.id} • Class: ${escapeHtml(qd.classId||'')} • Subject: ${escapeHtml(subj)} • ${status}</div>
+      </div>
+
+      <div style="margin-top:12px">
+        <div style="font-weight:800">Question summary</div>
+        <div style="margin-top:8px">${summaryHtml}</div>
+      </div>
+
+      <div style="margin-top:12px">
+        <div style="font-weight:800">Student responses (${responses.length})</div>
+        <div style="margin-top:8px">${studentsHtml}</div>
+      </div>
+
+      <div style="margin-top:12px;text-align:right">
+        <button id="qhAddTime" class="btn btn-sm">+ Add time</button>
+        <button id="qhClose" class="btn btn-ghost btn-sm">Close</button>
+      </div>
+    </div>
+  `;
+
+  showModal(`History — ${escapeHtml(qd.title)}`, html);
+
+  // wire Add time and Close
+  document.getElementById('qhClose').onclick = closeModal;
+  document.getElementById('qhAddTime').onclick = async () => {
+    closeModal();
+    await addExtraTime(qd.id); // uses your existing addExtraTime helper
+  };
+
+  // wire view buttons for each response
+  modalBody.querySelectorAll('.view-resp').forEach(b => b.onclick = async (ev) => {
+    const rid = ev.currentTarget.dataset.id;
+    const rdoc = await getDoc(doc(db,'quiz_responses',rid));
+    if(!rdoc.exists()) return toast('Response not found');
+    const r = { id: rdoc.id, ...rdoc.data() };
+    // show a simple response modal with summary + optional per-question details
+    const answersHtml = (r.answers || []).map((a,i)=> {
+      const q = questions[i] || {};
+      const sel = typeof a.selectedIndex !== 'undefined' ? a.selectedIndex : null;
+      const correctIdx = q.correctIndex;
+      const choiceText = sel!==null && q.choices ? escapeHtml(q.choices[sel]||'') : '<em>Skipped</em>';
+      const correctText = (q.choices && typeof correctIdx!=='undefined') ? escapeHtml(q.choices[correctIdx]||'') : '—';
+      const pts = (sel === correctIdx) ? (q.points||1) : 0;
+      return `<div style="padding:8px;border-bottom:1px solid #f1f5f9"><div style="font-weight:700">${escapeHtml(q.text||`Q${i+1}`)}</div><div class="muted">Selected: ${choiceText} · Correct: ${correctText} · Points: ${pts}</div></div>`;
+    }).join('');
+
+    showModal(`${escapeHtml(r.studentName||r.studentId||'Student')} — ${escapeHtml(qd.title)}`,
+      `<div style="font-weight:800">${escapeHtml(r.studentName||r.studentId||'Student')}</div>
+       <div class="muted">Score: ${r.score || 0} / ${r.maxScore || 0}</div>
+       <div style="margin-top:8px">${answersHtml}</div>`
+    );
+  });
+}
+
+
+async function addExtraTime(quizId){
+  const minutes = Number(prompt('Add how many minutes to this quiz? (enter integer minutes)', '5'));
+  if(!minutes || isNaN(minutes) || minutes <= 0) return toast('Cancelled or invalid minutes');
+  try {
+    const snap = await getDoc(doc(db,'quizzes', quizId));
+    if(!snap.exists()) return toast('Quiz not found');
+    const q = snap.data();
+    // compute existing endMs
+    const toMs = (ts) => {
+      if(!ts) return null;
+      if(typeof ts === 'number') return Number(ts);
+      if(ts.seconds) return Number(ts.seconds) * 1000;
+      const p = Date.parse(ts); return isNaN(p) ? null : p;
+    };
+    const startMs = toMs(q.startAt) || toMs(q.createdAt) || Date.now();
+    const endMsExplicit = toMs(q.endAt) || null;
+    const durationMs = (Number(q.durationMinutes) || 0) * 60 * 1000;
+    const endMsComputed = startMs ? startMs + durationMs : (Date.now() + durationMs);
+    const currentEnd = endMsExplicit || endMsComputed || Date.now();
+    const newEnd = currentEnd + minutes * 60 * 1000;
+    // update endAt (use Timestamp.fromMillis)
+    await updateDoc(doc(db,'quizzes', quizId), { endAt: Timestamp.fromMillis ? Timestamp.fromMillis(newEnd) : newEnd, updatedAt: Timestamp.now() });
+    toast(`Added ${minutes} minutes`);
+    await renderTeacherQuizzesPage();
+  } catch(e){ console.error('addExtraTime failed', e); toast('Failed to add time'); }
+}
+
+// small fallback helpers (safe to keep)
+function setButtonLoading(btn, isLoading, text) {
+  if (!btn) return;
+  if (isLoading) {
+    btn.dataset._orig = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = text || '...';
+  } else {
+    btn.disabled = false;
+    if (btn.dataset._orig) { btn.innerHTML = btn.dataset._orig; delete btn.dataset._orig; }
+  }
+}
+
+async function modalConfirm(title, htmlMessage) {
+  return new Promise(resolve => {
+    showModal(title, `
+      <div style="margin-bottom:16px">${htmlMessage}</div>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button class="btn btn-ghost" id="mcCancel">Cancel</button>
+        <button class="btn btn-danger" id="mcOk">Yes</button>
+      </div>
+    `);
+
+    document.getElementById('mcCancel').onclick = () => {
+      closeModal(); resolve(false);
+    };
+    document.getElementById('mcOk').onclick = () => {
+      closeModal(); resolve(true);
+    };
+  });
+}
 
 /* -----------------------------
   TEACHER: announcements rendering
