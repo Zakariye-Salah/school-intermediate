@@ -1694,64 +1694,122 @@ async function toggleActivateQuiz(id){
 
 
 // ---------- open quick view modal (teacher) ----------
-async function openViewQuizModal(id){
-  const snap = await getDoc(doc(db,'quizzes', id));
-  if(!snap.exists()) return toast('Not found');
+async function openQuizHistoryModal(quizId){
+  const snap = await getDoc(doc(db,'quizzes',quizId));
+  if(!snap.exists()) return toast && toast('Quiz not found');
   const qd = { id: snap.id, ...snap.data() };
-  // counts: total students in class, submissions, pending
-  const classStudents = studentsCache.filter(s => String(s.classId||s.class||s.className||'') === String(qd.classId||''));
-  const totalStudents = classStudents.length;
-  const respSnap = await getDocs(query(collection(db,'quiz_responses'), where('quizId','==', qd.id)));
 
-    // -------- compute submission counts (cheap) ----------
-    let totalSubmitted = 0;
-    try {
-      // 1) preferred: if quiz doc already has a counter field, use it
-      if (typeof qd.responsesCount === 'number') {
-        totalSubmitted = qd.responsesCount;
-      } else if (typeof getCountFromServer === 'function') {
-        // 2) next: use Firestore aggregation (count) to avoid fetching all docs
-        try {
-          const aggSnap = await getCountFromServer(query(collection(db,'quiz_responses'), where('quizId','==', qd.id)));
-          totalSubmitted = aggSnap.data().count || 0;
-        } catch(e) {
-          console.warn('getCountFromServer failed, falling back', e);
-          totalSubmitted = 0;
-        }
-      } else {
-        // 3) fallback: limit the read to a safe ceiling (avoid unbounded reads)
-        //    This is not ideal — better to maintain a counter.
-        const SAFE_LIMIT = 1000; // tune to policy; still may be heavy if many responses exist
-        const respSnap = await getDocs(query(collection(db,'quiz_responses'), where('quizId','==', qd.id), limit(SAFE_LIMIT)));
-        totalSubmitted = respSnap.size;
-        if (respSnap.size >= SAFE_LIMIT) {
-          // warn admin that counts may be incomplete — encourage server counter
-          console.warn('Response count truncated to SAFE_LIMIT; consider adding a server-side counter');
-        }
-      }
-    } catch(e){
-      console.warn('Counting responses failed', e);
-      totalSubmitted = qd.responsesCount || 0;
+  const respSnap = await getDocs(query(collection(db,'quiz_responses'), where('quizId','==', quizId), orderBy('score','desc')));
+  const responses = respSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+  // fill missing studentName by looking up studentsCache
+  responses.forEach(r => {
+    if(!r.studentName || String(r.studentName).trim() === ''){
+      const s = (window.studentsCache||[]).find(ss => String(ss.id) === String(r.studentId) || String(ss.studentId) === String(r.studentId) || String(ss.number) === String(r.studentId));
+      r.studentName = s ? (s.fullName || s.name || s.studentId || r.studentId) : (r.studentId || 'Student');
     }
-  
-    const notSubmitted = Math.max(0, totalStudents - totalSubmitted);
+  });
 
+  // compute question-level summary
+  const questions = qd.questions || [];
+  const qStats = questions.map((q,i)=>({ index:i, total:0, correct:0 }));
+  responses.forEach(r => {
+    (r.answers||[]).forEach((a, ai) => {
+      qStats[ai] = qStats[ai] || { index:ai, total:0, correct:0 };
+      qStats[ai].total++;
+      const selectedOriginal = (typeof a.selectedOriginalIndex !== 'undefined' && a.selectedOriginalIndex !== null) ? a.selectedOriginalIndex : (typeof a.selectedIndex !== 'undefined' ? a.selectedIndex : null);
+      if(selectedOriginal !== null && selectedOriginal === (questions[ai]?.correctIndex)) qStats[ai].correct++;
+    });
+  });
+  const summaryHtml = qStats.map(s => {
+    const pct = s.total ? Math.round((s.correct/s.total)*100) : 0;
+    const qtxt = escapeHtml(questions[s.index]?.text || `Q${s.index+1}`);
+    return `<div style="padding:6px;border-bottom:1px solid #f1f5f9"><div style="font-weight:700">${qtxt}</div><div class="muted">${pct}% correct (${s.correct}/${s.total})</div></div>`;
+  }).join('') || `<div class="muted">No question data yet.</div>`;
+
+  // students list HTML
+  const studentsHtml = responses.map((r, idx) => {
+    const name = escapeHtml(r.studentName || r.studentId || 'Student');
+    const sid = escapeHtml(r.studentId || '');
+    const cls = escapeHtml(r.classId || r.class || '');
+    const score = String(r.score || 0);
+    return `<div style="padding:8px;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center">
+      <div style="min-width:0">
+        <div style="font-weight:700">${idx+1}. ${name}</div>
+        <div class="muted small">ID: ${sid} • Class: ${cls}</div>
+      </div>
+      <div style="text-align:right;display:flex;flex-direction:column;gap:6px;align-items:flex-end">
+        <div style="font-weight:900">${score}</div>
+        <div><button class="btn btn-ghost btn-sm view-resp" data-id="${r.id}">View</button></div>
+      </div>
+    </div>`;
+  }).join('') || `<div class="muted">No responses yet.</div>`;
+
+  const subj = qd.subjectName || ((window.subjectsCache||[]).find(s=>s.id===qd.subjectId)||{}).name || '—';
+  const status = qd.active ? '<span style="color:#0ea5e9;font-weight:700">Active</span>' : '<span class="muted">Inactive</span>';
   const html = `
-    <div>
-      <div style="font-weight:800">${escapeHtml(qd.title)}</div>
-      <div class="muted">Quiz ID: ${qd.id} · Class: ${escapeHtml(qd.classId||'')} · Subject: ${escapeHtml(qd.subjectName||'')}</div>
-      <div style="margin-top:8px">Duration: ${qd.durationMinutes} minutes</div>
-      <div style="margin-top:8px">Total students: ${totalStudents} · Submitted: ${totalSubmitted} · Not yet: ${notSubmitted}</div>
+    <div style="max-height:80vh;overflow:auto;padding:10px">
+      <div style="margin-bottom:8px">
+        <div style="font-weight:900">${escapeHtml(qd.title)}</div>
+        <div class="muted small">Quiz ID: ${qd.id} • Class: ${escapeHtml(displayClassList(qd))} • Subject: ${escapeHtml(subj)} • ${status}</div>
+      </div>
+
+      <div style="margin-top:12px">
+        <div style="font-weight:800">Question summary</div>
+        <div style="margin-top:8px">${summaryHtml}</div>
+      </div>
+
+      <div style="margin-top:12px">
+        <div style="font-weight:800">Student responses (${responses.length})</div>
+        <div style="margin-top:8px">${studentsHtml}</div>
+      </div>
+
       <div style="margin-top:12px;text-align:right">
-        <button id="openQuizHistoryInView" class="btn btn-ghost">Open history</button>
-        <button id="closeViewQuiz" class="btn btn-ghost">Close</button>
+        <button id="qhAddTime" class="btn btn-sm">+ Add time</button>
+        <button id="qhClose" class="btn btn-ghost btn-sm">Close</button>
       </div>
     </div>
   `;
-  showModal(`Quiz — ${escapeHtml(qd.title)}`, html);
-  modalBody.querySelector('#closeViewQuiz').onclick = closeModal;
-  modalBody.querySelector('#openQuizHistoryInView').onclick = () => { closeModal(); openQuizHistoryModal(qd.id); };
+
+  // show as standard modal (replace your existing showModal call) - it will be scrollable and responsive
+  showModal(`History — ${escapeHtml(qd.title)}`, html);
+
+  // wire buttons
+  document.getElementById('qhClose').onclick = closeModal;
+  document.getElementById('qhAddTime').onclick = async () => {
+    closeModal();
+    // your existing addExtraTime function should update quiz.endAt in Firestore
+    await addExtraTime(qd.id);
+  };
+
+  // wire view buttons to open stacked (so history modal stays underneath)
+  modalBody.querySelectorAll('.view-resp').forEach(b => b.onclick = async (ev) => {
+    const rid = ev.currentTarget.dataset.id;
+    const rdoc = await getDoc(doc(db,'quiz_responses',rid));
+    if(!rdoc.exists()) return toast && toast('Response not found');
+    const r = { id: rdoc.id, ...rdoc.data() };
+    if(!r.studentName || String(r.studentName).trim()===''){
+      const s = (window.studentsCache||[]).find(ss => String(ss.id) === String(r.studentId) || String(ss.studentId) === String(r.studentId) || String(ss.number) === String(r.studentId));
+      r.studentName = s ? (s.fullName || s.name || s.studentId || r.studentId) : (r.studentId || 'Student');
+    }
+
+    // build answers HTML using question list from qd.questions (fallback if missing)
+    const answersHtml = (r.answers || []).map((a,i)=> {
+      const q = (qd.questions || [])[i] || {};
+      const selectedOriginal = (typeof a.selectedOriginalIndex !== 'undefined' && a.selectedOriginalIndex !== null) ? a.selectedOriginalIndex : (typeof a.selectedIndex !== 'undefined' ? a.selectedIndex : null);
+      const correctIdx = q.correctIndex;
+      const choiceText = selectedOriginal!==null && q.choices ? escapeHtml(q.choices[selectedOriginal]||'') : '<em>Skipped</em>';
+      const correctText = (q.choices && typeof correctIdx!=='undefined') ? escapeHtml(q.choices[correctIdx]||'') : '—';
+      const pts = (selectedOriginal === correctIdx) ? (q.points||1) : 0;
+      return `<div style="padding:8px;border-bottom:1px solid #f1f5f9"><div style="font-weight:700">${escapeHtml(q.text||`Q${i+1}`)}</div><div class="muted">Selected: ${choiceText} · Correct: ${correctText} · Points: ${pts}</div></div>`;
+    }).join('');
+
+    showStackedModal(`${escapeHtml(r.studentName||r.studentId||'Student')} — ${escapeHtml(qd.title)}`, `<div style="font-weight:800">${escapeHtml(r.studentName||r.studentId||'Student')}</div>
+       <div class="muted">Score: ${r.score || 0} / ${r.maxScore || 0}</div>
+       <div style="margin-top:8px">${answersHtml}</div>`);
+  });
 }
+
 
 
 // openQuizHistoryModal — single column layout (header -> summary -> students list with rank)
