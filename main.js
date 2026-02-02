@@ -9,7 +9,7 @@ import { db } from './firebase-config.js';
 // or your project's firebase import style — just ensure orderBy & limit are present
 
 // -------- STUDENT: render quizzes for a student (main.js) --------
-import { collection, where,orderBy,query as qFn, where as whereFn, getDocs,getDoc ,doc,query,getDoc as getDocFn, limit ,addDoc as addDocFn, collection as collectionFn, setDoc as setDocFn, doc as docFn, orderBy as orderByFn , updateDoc, deleteDoc, Timestamp} 
+import { collection, where,orderBy,query as qFn, where as whereFn, getDocs,getDoc ,doc,query,getDoc as getDocFn, limit ,addDoc,addDoc as addDocFn, collection as collectionFn, setDoc as setDocFn, doc as docFn, orderBy as orderByFn , updateDoc, deleteDoc, Timestamp} 
 from 'https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore.js';
 
 
@@ -2527,172 +2527,100 @@ window.renderTimetableViewerForStudent = renderTimetableViewerForStudent;
 
 
 
+// ensure value is an array
+function ensureArray(v){
+  if(!v && v !== 0) return [];
+  return Array.isArray(v) ? v : [v];
+}
+// Intersection of subjects lists across multiple class ids/names
 
-// ---------------- STUDENT SIDE ----------------
-// RENDERS active (takeable) QUIZZES FOR STUDENT — inline list with live HH:MM:SS time-left
-async function renderQuizzesForStudent(studentId){
-  const resultArea = document.getElementById('resultArea');
-  if(!resultArea) return;
+function subjectsIntersectionForClassIds(classIds){
+  if(!classIds || classIds.length === 0) return [];
+  const lists = classIds.map(cid => {
+    const cls = (classesCache||[]).find(c => String(c.id) === String(cid) || String(c.name) === String(cid));
+    if(!cls) return [];
+    return Array.isArray(cls.subjects) ? cls.subjects.map(String) : [];
+  }).filter(l => l && l.length);
+  if(lists.length === 0) return [];
+  return lists.reduce((acc, list) => acc.filter(x => list.includes(x)));
+}
 
-  resultArea.style.display = 'block';
-  resultArea.innerHTML = `<div class="card muted">Loading quizzes…</div>`;
+// Display helpers for UI prints (class/subject)
+function displayClassList(q){
+  const arr = ensureArray(q.classIds || q.classId || q.class);
+  return arr.length ? arr.map(x => escapeHtml(String(x))).join(', ') : '—';
+}
+function displaySubjectList(q){
+  const arr = ensureArray(q.subjectIds || q.subjectId || q.subject || q.subjectName);
+  if(!arr.length) return '—';
+  return arr.map(sid => {
+    const sdoc = (subjectsCache||[]).find(s => String(s.id) === String(sid) || String(s.name) === String(sid));
+    return escapeHtml(sdoc ? (sdoc.name || sdoc.id) : sid);
+  }).join(', ');
+}
 
-  try {
-    // load student
-    const sSnap = (typeof getDocFn === 'function' && typeof docFn === 'function')
-      ? await getDocFn(docFn(db,'students', studentId))
-      : await getDoc(doc(db,'students', studentId)).catch(()=>null);
-    if(!sSnap || !sSnap.exists()){ resultArea.innerHTML = `<div class="card muted">Student not found.</div>`; return; }
-    const sData = sSnap.data();
-    const classId = sData.classId || sData.class || sData.className;
-    if(!classId){ resultArea.innerHTML = `<div class="card muted">No class assigned.</div>`; return; }
 
-    // fetch quizzes for class
-    const collFn = typeof collectionFn === 'function' ? collectionFn : collection;
-    const qFnLocal = typeof query === 'function' ? query : null;
-    const whereFnLocal = typeof where === 'function' ? where : null;
-    const orderByFnLocal = typeof orderBy === 'function' ? orderBy : null;
-    const q = qFnLocal ? qFnLocal(collFn(db,'quizzes'), whereFnLocal('classId','==', classId), orderByFnLocal ? orderByFnLocal('createdAt','desc') : undefined) : null;
-    const snap = q ? await getDocs(q) : await getDocs(collFn(db,'quizzes'));
-    const docs = (snap && snap.docs) ? snap.docs.map(d => ({ id: d.id, ...d.data() })) : [];
+function shuffleWithIndex(arr){
+  const tmp = arr.map((it,i)=>({it,i}));
+  for(let i=tmp.length-1;i>0;i--){ const j = Math.floor(Math.random()*(i+1)); [tmp[i],tmp[j]]=[tmp[j],tmp[i]]; }
+  return tmp.map(x => ({ item: x.it, originalIndex: x.i }));
+}
 
-    // fetch all responses by this student to prevent retakes
-    const respSnap = await getDocs(query(collection(db,'quiz_responses'), where('studentId','==', String(studentId))));
-    const respondedIds = new Set(respSnap.docs.map(d=>d.data().quizId));
-
-    // helpers
-    const toMs = (ts) => {
-      if(!ts) return null;
-      if(typeof ts === 'number') return Number(ts);
-      if(ts.seconds) return Number(ts.seconds)*1000;
-      const p = Date.parse(ts);
-      return isNaN(p) ? null : p;
-    };
-    const nowMs = Date.now();
-    const formatHMS = (ms) => {
-      if(ms <= 0) return '00:00:00';
-      const s = Math.floor(ms/1000);
-      const h = Math.floor(s/3600); const m = Math.floor((s%3600)/60); const r = s%60;
-      return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(r).padStart(2,'0')}`;
-    };
-
-    // Filter only quizzes that are active AND in active window (students see only currently open)
-    const visible = docs.filter(qd => {
-      if(!qd.active) return false;
-      const startMs = toMs(qd.startAt) || toMs(qd.createdAt) || null;
-      const endMsExplicit = toMs(qd.endAt) || null;
-      const durationMs = (Number(qd.durationMinutes) || 0) * 60 * 1000;
-      const endMsComputed = startMs ? (startMs + durationMs) : null;
-      const endMs = endMsExplicit || endMsComputed;
-      if(!startMs || !endMs) return false; // hide ambiguous timing for safety
-      return (nowMs >= startMs && nowMs < endMs);
-    });
-
-    if(!visible.length){
-      resultArea.innerHTML = `<div class="card muted">No active quizzes for your class right now.</div>`;
-      return;
-    }
-
-    // build table-like list: title, id, class, subject, total points, time-left, action
-    resultArea.innerHTML = `
-      <div class="card">
-        <div style="display:flex;justify-content:space-between;align-items:center">
-          <h3 style="margin:0">Active quizzes</h3>
-          <div class="muted small">Class: ${escapeHtml(String(classId))}</div>
-        </div>
-      </div>
-
-      <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
-        ${visible.map(qd => {
-          const startMs = toMs(qd.startAt) || toMs(qd.createdAt) || 0;
-          const endMsExplicit = toMs(qd.endAt) || null;
-          const durationMs = (Number(qd.durationMinutes) || 0) * 60 * 1000;
-          const endMs = endMsExplicit || (startMs ? startMs + durationMs : 0);
-          const left = Math.max(0, endMs - nowMs);
-          const totalPoints = (qd.questions||[]).reduce((s,q)=> s + (Number(q.points||1)),0);
-          const already = respondedIds.has(qd.id);
-          return `
-            <div class="quiz-row" data-end="${endMs}" data-quiz="${escapeHtml(qd.id)}" style="padding:10px;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center">
-              <div style="min-width:0">
-                <div style="font-weight:800">${escapeHtml(qd.title || '(untitled)')}</div>
-                <div class="muted small">ID: ${escapeHtml(qd.id)} • Class: ${escapeHtml(qd.classId||'')} • Subject: ${escapeHtml(qd.subjectName||qd.subject||'')}</div>
-                <div class="muted small">Total points: ${String(totalPoints)}</div>
-                <div style="margin-top:6px"><div style="font-weight:700">Time left: <span class="quiz-time-left">${formatHMS(left)}</span></div></div>
-              </div>
-              <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end">
-                <div>
-                  ${ already
-                    ? `<button class="btn btn-ghost btn-sm view-summary" data-id="${escapeHtml(qd.id)}">View summary</button>`
-                    : `<button class="btn btn-primary btn-sm take-quiz" data-id="${escapeHtml(qd.id)}">Take quiz</button>`
-                  }
-                </div>
-                <div class="muted small">Duration: ${escapeHtml(String(qd.durationMinutes||0))}m</div>
-              </div>
-            </div>
-          `;
-        }).join('')}
-      </div>
-    `;
-
-    // live countdown hh:mm:ss (per-second)
-    let intv = window._studentQuizTicker;
-    if(intv) clearInterval(intv);
-    window._studentQuizTicker = setInterval(() => {
-      document.querySelectorAll('.quiz-row').forEach(row => {
-        const end = Number(row.dataset.end||0);
-        const leftMs = end - Date.now();
-        const span = row.querySelector('.quiz-time-left');
-        if(span){
-          if(leftMs <= 0){
-            span.textContent = '00:00:00';
-            const btn = row.querySelector('.take-quiz');
-            if(btn){ btn.disabled = true; btn.classList.remove('btn-primary'); btn.classList.add('btn-ghost'); btn.textContent = 'Ended'; }
-          } else {
-            const s = Math.floor(leftMs/1000);
-            const h = Math.floor(s/3600), m = Math.floor((s%3600)/60), r = s%60;
-            span.textContent = `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(r).padStart(2,'0')}`;
-          }
-        }
-      });
-    }, 1000);
-
-    // wire take buttons (inline taker) and view-summary
-    resultArea.querySelectorAll('.take-quiz').forEach(b => b.onclick = ev => {
-      const qid = ev.currentTarget.dataset.id;
-      openTakeQuizInline(studentId, qid);
-    });
-    resultArea.querySelectorAll('.view-summary').forEach(b => b.onclick = async ev => {
-      const qid = ev.currentTarget.dataset.id;
-      // fetch student's response for this quiz
-      const rSnap = await getDocs(query(collection(db,'quiz_responses'), where('quizId','==', qid), where('studentId','==', String(studentId))));
-      if(!rSnap || !rSnap.size){ // shouldn't happen, but fallback
-        alert('Summary not found.');
-        return;
-      }
-      const r = rSnap.docs[0].data();
-      // show inline summary
-      resultArea.innerHTML = renderStudentSummaryInline(r, qid, sData);
-    });
-
-  } catch(err){
-    console.error('renderQuizzesForStudent', err);
-    resultArea.innerHTML = `<div class="card muted">Failed to load quizzes.</div>`;
+function shuffleArray(arr){ const a=(arr||[]).slice(); for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]] } return a; }
+/* ---------- Helpers (safe/fallback) ---------- */
+if (typeof escapeHtml !== 'function') {
+  function escapeHtml(s){ if(s==null) return ''; return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+}
+if (typeof ensureArray !== 'function') {
+  function ensureArray(v){ if(!v && v !== 0) return []; return Array.isArray(v) ? v : [v]; }
+}
+if (typeof shuffleArray !== 'function') {
+  function shuffleArray(arr){ const a=(arr||[]).slice(); for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]] } return a; }
+}
+if (typeof shuffleWithIndex !== 'function') {
+  function shuffleWithIndex(arr){
+    const tmp = arr.map((it,i)=>({it,i}));
+    for(let i=tmp.length-1;i>0;i--){ const j = Math.floor(Math.random()*(i+1)); [tmp[i],tmp[j]]=[tmp[j],tmp[i]]; }
+    return tmp.map(x => ({ item: x.it, originalIndex: x.i }));
   }
 }
-window.renderQuizzesForStudent = renderQuizzesForStudent;
 
+/* Try to load subjectsCache if missing (best-effort) */
+async function _ensureSubjectsCache(){
+  if(window.subjectsCache && Array.isArray(window.subjectsCache) && window.subjectsCache.length) return;
+  try {
+    const snap = await getDocs(collection(db,'subjects'));
+    window.subjectsCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  } catch(e){
+    console.warn('Failed to load subjectsCache', e);
+    window.subjectsCache = window.subjectsCache || [];
+  }
+}
+function displaySubjectListSync(q){
+  const arr = ensureArray(q.subjectIds || q.subjectId || q.subject || q.subjectName);
+  if(!arr.length) return '—';
+  const cache = (window.subjectsCache && Array.isArray(window.subjectsCache)) ? window.subjectsCache : [];
+  return arr.map(sid => {
+    const sdoc = cache.find(s => String(s.id) === String(sid) || String(s.name) === String(sid));
+    return escapeHtml(sdoc ? (sdoc.name || sdoc.id) : sid);
+  }).join(', ');
+}
 
-// helper: render a student's summary inline (called after submit or when viewing existing response)
-function renderStudentSummaryInline(responseDoc, quizId, studentData){
-  // responseDoc must include fields: score, maxScore, answers (array), answeredCount, skippedCount, correctCount, incorrectCount
+/* ---------- renderStudentSummaryInline (updated: shows quiz title + id) ---------- */
+function renderStudentSummaryInline(responseDoc, quizDocOrId, studentData){
+  // quizDocOrId can be id string or a quiz doc object
+  const quizTitle = (typeof quizDocOrId === 'object' && quizDocOrId?.title) ? quizDocOrId.title : (responseDoc.quizTitle || 'Quiz');
+  const quizId = (typeof quizDocOrId === 'object' && quizDocOrId?.id) ? quizDocOrId.id : (typeof quizDocOrId === 'string' ? quizDocOrId : (responseDoc.quizId || '—'));
+
   const answers = responseDoc.answers || [];
-  const answered = answers.filter(a => typeof a.selectedIndex !== 'undefined' && a.selectedIndex !== null).length;
+  const answered = answers.filter(a => typeof a.selectedOriginalIndex !== 'undefined' && a.selectedOriginalIndex !== null).length;
   const skipped = answers.length - answered;
-  // compute correct/incorrect quickly (if stored, use stored fields)
-  const correct = typeof responseDoc.correctCount !== 'undefined' ? responseDoc.correctCount : answers.reduce((s,a,i)=> s + ((a.selectedIndex !== null && a.selectedIndex === a.correctIndex) ? 1 : 0),0);
+  const correct = typeof responseDoc.correctCount !== 'undefined'
+    ? responseDoc.correctCount
+    : answers.reduce((s,a)=> s + ((a.selectedOriginalIndex !== null && a.selectedOriginalIndex === a.correctIndex) ? 1 : 0),0);
   const incorrect = answered - correct;
   const score = responseDoc.score ?? 0;
-  const maxScore = responseDoc.maxScore ?? (answers.reduce((s,a)=> s + (a.pointsGot || 0),0) + 0);
+  const maxScore = responseDoc.maxScore ?? answers.reduce((s,a)=> s + (a.pointsPossible || a.pointsGot || 0),0);
   const studentName = studentData?.fullName || studentData?.name || responseDoc.studentName || 'Student';
   const sid = studentData?.id || responseDoc.studentId || '—';
   const cls = studentData?.classId || studentData?.class || studentData?.className || responseDoc.classId || '—';
@@ -2700,8 +2628,11 @@ function renderStudentSummaryInline(responseDoc, quizId, studentData){
   return `
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center">
-        <div style="font-weight:900">Quiz summary</div>
-        <div class="muted small">Quiz ID: ${escapeHtml(quizId)}</div>
+        <div>
+          <div style="font-weight:900;color:#1e3a8a">${escapeHtml(quizTitle)}</div>
+          <div class="muted small">Quiz ID: ${escapeHtml(quizId)}</div>
+        </div>
+        <div class="muted small">Result</div>
       </div>
       <div style="margin-top:8px">
         <div><strong>Name:</strong> ${escapeHtml(studentName)}</div>
@@ -2713,100 +2644,440 @@ function renderStudentSummaryInline(responseDoc, quizId, studentData){
     </div>
   `;
 }
+/* ---------- renderQuizzesForStudent (responsive + shows ID, classes, subjects, duration) ---------- */
 
-
-// ---------------- INLINE QUIZ TAKER (no modal) ----------------
-async function openTakeQuizInline(studentId, quizId){
+async function renderQuizzesForStudent(studentId){
   const resultArea = document.getElementById('resultArea');
   if(!resultArea) return;
 
+  resultArea.style.display = 'block';
+  resultArea.innerHTML = `<div class="card muted">Loading quizzes…</div>`;
+
   try {
-    // fetch student & quiz (support wrappers)
-    const sSnap = (typeof getDocFn === 'function' && typeof docFn === 'function')
-      ? await getDocFn(docFn(db,'students', studentId))
-      : await getDoc(doc(db,'students', studentId));
+    // load student
+    const sSnap = await getDoc(doc(db,'students', studentId)).catch(()=>null);
     if(!sSnap || !sSnap.exists()){ resultArea.innerHTML = `<div class="card muted">Student not found.</div>`; return; }
-    const qSnap = (typeof getDocFn === 'function' && typeof docFn === 'function')
-      ? await getDocFn(docFn(db,'quizzes', quizId))
-      : await getDoc(doc(db,'quizzes', quizId));
-    if(!qSnap || !qSnap.exists()){ resultArea.innerHTML = `<div class="card muted">Quiz not found or removed.</div>`; return; }
-    const quiz = { id: qSnap.id, ...qSnap.data() };
+    const sData = sSnap.data();
+    const classId = sData.classId || sData.class || sData.className;
+    if(!classId){ resultArea.innerHTML = `<div class="card muted">No class assigned.</div>`; return; }
 
-    // check if student already submitted
-    const existing = await getDocs(query(collection(db,'quiz_responses'), where('quizId','==', quiz.id), where('studentId','==', String(studentId))));
-    if(existing.size > 0){
-      const docResp = existing.docs[0].data();
-      // show inline summary (no modal) and return
-      resultArea.innerHTML = renderStudentSummaryInline(docResp, quiz.id, { id: studentId, fullName: sSnap.data().name || sSnap.data().fullName, classId: sSnap.data().classId || sSnap.data().class || sSnap.data().className });
-      return;
-    }
+    // ensure subjects cache for display
+    await _ensureSubjectsCache();
 
-    // ensure class match
-    const classId = sSnap.data().classId || sSnap.data().class || sSnap.data().className;
-    if(String(classId) !== String(quiz.classId)) { resultArea.innerHTML = `<div class="card muted">This quiz is not for your class.</div>`; return; }
+    // fetch quizzes (ordered newest first)
+    const snap = await getDocs(query(collection(db,'quizzes'), orderBy('createdAt','desc')));
+    const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
 
-    // compute times
+    // fetch student's existing responses (to prevent retakes)
+    const respSnap = await getDocs(query(collection(db,'quiz_responses'), where('studentId','==', String(studentId))));
+    const respondedIds = new Set(respSnap.docs.map(d=>d.data().quizId));
+
+    // helpers
     const toMs = (ts) => {
       if(!ts) return null;
       if(typeof ts === 'number') return Number(ts);
       if(ts.seconds) return Number(ts.seconds)*1000;
-      const p = Date.parse(ts);
-      return isNaN(p) ? null : p;
+      const p = Date.parse(ts); return isNaN(p) ? null : p;
     };
+    const nowMs = Date.now();
+    const formatHMS = (ms) => {
+      if(ms <= 0) return '00:00:00';
+      const s = Math.floor(ms/1000);
+      const h = Math.floor(s/3600); const m = Math.floor((s%3600)/60); const r = s%60;
+      return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(r).padStart(2,'0')}`;
+    };
+
+    // determine visible quizzes: active, open now, include this student's class
+    const visible = docs.filter(qd => {
+      if(!qd.active) return false;
+      const startMs = toMs(qd.startAt) || toMs(qd.createdAt) || null;
+      const endMsExplicit = toMs(qd.endAt) || null;
+      const durationMs = (Number(qd.durationMinutes) || 0) * 60 * 1000;
+      const endMsComputed = startMs ? (startMs + durationMs) : null;
+      const endMs = endMsExplicit || endMsComputed;
+      if(!startMs || !endMs) return false;
+      if(!(nowMs >= startMs && nowMs < endMs)) return false;
+
+      const qClasses = ensureArray(qd.classIds || qd.classId || qd.class);
+      return qClasses.some(c => String(c) === String(classId));
+    });
+
+    if(!visible.length){
+      resultArea.innerHTML = `<div class="card muted">No active quizzes for your class right now.</div>`;
+      return;
+    }
+
+    // Responsive grid / card layout (one column on mobile, two on wider screens)
+    // we use inline styles so it's a drop-in
+    const cardsHtml = visible.map(qd => {
+      const startMs = toMs(qd.startAt) || toMs(qd.createdAt) || 0;
+      const endMsExplicit = toMs(qd.endAt) || null;
+      const durationMs = (Number(qd.durationMinutes) || 0) * 60 * 1000;
+      const endMs = endMsExplicit || (startMs ? startMs + durationMs : 0);
+      const left = Math.max(0, endMs - nowMs);
+      const totalPoints = (qd.questions||[]).reduce((s,q)=> s + (Number(q.points||1)),0);
+      const already = respondedIds.has(qd.id);
+      const subjectsText = displaySubjectListSync(qd);
+      const classesText = displayClassList(qd);
+      // compact card
+      return `
+        <article class="quiz-card" data-end="${endMs}" data-quiz="${escapeHtml(qd.id)}" style="background:linear-gradient(180deg, #fff, #fbfdff);border:1px solid #eef4fb;border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px;min-width:220px">
+          <div style="display:flex;justify-content:space-between;align-items:start;gap:12px;flex-wrap:wrap">
+            <div style="min-width:0;flex:1">
+              <div style="font-weight:900;color:#1e3a8a;font-size:16px;white-space:normal">${escapeHtml(qd.title || '(untitled)')}</div>
+              <div class="muted small" style="margin-top:6px;font-size:13px;display:flex;gap:6px;flex-wrap:wrap">
+                <div style="background:#eef2ff;padding:4px 8px;border-radius:999px;font-size:12px">ID: ${escapeHtml(qd.id)}</div>
+                <div style="background:#f0fdf4;padding:4px 8px;border-radius:999px;font-size:12px;color:#065f46">Subjects: <strong style="margin-left:6px;color:#065f46">${escapeHtml(subjectsText)}</strong></div>
+                <div style="background:#f8fafc;padding:4px 8px;border-radius:999px;font-size:12px">Classes: ${escapeHtml(classesText)}</div>
+              </div>
+              <div style="margin-top:8px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+                <div style="font-size:13px" class="muted">Duration: <strong>${escapeHtml(String(qd.durationMinutes||0))}m</strong></div>
+                <div style="font-size:13px" class="muted">Total pts: <strong>${String(totalPoints)}</strong></div>
+              </div>
+            </div>
+
+            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px">
+              <div style="text-align:right">
+                <div class="muted small" style="font-size:12px">Time left</div>
+                <div class="quiz-time-left" style="font-weight:900;color:#dc2626">${formatHMS(left)}</div>
+              </div>
+
+              <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end">
+                ${ already
+                  ? `<button class="btn btn-ghost btn-sm view-summary" data-id="${escapeHtml(qd.id)}">View summary</button>`
+                  : `<button class="btn btn-primary btn-sm take-quiz" data-id="${escapeHtml(qd.id)}">Take quiz</button>`
+                }
+                <div class="muted small" style="font-size:12px">Created: ${qd.createdAt && qd.createdAt.seconds ? new Date(qd.createdAt.seconds*1000).toLocaleString() : (qd.createdAt || '')}</div>
+              </div>
+            </div>
+          </div>
+        </article>
+      `;
+    }).join('');
+
+    // container with responsive grid styling
+    resultArea.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+        <div style="font-weight:900;font-size:18px">Active quizzes</div>
+        <div class="muted small">Class: ${escapeHtml(String(classId))}</div>
+      </div>
+
+      <div style="margin-top:10px;display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px">
+        ${cardsHtml}
+      </div>
+    `;
+
+    // live countdown: update each card's .quiz-time-left every second
+    if(window._studentQuizTicker) clearInterval(window._studentQuizTicker);
+    window._studentQuizTicker = setInterval(()=> {
+      document.querySelectorAll('[data-quiz]').forEach(card => {
+        const end = Number(card.dataset.end||0);
+        const leftMs = Math.max(0, end - Date.now());
+        const span = card.querySelector('.quiz-time-left');
+        if(!span) return;
+        if(leftMs <= 0){
+          span.textContent = '00:00:00';
+          const btn = card.querySelector('.take-quiz');
+          if(btn){ btn.disabled = true; btn.classList.remove('btn-primary'); btn.classList.add('btn-ghost'); btn.textContent = 'Ended'; }
+        } else {
+          const s = Math.floor(leftMs/1000);
+          const h = Math.floor(s/3600), m = Math.floor((s%3600)/60), r = s%60;
+          span.textContent = `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(r).padStart(2,'0')}`;
+        }
+      });
+    }, 1000);
+
+    // wire actions
+    resultArea.querySelectorAll('.take-quiz').forEach(b => b.onclick = ev => {
+      const qid = ev.currentTarget.dataset.id;
+      openTakeQuizInline(studentId, qid);
+    });
+    resultArea.querySelectorAll('.view-summary').forEach(b => b.onclick = async ev => {
+      const qid = ev.currentTarget.dataset.id;
+      const rSnap = await getDocs(query(collection(db,'quiz_responses'), where('quizId','==', qid), where('studentId','==', String(studentId))));
+      if(!rSnap || !rSnap.size){ alert('Summary not found.'); return; }
+      const rDoc = rSnap.docs[0];
+      const r = { id: rDoc.id, ...rDoc.data() };
+      const qSnap = await getDoc(doc(db,'quizzes', qid));
+      const quizDoc = qSnap && qSnap.exists() ? { id: qSnap.id, ...qSnap.data() } : { id: qid, title: '(unknown)' };
+      resultArea.innerHTML = renderStudentSummaryInline(r, quizDoc, sData);
+    });
+
+  } catch(err){
+    console.error('renderQuizzesForStudent', err);
+    resultArea.innerHTML = `<div class="card muted">Failed to load quizzes.</div>`;
+  }
+}
+window.renderQuizzesForStudent = renderQuizzesForStudent;
+
+/* ---------- openTakeQuizInline (updated; robust randomize + timer + end modal) ---------- */
+/* ----------------- New helpers ------------------ */
+/* ---------------- Settings & CSS ---------------- */
+window.quizSettings = window.quizSettings || { autoRefreshDelaySec: 3, warningThresholdSec: 300, dangerThresholdSec: 60 };
+
+/* inject timer CSS once */
+(function _injectQuizTimerCSS(){
+  if(document.getElementById('_quiz_timer_styles')) return;
+  const style = document.createElement('style');
+  style.id = '_quiz_timer_styles';
+  style.textContent = `
+    .quiz-timer { font-weight:900; transition: color 300ms ease, transform 200ms ease; }
+    .quiz-timer.timer-normal { color: inherit; transform: none; }
+    .quiz-timer.timer-warning { color: #f97316; } /* orange */
+    .quiz-timer.timer-danger { color: #dc2626; animation: _qq_flash 1s linear infinite; } /* red + flash */
+    @keyframes _qq_flash {
+      0% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.03); opacity: 0.85; }
+      100% { transform: scale(1); opacity: 1; }
+    }
+    /* little top reload banner */
+    .qq-reload-banner { position:fixed; left:12px; right:12px; top:12px; z-index:120000; display:flex; justify-content:space-between; align-items:center; gap:12px; background:#fff; border-radius:8px; padding:10px; box-shadow:0 8px 30px rgba(2,6,23,0.12) }
+    .qq-reload-banner .muted { opacity:0.8; }
+    .qq-toast { position:fixed; right:12px; bottom:12px; z-index:120000; background:#111827; color:#fff; padding:8px 12px; border-radius:8px; box-shadow:0 6px 20px rgba(2,6,23,0.18); font-size:13px; }
+  `;
+  document.head.appendChild(style);
+})();
+
+/* fallback toast if not present */
+if(typeof toast !== 'function'){
+  window.toast = function(message, type){
+    // simple ephemeral toast
+    try {
+      const el = document.createElement('div');
+      el.className = 'qq-toast';
+      el.textContent = message;
+      document.body.appendChild(el);
+      setTimeout(()=> el.remove(), 5000);
+    } catch(e){ console.log('toast:', message); }
+  };
+}
+
+/* fallback modalConfirm if not present (returns Promise<boolean>) */
+if(typeof modalConfirm !== 'function'){
+  window.modalConfirm = async function(title, msg, opts = { okText:'OK', cancelText:'Cancel' }){
+    return Promise.resolve(window.confirm(`${title}\n\n${msg}`));
+  };
+}
+
+/* show timed decision modal (unchanged except we keep it) */
+function showTimedDecisionModal(message, countdownSec = 5){
+  return new Promise(resolve => {
+    const overlay = document.createElement('div');
+    overlay.style.position = 'fixed';
+    overlay.style.left = '0'; overlay.style.top = '0'; overlay.style.right = '0'; overlay.style.bottom = '0';
+    overlay.style.background = 'rgba(0,0,0,0.6)';
+    overlay.style.zIndex = 99999;
+    overlay.style.display = 'flex';
+    overlay.style.alignItems = 'center';
+    overlay.style.justifyContent = 'center';
+    overlay.style.padding = '20px';
+
+    const box = document.createElement('div');
+    box.style.width = 'min(720px,100%)';
+    box.style.maxHeight = '90vh';
+    box.style.overflow = 'auto';
+    box.style.background = '#fff';
+    box.style.borderRadius = '8px';
+    box.style.padding = '18px';
+    box.style.boxShadow = '0 8px 30px rgba(2,6,23,0.3)';
+    box.style.display = 'flex';
+    box.style.flexDirection = 'column';
+    box.style.gap = '12px';
+
+    const title = document.createElement('div');
+    title.style.fontWeight = 800;
+    title.style.fontSize = '18px';
+    title.textContent = 'Time is up — Submit your answers?';
+
+    const body = document.createElement('div');
+    body.style.whiteSpace = 'pre-line';
+    body.style.lineHeight = '1.4';
+    body.textContent = message;
+
+    const countdownWrap = document.createElement('div');
+    countdownWrap.style.display = 'flex';
+    countdownWrap.style.alignItems = 'center';
+    countdownWrap.style.justifyContent = 'space-between';
+
+    const countdownText = document.createElement('div');
+    countdownText.style.fontWeight = 800;
+    countdownText.style.color = '#dc2626';
+    countdownText.textContent = `Auto action in ${countdownSec}s`;
+
+    countdownWrap.appendChild(countdownText);
+
+    const actions = document.createElement('div');
+    actions.style.display = 'flex';
+    actions.style.gap = '8px';
+    actions.style.justifyContent = 'flex-end';
+
+    const btnCancel = document.createElement('button');
+    btnCancel.className = 'btn btn-ghost';
+    btnCancel.textContent = 'Cancel (forfeit)';
+
+    const btnSubmit = document.createElement('button');
+    btnSubmit.className = 'btn btn-primary';
+    btnSubmit.textContent = 'Submit answers';
+
+    actions.appendChild(btnCancel);
+    actions.appendChild(btnSubmit);
+
+    box.appendChild(title);
+    box.appendChild(body);
+    box.appendChild(countdownWrap);
+    box.appendChild(actions);
+
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+
+    overlay.addEventListener('click', (ev) => {
+      if(ev.target === overlay) { /* blocked intentionally */ }
+    });
+
+    let secondsLeft = countdownSec;
+    countdownText.textContent = `Auto action in ${secondsLeft}s`;
+    const interval = setInterval(() => {
+      secondsLeft--;
+      countdownText.textContent = `Auto action in ${secondsLeft}s`;
+      if(secondsLeft <= 0){
+        clearInterval(interval);
+        cleanup();
+        resolve('auto');
+      }
+    }, 1000);
+
+    function cleanup(){
+      clearInterval(interval);
+      btnCancel.onclick = null;
+      btnSubmit.onclick = null;
+      if(overlay.parentNode) overlay.parentNode.removeChild(overlay);
+    }
+
+    btnCancel.onclick = () => { cleanup(); resolve('cancel'); };
+    btnSubmit.onclick = () => { cleanup(); resolve('submit'); };
+  });
+}
+
+
+
+/* ---------- Helper: showReloadBanner (appears after submit/auto-submit) ---------- */
+function showReloadBanner(message, countdownSec = window.quizSettings.autoRefreshDelaySec){
+  // remove existing banner
+  const existing = document.getElementById('_qq_reload_banner');
+  if(existing) existing.remove();
+
+  const wrap = document.createElement('div');
+  wrap.id = '_qq_reload_banner';
+  wrap.className = 'qq-reload-banner';
+  wrap.innerHTML = `<div><strong>${escapeHtml(message)}</strong><div class="muted" id="_qq_reload_countdown">Reloading in ${countdownSec}s</div></div>
+    <div style="display:flex;gap:8px"><button id="_qq_reload_now" class="btn btn-ghost btn-sm">Reload now</button><button id="_qq_dismiss_reload" class="btn btn-ghost btn-sm">Dismiss</button></div>`;
+
+  document.body.appendChild(wrap);
+
+  let s = countdownSec;
+  const cdEl = document.getElementById('_qq_reload_countdown');
+  const iv = setInterval(()=> {
+    s--;
+    if(cdEl) cdEl.textContent = `Reloading in ${s}s`;
+    if(s <= 0){
+      clearInterval(iv);
+      try{ location.reload(); }catch(e){}
+    }
+  }, 1000);
+
+  document.getElementById('_qq_reload_now').onclick = () => { clearInterval(iv); try{ location.reload(); }catch(e){} };
+  document.getElementById('_qq_dismiss_reload').onclick = () => { clearInterval(iv); wrap.remove(); };
+}
+
+/* ---------- openTakeQuizInline (updated: flashing + realtime extra-time toast + reload banner) ---------- */
+async function openTakeQuizInline(studentId, quizId){
+  const resultArea = document.getElementById('resultArea');
+  if(!resultArea) return;
+
+  let quizDocUnsub = null;
+  let timerInterval = null;
+
+  try {
+    // load student & quiz
+    const sSnap = await getDoc(doc(db,'students', studentId)).catch(()=>null);
+    if(!sSnap || !sSnap.exists()){ resultArea.innerHTML = `<div class="card muted">Student not found.</div>`; return; }
+    const sData = sSnap.data();
+
+    const qSnap = await getDoc(doc(db,'quizzes', quizId)).catch(()=>null);
+    if(!qSnap || !qSnap.exists()){ resultArea.innerHTML = `<div class="card muted">Quiz not found or removed.</div>`; return; }
+    let quiz = { id: qSnap.id, ...qSnap.data() };
+
+    // existing response check
+    const existing = await getDocs(query(collection(db,'quiz_responses'), where('quizId','==', quiz.id), where('studentId','==', String(studentId))));
+    if(existing.size > 0){
+      const docResp = { id: existing.docs[0].id, ...existing.docs[0].data() };
+      resultArea.innerHTML = renderStudentSummaryInline(docResp, quiz, sData);
+      return;
+    }
+
+    // class check
+    const classId = sData.classId || sData.class || sData.className;
+    const quizClasses = ensureArray(quiz.classIds || quiz.classId || quiz.class);
+    if(!quizClasses.some(c => String(c) === String(classId))){ resultArea.innerHTML = `<div class="card muted">This quiz is not for your class.</div>`; return; }
+
+    // timing helpers
+    const toMs = (ts) => { if(!ts) return null; if(typeof ts === 'number') return Number(ts); if(ts.seconds) return Number(ts.seconds)*1000; const p = Date.parse(ts); return isNaN(p)?null:p; };
     const now = Date.now();
-    const startMs = toMs(quiz.startAt) || toMs(quiz.createdAt) || null;
-    const endMsExplicit = toMs(quiz.endAt) || null;
-    const durMs = (Number(quiz.durationMinutes) || 0) * 60 * 1000;
-    const endMs = endMsExplicit || (startMs ? startMs + durMs : null);
+    let startMs = toMs(quiz.startAt) || toMs(quiz.createdAt) || null;
+    let endMs = toMs(quiz.endAt) || (startMs ? (startMs + (Number(quiz.durationMinutes||0)*60*1000)) : null);
     if(!startMs || !endMs){ resultArea.innerHTML = `<div class="card muted">Quiz timing info missing. Contact teacher.</div>`; return; }
     if(now < startMs){ resultArea.innerHTML = `<div class="card muted">This quiz starts at ${new Date(startMs).toLocaleString()}</div>`; return; }
     if(now >= endMs){ resultArea.innerHTML = `<div class="card muted">This quiz ended at ${new Date(endMs).toLocaleString()}</div>`; return; }
 
-    // prepare questions, shuffle if needed; preserve correct index mapping
-    let questions = JSON.parse(JSON.stringify(quiz.questions || []));
-    if(quiz.randomizeQuestions) questions = shuffleArray(questions);
-    questions = questions.map(q => {
-      const choices = (q.choices||[]).map((c, idx) => ({ id: idx, text: c }));
-      const correctText = (q.choices && typeof q.correctIndex !== 'undefined') ? q.choices[q.correctIndex] : null;
-      const correctIndexAfter = choices.findIndex(x => x.text === correctText);
-      return { text: q.text, choices, correctIndex: correctIndexAfter, points: q.points || 1 };
+    // prepare questions preserving orig indices
+    const origQuestions = quiz.questions || [];
+    let qObjs = origQuestions.map((q,i)=>({
+      origIndex: i,
+      text: q.text||'',
+      origChoices: (q.choices||[]).map((c,ci)=>({ origIndex:ci, text:c })),
+      origCorrectIndex: typeof q.correctIndex !== 'undefined' ? Number(q.correctIndex) : null,
+      points: Number(q.points||1)
+    }));
+    if(quiz.randomizeQuestions) qObjs = shuffleWithIndex(qObjs).map(x=>({...x.item}));
+    const renderedQuestions = qObjs.map(q=>{
+      const choices = q.origChoices.map(c=>({ text:c.text, origIndex:c.origIndex }));
+      const shuffled = quiz.randomizeChoices ? shuffleWithIndex(choices).map(x=>({ text:x.item.text, origIndex:x.originalIndex })) : choices;
+      return { origQuestionIndex: q.origIndex, text: q.text, renderedChoices: shuffled, origCorrectIndex: q.origCorrectIndex, points: q.points };
     });
-    if(quiz.randomizeChoices) questions = questions.map(q => ({ ...q, choices: shuffleArray(q.choices) }));
 
-    const answers = questions.map(() => ({ selectedIndex: null }));
-    let currentIndex = 0;
-    let timeLeftSec = Math.ceil((endMs - now)/1000);
-    let timerInterval = null;
+    // answers state
+    const answersState = renderedQuestions.map(()=>({ selectedOrigIndex: null }));
 
-    // UI builder (inline), with scrollable questions area and sticky footer controls
+    // initial seconds left
+    let timeLeftSec = Math.max(0, Math.ceil((endMs - Date.now())/1000));
+
+    // build UI — timer element uses class 'quiz-timer'
     function buildQuestionHtml(idx){
-      const qq = questions[idx];
-      const chHtml = qq.choices.map((c,ci) =>
-        `<div style="margin:6px 0"><label><input type="radio" name="qchoice" data-choice="${ci}" ${answers[idx].selectedIndex===ci ? 'checked':''}/> ${escapeHtml(c.text)}</label></div>`
-      ).join('');
+      const Q = renderedQuestions[idx];
       return `
         <div style="display:flex;flex-direction:column;gap:8px">
-          <div style="font-weight:800">${escapeHtml(qq.text || `Q${idx+1}`)}</div>
-          <div>${chHtml}</div>
-          <div style="display:flex;justify-content:space-between;align-items:center">
-            <div class="muted">Points: ${qq.points}</div>
-            <div><button id="skipBtn" class="btn btn-ghost btn-sm">Skip</button></div>
+          <div style="font-weight:800">${escapeHtml(Q.text||`Q${idx+1}`)}</div>
+          <div>
+            ${Q.renderedChoices.map((c,ui)=>`<div style="margin:6px 0"><label><input type="radio" name="qchoice" data-orig="${c.origIndex}" data-ui="${ui}" ${answersState[idx].selectedOrigIndex===c.origIndex ? 'checked':''} /> ${escapeHtml(c.text)}</label></div>`).join('')}
           </div>
+          <div style="display:flex;justify-content:space-between;align-items:center"><div class="muted">Points: ${Q.points}</div></div>
         </div>
       `;
     }
 
+    let currentIndex = 0;
+
     function renderInline(){
       resultArea.innerHTML = `
-        <div class="card" style="display:flex;flex-direction:column;gap:8px;max-height:75vh">
+        <div class="card" style="display:flex;flex-direction:column;gap:8px;max-height:80vh">
           <div style="display:flex;justify-content:space-between;align-items:center">
             <div>
-              <div style="font-weight:900">${escapeHtml(quiz.title)}</div>
-              <div class="muted small">Quiz ID: ${escapeHtml(quiz.id)} • Subject: ${escapeHtml(quiz.subjectName || '')}</div>
+              <div style="font-weight:900;color:#1e3a8a">${escapeHtml(quiz.title||'Quiz')}</div>
+              <div class="muted small">Quiz ID: ${escapeHtml(quiz.id)} • Subject: <span style="color:#15803d">${escapeHtml(quiz.subjectName||quiz.subject||'—')}</span></div>
             </div>
             <div style="text-align:right">
               <div class="muted small">Time left</div>
-              <div id="inlineQuizTimer" style="font-weight:900">${formatHMS(timeLeftSec*1000)}</div>
+              <div id="inlineQuizTimer" class="quiz-timer">${formatHMS(timeLeftSec*1000)}</div>
             </div>
           </div>
 
@@ -2814,116 +3085,201 @@ async function openTakeQuizInline(studentId, quizId){
             ${buildQuestionHtml(currentIndex)}
           </div>
 
-          <div style="position:sticky;bottom:0;background:var(--card, #fff);padding-top:8px;padding-bottom:8px;display:flex;justify-content:space-between;align-items:center;gap:8px">
+          <div style="position:sticky;bottom:0;background:var(--card,#fff);padding-top:8px;padding-bottom:8px;display:flex;justify-content:space-between;align-items:center;gap:8px">
             <div>
               <button id="prevQ" class="btn btn-ghost btn-sm">Prev</button>
               <button id="nextQ" class="btn btn-ghost btn-sm">Next</button>
             </div>
-            <div style="display:flex;gap:8px">
-              <div class="muted small" id="inlineProgress">Question ${currentIndex+1} / ${questions.length}</div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <div class="muted small" id="inlineProgress">Question ${currentIndex+1} / ${renderedQuestions.length}</div>
+              <div class="muted small">Duration: ${escapeHtml(String(quiz.durationMinutes||0))}m</div>
               <button id="submitInline" class="btn btn-primary">Submit</button>
             </div>
           </div>
         </div>
       `;
 
-      // wire events
       const qArea = document.getElementById('inlineQuestionArea');
-      qArea.querySelectorAll('input[name="qchoice"]').forEach(inp => inp.onchange = () => answers[currentIndex].selectedIndex = Number(inp.dataset.choice));
-      document.getElementById('skipBtn')?.addEventListener('click', () => { answers[currentIndex].selectedIndex = null; if(currentIndex < questions.length-1){ currentIndex++; refreshQuestionArea(); }});
+      qArea.querySelectorAll('input[name="qchoice"]').forEach(inp => {
+        inp.onchange = () => {
+          const orig = typeof inp.dataset.orig !== 'undefined' ? Number(inp.dataset.orig) : null;
+          answersState[currentIndex].selectedOrigIndex = (orig !== null ? orig : null);
+        };
+      });
+
       document.getElementById('prevQ').onclick = () => { if(currentIndex>0){ currentIndex--; refreshQuestionArea(); } };
-      document.getElementById('nextQ').onclick = () => { if(currentIndex < questions.length-1){ currentIndex++; refreshQuestionArea(); } };
+      document.getElementById('nextQ').onclick = () => { if(currentIndex < renderedQuestions.length-1){ currentIndex++; refreshQuestionArea(); } };
       document.getElementById('submitInline').onclick = async () => {
-        if(!confirm('Submit your answers now? You will not be able to change them.')) return;
+        const ok = await modalConfirm('Submit quiz','Are you sure you want to submit now? You will not be able to change your answers after submitting.');
+        if(!ok) return;
         await submitResponses();
       };
-      document.getElementById('inlineProgress').textContent = `Question ${currentIndex+1} / ${questions.length}`;
+      document.getElementById('inlineProgress').textContent = `Question ${currentIndex+1} / ${renderedQuestions.length}`;
+      updateTimerDisplay(); // set initial class
     }
 
     function refreshQuestionArea(){
       const qArea = document.getElementById('inlineQuestionArea');
       if(!qArea) return;
       qArea.innerHTML = buildQuestionHtml(currentIndex);
-      qArea.querySelectorAll('input[name="qchoice"]').forEach(inp => inp.onchange = () => answers[currentIndex].selectedIndex = Number(inp.dataset.choice));
-      document.getElementById('skipBtn')?.addEventListener('click', () => { answers[currentIndex].selectedIndex = null; if(currentIndex < questions.length-1){ currentIndex++; refreshQuestionArea(); }});
-      document.getElementById('inlineProgress').textContent = `Question ${currentIndex+1} / ${questions.length}`;
+      qArea.querySelectorAll('input[name="qchoice"]').forEach(inp => {
+        inp.onchange = () => {
+          const orig = typeof inp.dataset.orig !== 'undefined' ? Number(inp.dataset.orig) : null;
+          answersState[currentIndex].selectedOrigIndex = (orig !== null ? orig : null);
+        };
+      });
+      document.getElementById('inlineProgress').textContent = `Question ${currentIndex+1} / ${renderedQuestions.length}`;
     }
 
-    function startTimer(){
+    function updateTimerDisplay(){
+      const timerEl = document.getElementById('inlineQuizTimer');
+      if(!timerEl) return;
+      // set text
+      timerEl.textContent = formatHMS(timeLeftSec*1000);
+      // apply classes based on thresholds
+      const w = window.quizSettings.warningThresholdSec || 300;
+      const d = window.quizSettings.dangerThresholdSec || 60;
+      timerEl.classList.remove('timer-normal','timer-warning','timer-danger');
+      if(timeLeftSec <= d) timerEl.classList.add('timer-danger');
+      else if(timeLeftSec <= w) timerEl.classList.add('timer-warning');
+      else timerEl.classList.add('timer-normal');
+    }
+
+    async function startTimer(){
       const timerEl = document.getElementById('inlineQuizTimer');
       if(timerInterval) clearInterval(timerInterval);
       timerInterval = setInterval(async () => {
-        timeLeftSec--;
-        if(timerEl) timerEl.textContent = formatHMS(timeLeftSec*1000);
+        // update timeLeftSec using endMs (handles extra-time updates)
+        timeLeftSec = Math.max(0, Math.ceil((endMs - Date.now())/1000));
+        updateTimerDisplay();
+
         if(timeLeftSec <= 0){
           clearInterval(timerInterval);
-          await submitResponses();
+          // show the 5-second blocking modal
+          const studentName = sData?.fullName || sData?.name || '';
+          const studentIdStr = String(studentId);
+          const classStr = String(classId || '');
+          const msg = `Time has ended for this quiz.\nStudent: ${studentName || '(unknown)'} · ID: ${studentIdStr} · Class: ${classStr}\n\nYou can Submit what you answered so far (we will grade those answers) or Cancel to discard your work. If you Cancel, you will receive 0 points for this quiz.`;
+          const choice = await showTimedDecisionModal(msg, 5);
+
+          if(choice === 'submit' || choice === 'auto'){
+            await submitResponses();
+            // show reload banner (configurable)
+            showReloadBanner('Answers saved — showing summary. Page will refresh to update lists.', window.quizSettings.autoRefreshDelaySec || 3);
+          } else if(choice === 'cancel'){
+            if(typeof renderQuizzesForStudent === 'function') renderQuizzesForStudent(studentId);
+            setTimeout(()=>{ try{ location.reload(); }catch(e){} }, 1500);
+          }
         }
       }, 1000);
     }
 
     async function submitResponses(){
-      // compute answered/skipped/correct/incorrect and points
+      // grade and build payload
+      const answersPayload = [];
       let total = 0, answeredCount = 0, skippedCount = 0, correctCount = 0, incorrectCount = 0;
-      const answersPayload = answers.map((a,i) => {
-        const sel = (typeof a.selectedIndex !== 'undefined' && a.selectedIndex !== null) ? a.selectedIndex : null;
-        if(sel === null) skippedCount++; else answeredCount++;
-        const correct = questions[i].correctIndex;
-        const got = (sel !== null && sel === correct) ? (questions[i].points||1) : 0;
-        if(sel !== null){
-          if(got>0) correctCount++; else incorrectCount++;
-        }
+      for(let i=0;i<renderedQuestions.length;i++){
+        const selOrig = answersState[i].selectedOrigIndex;
+        const q = renderedQuestions[i];
+        const pts = q.points || 1;
+        const isAnswered = (selOrig !== null && typeof selOrig !== 'undefined');
+        if(isAnswered) answeredCount++; else skippedCount++;
+        const isCorrect = isAnswered && (q.origCorrectIndex !== null) && (Number(selOrig) === Number(q.origCorrectIndex));
+        const got = isCorrect ? pts : 0;
+        if(isCorrect) correctCount++; else if(isAnswered) incorrectCount++;
         total += got;
-        return { selectedIndex: sel, correctIndex: correct, pointsGot: got };
-      });
+        answersPayload.push({
+          questionRenderedIndex: i,
+          questionOriginalIndex: q.origQuestionIndex,
+          selectedOriginalIndex: selOrig,
+          selectedText: (function(){
+            if(selOrig === null || typeof selOrig === 'undefined') return null;
+            const origQ = origQuestions[q.origQuestionIndex] || {};
+            const origC = (origQ.choices || [])[selOrig];
+            if(typeof origC !== 'undefined') return origC;
+            const rc = q.renderedChoices.find(rc => Number(rc.origIndex) === Number(selOrig));
+            return rc ? rc.text : null;
+          })(),
+          correctIndex: q.origCorrectIndex,
+          pointsGot: got,
+          pointsPossible: pts
+        });
+      }
+
+      const payload = {
+        quizId: quiz.id,
+        quizTitle: quiz.title || '',
+        studentId: String(studentId),
+        studentName: sData?.fullName || sData?.name || '',
+        classId,
+        answers: answersPayload,
+        score: total,
+        maxScore: renderedQuestions.reduce((s,q)=> s + (q.points||1),0),
+        createdAt: Timestamp.now(),
+        answeredCount, skippedCount, correctCount, incorrectCount
+      };
 
       try {
-        const payload = {
-          quizId: quiz.id,
-          studentId,
-          studentName: sSnap.data().name || '',
-          classId,
-          answers: answersPayload,
-          score: total,
-          maxScore: questions.reduce((s,q)=>s + (q.points||1),0),
-          submittedAt: Timestamp.now(),
-          // summary fields for easy teacher view
-          answeredCount, skippedCount, correctCount, incorrectCount
-        };
-        if(typeof addDocFn === 'function' && typeof collectionFn === 'function'){
-          await addDocFn(collectionFn(db,'quiz_responses'), payload);
-        } else {
-          await addDoc(collection(db,'quiz_responses'), payload);
-        }
-
-        // show summary inline (no modal)
-        resultArea.innerHTML = renderStudentSummaryInline(payload, quiz.id, { id: studentId, fullName: sSnap.data().name || sSnap.data().fullName, classId });
-        // refresh list
-        if(typeof renderQuizzesForStudent === 'function') renderQuizzesForStudent(studentId);
+        await addDoc(collection(db,'quiz_responses'), payload);
+        toast && toast('Quiz submitted');
+        // show summary inline
+        resultArea.innerHTML = renderStudentSummaryInline(payload, quiz, sData);
+        // show reload banner
+        showReloadBanner('Answers saved — showing summary. Page will refresh to update lists.', window.quizSettings.autoRefreshDelaySec || 3);
       } catch(e){
         console.error('submitResponses failed', e);
+        toast && toast('Submission failed');
         resultArea.innerHTML = `<div class="card muted">Submission failed. Try again.</div>`;
       } finally {
+        if(typeof quizDocUnsub === 'function') try{ quizDocUnsub(); }catch(e){}
         if(timerInterval) clearInterval(timerInterval);
       }
     }
 
-    // start UI
+    // realtime listener for extra time (and toast notification)
+    if(typeof onSnapshot === 'function'){
+      try {
+        const qDocRef = doc(db,'quizzes',quiz.id);
+        quizDocUnsub = onSnapshot(qDocRef, snap => {
+          if(!snap.exists()) return;
+          const data = snap.data();
+          const prevEnd = endMs;
+          quiz = { id: snap.id, ...data };
+          const newEndMs = toMs(data.endAt) || (toMs(data.startAt) || toMs(data.createdAt) || startMs) + (Number(data.durationMinutes||quiz.durationMinutes||0) * 60*1000);
+          if(newEndMs && newEndMs !== prevEnd){
+            const deltaMs = newEndMs - prevEnd;
+            endMs = newEndMs;
+            // update timeLeft and UI
+            timeLeftSec = Math.max(0, Math.ceil((endMs - Date.now())/1000));
+            updateTimerDisplay();
+            // show toast describing extra time added
+            if(deltaMs > 0){
+              const minsAdded = Math.ceil(deltaMs / 60000);
+              toast && toast(`Teacher added ${minsAdded} minute(s). Your timer has been updated.`);
+            }
+          }
+        });
+      } catch(e){
+        console.warn('realtime quiz listener failed', e);
+        quizDocUnsub = null;
+      }
+    }
+
+    // render & start
     renderInline();
     startTimer();
 
-    // local helpers
+    // helper
     function formatHMS(ms){ if(ms<=0) return '00:00:00'; const s = Math.floor(ms/1000); const h = Math.floor(s/3600); const m = Math.floor((s%3600)/60); const r = s%60; return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(r).padStart(2,'0')}`; }
-    function shuffleArray(arr){ const a=(arr||[]).slice(); for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]] } return a; }
 
-  } catch(e){
-    console.error('openTakeQuizInline', e);
+  } catch(err){
+    console.error('openTakeQuizInline', err);
     resultArea.innerHTML = `<div class="card muted">Failed to open quiz.</div>`;
+    if(typeof quizDocUnsub === 'function') try{ quizDocUnsub(); }catch(e){}
+    if(timerInterval) try{ clearInterval(timerInterval); }catch(e){}
   }
 }
 window.openTakeQuizInline = openTakeQuizInline;
-
-
 
 
 
